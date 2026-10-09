@@ -32,17 +32,15 @@ func TestPromoCodeCRUD(t *testing.T) {
 
 	// --- Create ---
 	createResp := client.Post("/api/admin/promo-codes", map[string]any{
-		"data": map[string]any{
-			"code":           code,
-			"name":           name,
-			"type":           "percentage",
-			"discount_value": 10.0,
-			"min_amount":     50.0,
-			"max_discount":   100.0,
-			"total_count":    100,
-			"per_user_limit": 1,
-			"status":         "active",
-		},
+		"code":           code,
+		"name":           name,
+		"type":           "percentage",
+		"discount_value": 10.0,
+		"min_amount":     50.0,
+		"max_discount":   100.0,
+		"total_count":    100,
+		"per_user_limit": 1,
+		"status":         "active",
 	})
 	createResp.AssertSuccess(t)
 	promoID := createResp.GetID(t)
@@ -116,12 +114,10 @@ func TestPromoCodeCRUD(t *testing.T) {
 	// --- Update ---
 	updatedName := fmt.Sprintf("更新优惠券 %s", suffix)
 	updateResp := client.Put(fmt.Sprintf("/api/admin/promo-codes/%d", promoID), map[string]any{
-		"update": map[string]any{
-			"name":           updatedName,
-			"discount_value": 20.0,
-			"total_count":    200,
-			"status":         "disabled",
-		},
+		"name":           updatedName,
+		"discount_value": 20.0,
+		"total_count":    200,
+		"status":         "disabled",
 	})
 	updateResp.AssertSuccess(t)
 
@@ -187,19 +183,84 @@ func TestPromoCodeNegative(t *testing.T) {
 	client := testinfra.GetAuthedClient(t)
 
 	// Create with empty data should fail
-	emptyResp := client.Post("/api/admin/promo-codes", map[string]any{
-		"data": map[string]any{},
-	})
+	emptyResp := client.Post("/api/admin/promo-codes", map[string]any{})
 	if emptyResp.Code == 0 {
 		t.Fatal("expected error for empty promo code data, got success")
 	}
 
 	// Update non-existent promo code
-	updateNonExistResp := client.Put("/api/admin/promo-codes/999999999", map[string]any{
-		"update": map[string]any{"name": "test"},
-	})
+	updateNonExistResp := client.Put("/api/admin/promo-codes/999999999", map[string]any{"name": "test"})
 	if updateNonExistResp.Code == 0 {
 		t.Fatal("expected error when updating non-existent promo code, got success")
+	}
+}
+
+// TestPromoCodeDiscountBound percentage 折扣值边界 (0,100]：创建/更新双侧拦截，
+// 防止 >100 的折扣算出超过订单金额的负数实付；更新时类型/折扣值只传其一也须合成校验
+func TestPromoCodeDiscountBound(t *testing.T) {
+	client := testinfra.GetAuthedClient(t)
+	suffix := randomSuffix()
+
+	// 创建侧：percentage 150 越界被拒
+	overResp := client.Post("/api/admin/promo-codes", map[string]any{
+		"code":           fmt.Sprintf("OB-%s", suffix),
+		"name":           "越界百分比券",
+		"type":           "percentage",
+		"discount_value": 150.0,
+		"status":         "active",
+	})
+	if overResp.Code == 0 {
+		t.Fatal("expected error for percentage discount_value=150, got success")
+	}
+
+	// 创建侧：percentage 0 无意义被拒
+	zeroResp := client.Post("/api/admin/promo-codes", map[string]any{
+		"code":           fmt.Sprintf("OZ-%s", suffix),
+		"name":           "零折百分比券",
+		"type":           "percentage",
+		"discount_value": 0.0,
+		"status":         "active",
+	})
+	if zeroResp.Code == 0 {
+		t.Fatal("expected error for percentage discount_value=0, got success")
+	}
+
+	// 更新侧：合法 percentage 10 仅改折扣值为 150 被拒（类型沿用库中现值合成校验）
+	pctCreate := client.Post("/api/admin/promo-codes", map[string]any{
+		"code":           fmt.Sprintf("BND-%s", suffix),
+		"name":           "边界校验百分比券",
+		"type":           "percentage",
+		"discount_value": 10.0,
+		"status":         "active",
+	})
+	pctCreate.AssertSuccess(t)
+	pctID := pctCreate.GetID(t)
+	defer testinfra.HardDeletePromoCode(t, pctID)
+
+	badUpdate := client.Put(fmt.Sprintf("/api/admin/promo-codes/%d", pctID), map[string]any{
+		"discount_value": 150.0,
+	})
+	if badUpdate.Code == 0 {
+		t.Fatal("expected error when updating percentage discount_value to 150, got success")
+	}
+
+	// 更新侧：fixed 200 合法创建，仅改 type 为 percentage（折扣值沿用现值 200）被拒
+	fixedCreate := client.Post("/api/admin/promo-codes", map[string]any{
+		"code":           fmt.Sprintf("SWP-%s", suffix),
+		"name":           "类型切换边界券",
+		"type":           "fixed",
+		"discount_value": 200.0,
+		"status":         "active",
+	})
+	fixedCreate.AssertSuccess(t)
+	fixedID := fixedCreate.GetID(t)
+	defer testinfra.HardDeletePromoCode(t, fixedID)
+
+	typeSwap := client.Put(fmt.Sprintf("/api/admin/promo-codes/%d", fixedID), map[string]any{
+		"type": "percentage",
+	})
+	if typeSwap.Code == 0 {
+		t.Fatal("expected error when switching fixed(200) to percentage, got success")
 	}
 }
 
@@ -208,15 +269,13 @@ func createTestPromoCode(t *testing.T, client *testinfra.APIClient) (int64, func
 	t.Helper()
 	suffix := randomSuffix()
 	resp := client.Post("/api/admin/promo-codes", map[string]any{
-		"data": map[string]any{
-			"code":           fmt.Sprintf("TEST-%s", suffix),
-			"name":           fmt.Sprintf("测试优惠券 %s", suffix),
-			"type":           "fixed",
-			"discount_value": 5.0,
-			"total_count":    10,
-			"per_user_limit": 1,
-			"status":         "active",
-		},
+		"code":           fmt.Sprintf("TEST-%s", suffix),
+		"name":           fmt.Sprintf("测试优惠券 %s", suffix),
+		"type":           "fixed",
+		"discount_value": 5.0,
+		"total_count":    10,
+		"per_user_limit": 1,
+		"status":         "active",
 	})
 	resp.AssertSuccess(t)
 	id := resp.GetID(t)

@@ -523,12 +523,23 @@ func (s *sTenant) RechargeCreate(ctx context.Context, req *v1.TenantRechargeCrea
 		// 支付发起失败：取消订单并归还优惠码用量，小事务保证「订单终止」与「名额归还」原子
 		// （与 task.ExpirePendingOrders 同款模式）；条件置 cancelled 防止并发状态下误覆盖。
 		if txErr := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-			if _, err := dao.OrdOrders.Ctx(ctx).
+			result, err := dao.OrdOrders.Ctx(ctx).
 				Where("id", orderID).
 				Where("status", "pending").
 				Data(do.OrdOrders{Status: "cancelled"}).
-				Update(); err != nil {
+				Update()
+			if err != nil {
 				return err
+			}
+			rows, err := result.RowsAffected()
+			if err != nil {
+				return err
+			}
+			if rows == 0 {
+				// 订单已被并发支付回调置为 paid：该订单仍会履约（优惠码折扣已真实消耗），
+				// 不得归还用量，否则限用名额被泄漏
+				g.Log().Warningf(ctx, "recharge order %d paid concurrently before payment-failure cancel, skip promo release", orderID)
+				return nil
 			}
 			return payment.ReleasePromoUsageForOrders(ctx, []int64{orderID})
 		}); txErr != nil {

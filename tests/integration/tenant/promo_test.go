@@ -188,6 +188,25 @@ func TestPromoValidateNegative(t *testing.T) {
 		insertPromoCode(t, promoCodeFixture{code: code, typ: "fixed", discountValue: 5, planIDs: &planIDs})
 		assertBusinessError(t, callValidate(client, code, 100), "不适用于充值")
 	})
+
+	t.Run("立减面值全额抵扣实付为0被拒", func(t *testing.T) {
+		code := fmt.Sprintf("FUL-%s", suffix)
+		insertPromoCode(t, promoCodeFixture{code: code, typ: "fixed", discountValue: 100})
+		assertBusinessError(t, callValidate(client, code, 100), "必须大于 0")
+	})
+
+	t.Run("百分比100全额抵扣被拒", func(t *testing.T) {
+		code := fmt.Sprintf("PC1-%s", suffix)
+		insertPromoCode(t, promoCodeFixture{code: code, typ: "percentage", discountValue: 100})
+		assertBusinessError(t, callValidate(client, code, 100), "必须大于 0")
+	})
+
+	t.Run("超界脏数据折扣封顶不产生负数实付", func(t *testing.T) {
+		// 直插 DB 绕过管理端校验模拟存量脏数据：150% 折扣封顶到订单金额，实付为 0 仍被拒
+		code := fmt.Sprintf("DIR-%s", suffix)
+		insertPromoCode(t, promoCodeFixture{code: code, typ: "percentage", discountValue: 150})
+		assertBusinessError(t, callValidate(client, code, 100), "必须大于 0")
+	})
 }
 
 // TestPromoValidatePerTenantLimit 每租户限用：已有用量记录后同租户再验被拒

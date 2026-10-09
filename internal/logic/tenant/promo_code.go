@@ -144,6 +144,11 @@ func validatePromoCode(ctx context.Context, tenantID int64, code string, amount 
 		if promo.MaxDiscount.GreaterThan(billing.Zero) && discount.GreaterThan(promo.MaxDiscount) {
 			discount = promo.MaxDiscount
 		}
+		// 兜底封顶到订单金额：存量脏数据（percentage>100 且未设 max_discount）会算出超过
+		// 订单金额的折扣，封顶保证实付不为负（创建/更新侧已拦截 (0,100] 之外的配置）
+		if discount.GreaterThan(amount) {
+			discount = amount
+		}
 	case "fixed":
 		discount = promo.DiscountValue
 		if discount.GreaterThan(amount) {
@@ -153,11 +158,18 @@ func validatePromoCode(ctx context.Context, tenantID int64, code string, amount 
 		return nil, lcommon.NewBusinessError(500, fmt.Sprintf("未知的优惠码类型: %s", promo.Type))
 	}
 
+	finalAmount := billing.SubtractMoney(amount, discount)
+	// 折后实付必须大于 0：全额抵扣（fixed 面值≥订单金额 / percentage=100）会产生 ¥0 订单，
+	// 支付渠道无法受理；预检、充值下单、套餐下单三个调用方在此统一拦截
+	if !finalAmount.GreaterThan(billing.Zero) {
+		return nil, lcommon.NewBusinessError(422, "优惠码抵扣后实付金额必须大于 0，请调整订单金额或更换优惠码")
+	}
+
 	return &promoValidationResult{
 		PromoCodeID: promo.ID,
 		Type:        promo.Type,
 		Discount:    discount,
-		FinalAmount: billing.SubtractMoney(amount, discount),
+		FinalAmount: finalAmount,
 	}, nil
 }
 
