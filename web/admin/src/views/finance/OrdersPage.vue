@@ -9,14 +9,22 @@ import TableStats from '@/components/TableStats.vue'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
+import { useDayShortcuts } from '@/composables/useDateRange'
+import { useTenantOptions } from '@/composables/useTenantOptions'
 import { formatOrder } from '@/composables/useCurrency'
 import { hasPermission } from '@/utils/permission'
+
+const dayShortcuts = useDayShortcuts()
+const { tenantOptions, fetchTenantOptions, handleTenantSearch } = useTenantOptions()
 
 const loading = ref(false)
 const orders = ref<any[]>([])
 const pagination = reactive({ current: 1, pageSize: 20, total: 0, showPageSize: true, pageSizeOptions: [10, 20, 50] })
 const statusFilter = ref<string | undefined>(undefined)
-const tenantFilter = ref('')
+const tenantFilter = ref<number | undefined>(undefined)
+const orderNoFilter = ref('')
+// 时间范围（YYYY-MM-DD 闭区间），缺省查全部
+const dateRange = ref<string[] | undefined>(undefined)
 const statusOptions = [
   { label: '全部', value: '' },
   { label: '待支付', value: 'pending' }, { label: '已支付', value: 'paid' },
@@ -39,8 +47,8 @@ const orderTypeLabel: Record<string, string> = {
 
 const columns: TableColumnData[] = [
   { title: 'ID', dataIndex: 'id', width: 70 },
-  { title: '订单号', dataIndex: 'order_no', width: 180, ellipsis: true },
-  { title: '租户ID', dataIndex: 'tenant_id', width: 80 },
+  { title: '订单号', dataIndex: 'order_no', width: 180, ellipsis: true, tooltip: true },
+  { title: '租户', dataIndex: 'tenant_name', width: 120, ellipsis: true, tooltip: true },
   {
     title: '类型', dataIndex: 'order_type', width: 80,
     render({ record }) { return h(Tag, { size: 'small' }, () => orderTypeLabel[record.order_type] || record.order_type) },
@@ -82,6 +90,9 @@ async function fetchOrders() {
     const params: any = { page: pagination.current, page_size: pagination.pageSize }
     if (statusFilter.value) params.status = statusFilter.value
     if (tenantFilter.value) params.tenant_id = tenantFilter.value
+    if (orderNoFilter.value.trim()) params.order_no = orderNoFilter.value.trim()
+    if (dateRange.value?.[0]) params.start_date = dateRange.value[0]
+    if (dateRange.value?.[1]) params.end_date = dateRange.value[1]
     const res = await request.get('/admin/orders', { params })
     const data = res.data?.data
     orders.value = data?.list || []
@@ -133,13 +144,32 @@ function handleComplete(row: any) {
   })
 }
 
-onMounted(fetchOrders)
+function resetAndFetch() {
+  pagination.current = 1
+  fetchOrders()
+}
+
+function handleReset() {
+  orderNoFilter.value = ''
+  tenantFilter.value = undefined
+  statusFilter.value = undefined
+  dateRange.value = undefined
+  resetAndFetch()
+}
+
+onMounted(() => {
+  fetchTenantOptions()
+  fetchOrders()
+})
 
 const { exporting, exportFile } = useExport({
   url: '/admin/orders/export',
   getFilters: () => ({
     status: statusFilter.value,
     tenant_id: tenantFilter.value,
+    order_no: orderNoFilter.value.trim(),
+    start_date: dateRange.value?.[0],
+    end_date: dateRange.value?.[1],
   }),
 })
 </script>
@@ -158,16 +188,40 @@ const { exporting, exportFile } = useExport({
       </template>
     </PageHeader>
 
-    <ACard :bordered="false">
-      <template #title>
-        <div class="flex items-center justify-between w-full">
-          <span>订单列表</span>
-          <ASpace>
-            <AInput v-model="tenantFilter" placeholder="租户ID" allow-clear style="width: 120px" @clear="() => { pagination.current = 1; fetchOrders() }" />
-            <ASelect v-model="statusFilter" :options="statusOptions" style="width: 120px" allow-clear @change="() => { pagination.current = 1; fetchOrders() }" />
-          </ASpace>
+    <ACard :bordered="false" class="mb-4">
+      <div class="filter-bar">
+        <!-- 时间范围恒为首个筛选条件 -->
+        <ARangePicker
+          v-model="dateRange"
+          format="YYYY-MM-DD"
+          :shortcuts="dayShortcuts"
+          shortcuts-position="bottom"
+          style="width: 260px"
+          allow-clear
+          @change="resetAndFetch"
+        />
+        <ASelect
+          v-model="tenantFilter"
+          :options="tenantOptions"
+          placeholder="租户"
+          allow-search
+          allow-clear
+          :filter-option="false"
+          style="width: 200px"
+          @search="handleTenantSearch"
+          @change="resetAndFetch"
+          @clear="resetAndFetch"
+        />
+        <AInput v-model="orderNoFilter" placeholder="订单号" allow-clear style="width: 200px" @clear="resetAndFetch" @keydown.enter="resetAndFetch" />
+        <ASelect v-model="statusFilter" :options="statusOptions" placeholder="状态" style="width: 130px" allow-clear @change="resetAndFetch" />
+        <div class="filter-actions">
+          <AButton type="primary" @click="resetAndFetch">搜索</AButton>
+          <AButton @click="handleReset">重置</AButton>
         </div>
-      </template>
+      </div>
+    </ACard>
+
+    <ACard :bordered="false">
       <ResponsiveTable
         :columns="columns"
         :data="orders"
@@ -177,7 +231,7 @@ const { exporting, exportFile } = useExport({
         card-title-key="order_no"
         card-badge-key="status"
         card-subtitle-key="created_at"
-        :card-fields="['order_type', 'final_amount', 'payment_channel', 'tenant_id']"
+        :card-fields="['order_type', 'final_amount', 'payment_channel', 'tenant_name']"
       />
       <div class="table-footer">
         <TableStats :total="pagination.total" />
@@ -198,3 +252,28 @@ const { exporting, exportFile } = useExport({
     </AModal>
   </div>
 </template>
+
+<style scoped>
+/* 筛选栏：条件与按钮同流排布——空间足够时同行显示；不足时条件自动换行，按钮组始终落在末行右侧（右下角） */
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+/* 按钮组：margin-left:auto 在所在行内靠右；换行独占末行时仍靠右，形成右下角对齐 */
+.filter-actions {
+  margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+/* 移动端：筛选条件各占整行，按钮组落到最后一行并靠右 */
+@media (max-width: 768px) {
+  .filter-bar > *:not(.filter-actions) {
+    flex: 1 1 100%;
+    width: 100% !important;
+  }
+}
+</style>

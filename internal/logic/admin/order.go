@@ -24,17 +24,29 @@ import (
 func (s *sAdmin) ListOrders(ctx context.Context, req *v1.OrderListReq) (*v1.OrderListRes, error) {
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
-	query := dao.OrdOrders.Ctx(ctx)
+	query := dao.OrdOrders.Ctx(ctx).
+		LeftJoin("tnt_tenants t", "ord_orders.tenant_id = t.id").
+		Fields("ord_orders.*, COALESCE(t.name, '') as tenant_name")
 	if req.Status != "" {
-		query = query.Where("status", req.Status)
+		query = query.Where("ord_orders.status", req.Status)
 	}
 	if req.TenantID != "" {
-		query = query.Where("tenant_id", req.TenantID)
+		query = query.Where("ord_orders.tenant_id", req.TenantID)
+	}
+	if req.OrderNo != "" {
+		query = query.WhereLike("ord_orders.order_no", "%"+req.OrderNo+"%")
+	}
+	// 时间范围按天粒度闭区间过滤（与交易流水 BuildTransactionQuery 同口径）
+	if req.StartDate != "" {
+		query = query.Where("ord_orders.created_at >= ?", req.StartDate+" 00:00:00")
+	}
+	if req.EndDate != "" {
+		query = query.Where("ord_orders.created_at <= ?", req.EndDate+" 23:59:59")
 	}
 
 	var total int
 	orders := make([]*v1.OrderItem, 0)
-	err := query.OrderDesc("created_at").
+	err := query.OrderDesc("ord_orders.created_at").
 		Page(page, pageSize).
 		ScanAndCount(&orders, &total, false)
 	if err != nil {
@@ -381,7 +393,7 @@ func (s *sAdmin) ExportOrders(ctx context.Context, req *v1.OrderExportReq) (*v1.
 	columns := []export.Column{
 		{Field: "id", Header: "ID"},
 		{Field: "order_no", Header: "订单号"},
-		{Field: "tenant_id", Header: "租户ID"},
+		{Field: "tenant_name", Header: "租户名称"},
 		{Field: "order_type", Header: "订单类型"},
 		{Field: "final_amount", Header: "最终金额"},
 		{Field: "payment_channel", Header: "支付渠道"},
@@ -395,36 +407,46 @@ func (s *sAdmin) ExportOrders(ctx context.Context, req *v1.OrderExportReq) (*v1.
 		Columns:  columns,
 	}
 
-	orderFields := "id, order_no, tenant_id, order_type, final_amount, payment_channel, status, created_at"
+	orderFields := "ord_orders.id, ord_orders.order_no, COALESCE(t.name, '') as tenant_name, ord_orders.order_type, ord_orders.final_amount, ord_orders.payment_channel, ord_orders.status, ord_orders.created_at"
 
 	return nil, export.GenericExport(ctx, config, func(yield func(map[string]any) bool) {
 		offset := 0
 		for {
-			query := dao.OrdOrders.Ctx(ctx)
+			query := dao.OrdOrders.Ctx(ctx).
+				LeftJoin("tnt_tenants t", "ord_orders.tenant_id = t.id")
 			if req.Status != "" {
-				query = query.Where("status", req.Status)
+				query = query.Where("ord_orders.status", req.Status)
 			}
 			if req.TenantID != "" {
-				query = query.Where("tenant_id", req.TenantID)
+				query = query.Where("ord_orders.tenant_id", req.TenantID)
+			}
+			if req.OrderNo != "" {
+				query = query.WhereLike("ord_orders.order_no", "%"+req.OrderNo+"%")
+			}
+			if req.StartDate != "" {
+				query = query.Where("ord_orders.created_at >= ?", req.StartDate+" 00:00:00")
+			}
+			if req.EndDate != "" {
+				query = query.Where("ord_orders.created_at <= ?", req.EndDate+" 23:59:59")
 			}
 			var batch []struct {
 				Id             int64       `json:"id"`
 				OrderNo        string      `json:"order_no"`
-				TenantId       int64       `json:"tenant_id"`
+				TenantName     string      `json:"tenant_name"`
 				OrderType      string      `json:"order_type"`
 				FinalAmount    float64     `json:"final_amount"`
 				PaymentChannel string      `json:"payment_channel"`
 				Status         string      `json:"status"`
 				CreatedAt      *gtime.Time `json:"created_at"`
 			}
-			if err := query.Fields(orderFields).OrderDesc("created_at").Limit(1000).Offset(offset).Scan(&batch); err != nil {
+			if err := query.Fields(orderFields).OrderDesc("ord_orders.created_at").Limit(1000).Offset(offset).Scan(&batch); err != nil {
 				return
 			}
 			for _, o := range batch {
 				if !yield(map[string]any{
 					"id":              o.Id,
 					"order_no":        o.OrderNo,
-					"tenant_id":       o.TenantId,
+					"tenant_name":     o.TenantName,
 					"order_type":      o.OrderType,
 					"final_amount":    o.FinalAmount,
 					"payment_channel": o.PaymentChannel,

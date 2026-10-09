@@ -6,7 +6,12 @@ import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
+import { useDayShortcuts } from '@/composables/useDateRange'
+import { useTenantOptions } from '@/composables/useTenantOptions'
 import { formatBilling } from '@/composables/useCurrency'
+
+const dayShortcuts = useDayShortcuts()
+const { tenantOptions, fetchTenantOptions, handleTenantSearch } = useTenantOptions()
 
 const loading = ref(false)
 const data = ref<any[]>([])
@@ -14,11 +19,10 @@ const pagination = reactive({
   current: 1, pageSize: 20, total: 0, showPageSize: true, pageSizeOptions: [10, 20, 50],
 })
 
-const filterTenantId = ref('')
+const filterTenantId = ref<number | undefined>(undefined)
 const filterType = ref<string | undefined>(undefined)
-const filterUsername = ref('')
-const filterStartDate = ref('')
-const filterEndDate = ref('')
+// 时间范围（YYYY-MM-DD 闭区间），缺省查全部
+const dateRange = ref<string[] | undefined>(undefined)
 
 const typeOptions = [
   { label: '全部', value: '' },
@@ -68,11 +72,10 @@ async function fetchData() {
   loading.value = true
   try {
     const params: Record<string, any> = { page: pagination.current, page_size: pagination.pageSize }
-    if (filterTenantId.value) params.tenant_id = parseInt(filterTenantId.value)
+    if (filterTenantId.value) params.tenant_id = filterTenantId.value
     if (filterType.value) params.type = filterType.value
-    if (filterUsername.value) params.username = filterUsername.value
-    if (filterStartDate.value) params.start_date = filterStartDate.value
-    if (filterEndDate.value) params.end_date = filterEndDate.value
+    if (dateRange.value?.[0]) params.start_date = dateRange.value[0]
+    if (dateRange.value?.[1]) params.end_date = dateRange.value[1]
     const res: any = await request.get('/admin/transactions', { params })
     const raw = res.data?.data
     data.value = raw?.list || []
@@ -88,24 +91,56 @@ function resetAndFetch() {
   fetchData()
 }
 
-onMounted(fetchData)
+function handleReset() {
+  filterTenantId.value = undefined
+  filterType.value = undefined
+  dateRange.value = undefined
+  resetAndFetch()
+}
+
+onMounted(() => {
+  fetchTenantOptions()
+  fetchData()
+})
 </script>
 
 <template>
   <div class="page-table">
     <PageHeader title="交易流水" description="查看所有租户的钱包交易记录" />
 
-    <ACard :bordered="false" class="mt-4">
-      <div class="mb-4">
-        <ASpace wrap>
-          <AInput v-model="filterTenantId" placeholder="租户ID" allow-clear style="width: 120px" @keydown.enter="resetAndFetch" />
-          <ASelect v-model="filterType" :options="typeOptions" style="width: 120px" allow-clear @change="resetAndFetch" />
-          <AInput v-model="filterUsername" placeholder="用户名" allow-clear style="width: 120px" @keydown.enter="resetAndFetch" />
-          <ADatePicker v-model="filterStartDate" placeholder="开始日期" style="width: 150px" @change="resetAndFetch" />
-          <ADatePicker v-model="filterEndDate" placeholder="结束日期" style="width: 150px" @change="resetAndFetch" />
+    <ACard :bordered="false" class="mb-4">
+      <div class="filter-bar">
+        <!-- 时间范围恒为首个筛选条件 -->
+        <ARangePicker
+          v-model="dateRange"
+          format="YYYY-MM-DD"
+          :shortcuts="dayShortcuts"
+          shortcuts-position="bottom"
+          style="width: 260px"
+          allow-clear
+          @change="resetAndFetch"
+        />
+        <ASelect
+          v-model="filterTenantId"
+          :options="tenantOptions"
+          placeholder="租户"
+          allow-search
+          allow-clear
+          :filter-option="false"
+          style="width: 200px"
+          @search="handleTenantSearch"
+          @change="resetAndFetch"
+          @clear="resetAndFetch"
+        />
+        <ASelect v-model="filterType" :options="typeOptions" placeholder="类型" style="width: 120px" allow-clear @change="resetAndFetch" />
+        <div class="filter-actions">
           <AButton type="primary" @click="resetAndFetch">搜索</AButton>
-        </ASpace>
+          <AButton @click="handleReset">重置</AButton>
+        </div>
       </div>
+    </ACard>
+
+    <ACard :bordered="false">
       <ResponsiveTable
         :columns="columns"
         :data="data"
@@ -135,6 +170,28 @@ onMounted(fetchData)
 </template>
 
 <style scoped>
+/* 筛选栏：条件与按钮同流排布——空间足够时同行显示；不足时条件自动换行，按钮组始终落在末行右侧（右下角） */
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+/* 按钮组：margin-left:auto 在所在行内靠右；换行独占末行时仍靠右，形成右下角对齐 */
+.filter-actions {
+  margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+/* 移动端：筛选条件各占整行，按钮组落到最后一行并靠右 */
+@media (max-width: 768px) {
+  .filter-bar > *:not(.filter-actions) {
+    flex: 1 1 100%;
+    width: 100% !important;
+  }
+}
 .table-footer {
   display: flex;
   justify-content: flex-end;

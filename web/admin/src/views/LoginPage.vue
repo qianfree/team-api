@@ -99,8 +99,6 @@ async function acceptAgreements() {
 }
 
 // Check if already logged in on mount
-import { onMounted } from 'vue'
-
 onMounted(() => {
   // If already logged in, redirect to dashboard
   if (authStore.isLoggedIn) {
