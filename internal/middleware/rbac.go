@@ -7,6 +7,7 @@ import (
 
 	"github.com/qianfree/team-api/internal/consts"
 	"github.com/qianfree/team-api/internal/logic/admin"
+	"github.com/qianfree/team-api/internal/plugin"
 	"github.com/qianfree/team-api/internal/response"
 )
 
@@ -451,9 +452,27 @@ func isCanonicalPath(path string) bool {
 // matchPermission finds the permission required for the given method and path.
 // Matching priority: exact path > prefix+suffix > prefix-only (catch-all).
 // This three-phase approach eliminates rule ordering dependencies.
+//
+// 静态规则（adminPermissionRules）与插件声明的动态规则（plugin.DynamicPermissionRules）
+// 在各阶段内统一参与「更长前缀优先」竞争，不区分来源先后——插件功能路由前缀
+// （如 /api/admin/plugins/reqguard/）比通用插件管理规则（/api/admin/plugins/）更长，
+// 必须胜出，否则插件路由会被 system:plugin 拦住，权限声明形同虚设。
+// 无插件登记规则时动态快照为 nil，行为与本改造前完全一致。
 func matchPermission(method, path string) string {
+	rules := adminPermissionRules
+	if dyn := dynamicPermRules(); len(dyn) > 0 {
+		combined := make([]permissionRule, 0, len(adminPermissionRules)+len(dyn))
+		combined = append(combined, adminPermissionRules...)
+		for _, r := range dyn {
+			combined = append(combined, permissionRule{
+				method: r.Method, path: r.Path, prefix: r.Prefix, suffix: r.Suffix, perm: r.Perm,
+			})
+		}
+		rules = combined
+	}
+
 	// Phase 1: exact path match (highest priority)
-	for _, rule := range adminPermissionRules {
+	for _, rule := range rules {
 		if rule.method != method || rule.path == "" {
 			continue
 		}
@@ -464,7 +483,7 @@ func matchPermission(method, path string) string {
 
 	// Phase 2: prefix+suffix match (more specific)
 	var bestPrefixSuffix *permissionRule
-	for _, rule := range adminPermissionRules {
+	for _, rule := range rules {
 		if rule.method != method || rule.prefix == "" || rule.suffix == "" {
 			continue
 		}
@@ -481,7 +500,7 @@ func matchPermission(method, path string) string {
 
 	// Phase 3: prefix-only match (catch-all, lowest priority)
 	var bestPrefixOnly *permissionRule
-	for _, rule := range adminPermissionRules {
+	for _, rule := range rules {
 		if rule.method != method || rule.prefix == "" || rule.suffix != "" {
 			continue
 		}
@@ -497,6 +516,13 @@ func matchPermission(method, path string) string {
 	}
 
 	return ""
+}
+
+// dynamicPermRules 返回插件动态权限规则的内部形态。
+// 中间件不能反向被 plugin 包依赖（AdminPermissionGuard → logic/admin → plugin 已成链），
+// 故规则注册表放在 plugin 包、此处只读快照。
+func dynamicPermRules() []plugin.RoutePermRule {
+	return plugin.DynamicPermissionRules()
 }
 
 // suffixMatches 判断 path 是否按【路径分段边界】匹配规则后缀 suffix，避免子串误匹配。

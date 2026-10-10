@@ -74,8 +74,20 @@ func startPlugin(ctx context.Context, entry *PluginEntry) error {
 		}
 	}
 
+	// 4. 登记权限声明（如果实现了 PermissionProvider），插件路由由此可被授权访问
+	SetPermissionRules(entry.Info.Name, asPermissionProvider(entry.Plugin))
+
 	entry.Status = StatusEnabled
 	glog.Infof(ctx, "plugin %s: started successfully", entry.Info.Name)
+	return nil
+}
+
+// asPermissionProvider 类型断言的薄封装：不实现 PermissionProvider 时返回 nil，
+// SetPermissionRules 对 nil 直接跳过。
+func asPermissionProvider(p Plugin) PermissionProvider {
+	if pp, ok := p.(PermissionProvider); ok {
+		return pp
+	}
 	return nil
 }
 

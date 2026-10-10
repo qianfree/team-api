@@ -93,6 +93,9 @@ func Disable(ctx context.Context, name string) error {
 
 	app.Hook.RemoveHooks(name)
 
+	// 摘除动态权限规则：插件路由回落到默认拒绝（权限点本身保持有效，见 permission.go）
+	ClearPermissionRules(name)
+
 	entry.Status = StatusDisabled
 	_, err := dao.SysPlugins.Ctx(ctx).
 		Where("name", name).
@@ -126,6 +129,9 @@ func Uninstall(ctx context.Context, name string, keepData bool) error {
 	if err != nil {
 		return err
 	}
+
+	// 防御性摘除：正常路径下卸载前必已禁用（规则已摘），这里兜底清理
+	ClearPermissionRules(name)
 
 	entry.Status = StatusRegistered
 	glog.Infof(ctx, "plugin %s: uninstalled (keepData=%v)", name, keepData)
