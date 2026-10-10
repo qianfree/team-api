@@ -597,6 +597,7 @@ func recordAudit(r *ghttp.Request, rc *handler.RelayContext, capture *ResponseCa
 		LatencyMs:       latencyMs,
 		FirstTokenMs:    ttft,
 		IsStream:        isStream,
+		HeaderSessionID: r.Header.Get("X-Session-Id"),
 		RequestHeaders:  captureRequestHeaders(r),
 		ResponseHeaders: capture.ResponseHeaders(),
 		ForwardingTrace: rc.ForwardingTrace,

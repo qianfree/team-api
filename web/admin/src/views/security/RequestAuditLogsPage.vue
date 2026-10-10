@@ -2,11 +2,12 @@
 import { ref, reactive, onMounted, h } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-	Tag, Button,
+	Tag, Button, Message,
 } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import TableStats from '@/components/TableStats.vue'
 import ForwardingTracePanel from '@/components/ForwardingTracePanel.vue'
+import ConversationDrawer from './ConversationDrawer.vue'
 import request from '@/utils/request'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import { useDateRange } from '@/composables/useDateRange'
@@ -31,10 +32,19 @@ const filter = reactive({
 	user_id: null as number | null,
 	api_key_id: '',
 	model: '',
+	session_key: '',
+	session_source: '',
 	date_range: defaultTodayRange(),
 })
 
 const tenantOptions = ref<{ label: string; value: number }[]>([])
+
+// 会话来源筛选（对应 aud_request_logs.session_source）
+const sessionSourceOptions = [
+	{ label: '会话键-请求头', value: 'header' },
+	{ label: '会话键-Claude', value: 'anthropic' },
+	{ label: '会话键-Responses', value: 'openai' },
+]
 
 async function fetchTenantOptions(keyword: string) {
 	try {
@@ -52,6 +62,39 @@ async function fetchTenantOptions(keyword: string) {
 const detailLoading = ref(false)
 const showDetail = ref(false)
 const detailRecord = ref<any>(null)
+
+// 会话视图：从任意审计记录进入，还原其所在完整对话
+const showConversation = ref(false)
+const conversationAnchorId = ref<number | null>(null)
+
+function openConversation(id: number) {
+	conversationAnchorId.value = id
+	showConversation.value = true
+}
+
+// 会话视图内点击消息脚注 → 打开对应记录的审计详情
+function openRecordDetail(id: number) {
+	showConversation.value = false
+	fetchDetail(id)
+}
+
+// 复制会话键（完整值为哈希派生键，不含敏感原文）
+async function copySessionKey(key: string) {
+	try {
+		await navigator.clipboard.writeText(key)
+		Message.success({ content: '会话键已复制', duration: 2000 })
+	} catch {
+		Message.warning({ content: '复制失败，请手动选择复制', duration: 2000 })
+	}
+}
+
+// 详情页一键按会话键筛选同会话全部记录
+function filterBySessionKey(key: string) {
+	showDetail.value = false
+	filter.session_key = key
+	pagination.current = 1
+	fetchData()
+}
 
 const statusCodeColor: Record<number, string> = {
 	200: 'green',
@@ -184,12 +227,27 @@ const columns: TableColumnData[] = [
 		},
 	},
 	{
-		title: '操作', dataIndex: 'actions', width: 80, fixed: 'right',
+		title: '会话', dataIndex: 'session_source', width: 85,
 		render({ record }) {
-			return h(Button, {
-				size: 'mini', type: 'text',
-				onClick: () => fetchDetail(record.id),
-			}, () => '详情')
+			// 关联来源：显式会话键 > 内容链（指纹可关联）> 无（单轮/推断）
+			if (record.session_source) return h(Tag, { color: 'cyan', size: 'small' }, () => '会话键')
+			if (record.conv_fingerprint) return h(Tag, { color: 'arcoblue', size: 'small' }, () => '内容链')
+			return h(Tag, { color: 'gray', size: 'small' }, () => '—')
+		},
+	},
+	{
+		title: '操作', dataIndex: 'actions', width: 110, fixed: 'right',
+		render({ record }) {
+			return h('div', { style: 'display:flex;gap:2px' }, [
+				h(Button, {
+					size: 'mini', type: 'text',
+					onClick: () => fetchDetail(record.id),
+				}, () => '详情'),
+				h(Button, {
+					size: 'mini', type: 'text',
+					onClick: () => openConversation(record.id),
+				}, () => '会话'),
+			])
 		},
 	},
 ]
@@ -207,6 +265,8 @@ async function fetchData() {
 		if (filter.user_id) params.user_id = filter.user_id
 		if (filter.api_key_id) params.api_key_id = parseInt(filter.api_key_id)
 		if (filter.model) params.model = filter.model
+		if (filter.session_key) params.session_key = filter.session_key
+		if (filter.session_source) params.session_source = filter.session_source
 		if (filter.date_range.length === 2) {
 			params.start_date = filter.date_range[0]
 			// 截止时间为默认「现在」时不传 end_date（后端按「到现在」实时处理），仅手动选择后才显式下发
@@ -258,6 +318,8 @@ function handleReset() {
 	filter.user_id = null
 	filter.api_key_id = ''
 	filter.model = ''
+	filter.session_key = ''
+	filter.session_source = ''
 	filter.date_range = defaultTodayRange()
 	pagination.current = 1
 	fetchData()
@@ -341,6 +403,22 @@ onMounted(() => {
 					style="width: 160px"
 					@keydown.enter="handleFilter"
 				/>
+				<a-select
+					v-model="filter.session_source"
+					:options="sessionSourceOptions"
+					placeholder="会话来源"
+					allow-clear
+					style="width: 130px"
+					@change="handleFilter"
+					@clear="handleFilter"
+				/>
+				<a-input
+					v-model="filter.session_key"
+					placeholder="会话键（sk:…，详情页可复制）"
+					allow-clear
+					style="width: 200px"
+					@keydown.enter="handleFilter"
+				/>
 				<div class="filter-actions">
 					<a-button type="primary" @click="handleFilter">搜索</a-button>
 					<a-button @click="handleReset">重置</a-button>
@@ -380,9 +458,22 @@ onMounted(() => {
 		<a-drawer v-model:visible="showDetail" :width="640" title="请求详情">
 			<a-spin :loading="detailLoading" class="w-full">
 				<template v-if="detailRecord">
+					<!-- 会话入口：跳转到该记录所在会话的完整对话视图 -->
+					<div class="mb-4">
+						<a-button size="small" @click="openConversation(detailRecord.id)">
+							查看完整会话
+						</a-button>
+					</div>
 					<!-- 基础信息 -->
 					<a-descriptions :column="1" bordered size="medium">
 						<a-descriptions-item label="Request ID">{{ detailRecord.request_id }}</a-descriptions-item>
+						<a-descriptions-item v-if="detailRecord.session_key" label="会话键">
+							<div class="session-key-row">
+								<span class="session-key-text">{{ detailRecord.session_key }}</span>
+								<a-button size="mini" type="text" @click="copySessionKey(detailRecord.session_key)">复制</a-button>
+								<a-button size="mini" type="text" @click="filterBySessionKey(detailRecord.session_key)">筛选同会话</a-button>
+							</div>
+						</a-descriptions-item>
 						<a-descriptions-item label="租户/用户/Key">{{ detailRecord.tenant_id }} / {{ detailRecord.user_id }} / {{ detailRecord.api_key_id }}</a-descriptions-item>
 						<a-descriptions-item label="方法">{{ detailRecord.method }}</a-descriptions-item>
 						<a-descriptions-item label="路径">{{ detailRecord.path }}</a-descriptions-item>
@@ -445,6 +536,13 @@ onMounted(() => {
 				</template>
 			</a-spin>
 		</a-drawer>
+
+		<!-- 会话视图抽屉（完整对话还原） -->
+		<ConversationDrawer
+			v-model:visible="showConversation"
+			:record-id="conversationAnchorId"
+			@open-record="openRecordDetail"
+		/>
 	</div>
 </template>
 
@@ -481,6 +579,18 @@ onMounted(() => {
 /* 统计栏移入底部后，去掉全局样式的下边距，与分页栏垂直居中 */
 .table-footer :deep(.table-stats) {
 	margin-bottom: 0;
+}
+/* 会话键行：长键值换行展示，操作按钮不换行 */
+.session-key-row {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	flex-wrap: wrap;
+}
+.session-key-text {
+	font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+	font-size: 12px;
+	word-break: break-all;
 }
 .audit-body {
 	background: var(--color-fill-2, #f7f8fa);

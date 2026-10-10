@@ -45,7 +45,14 @@ CREATE TABLE IF NOT EXISTS aud_request_logs (
     task_result                              TEXT,
     task_upstream_headers                    JSONB,
     task_completed_at                        TIMESTAMPTZ,
-    model_name                               VARCHAR(100)
+    model_name                               VARCHAR(100),
+    session_key                              VARCHAR(128),
+    session_source                           VARCHAR(20),
+    conv_fingerprint                         VARCHAR(80),
+    resp_msg_hash                            VARCHAR(80),
+    last_asst_msg_hash                       VARCHAR(80),
+    is_context_reset                         BOOLEAN DEFAULT FALSE NOT NULL,
+    user_field                               VARCHAR(255)
 );
 
 CREATE INDEX IF NOT EXISTS idx_aud_request_logs_created_brin
@@ -61,6 +68,14 @@ CREATE INDEX IF NOT EXISTS idx_aud_request_logs_model
 -- created_at 单列 btree（对应迁移 000024）：服务无租户条件的全局倒序分页
 CREATE INDEX IF NOT EXISTS idx_aud_request_logs_created_bt
     ON aud_request_logs USING btree (created_at);
+-- 会话关联（对应迁移 000025）：会话视图按租户过滤后按键取时间有序记录；
+-- resp_hash 为衔接链前驱点查。列均允许 NULL（无信号/非对话端点不落值）
+CREATE INDEX IF NOT EXISTS idx_aud_request_logs_session
+    ON aud_request_logs USING btree (tenant_id, session_key, created_at) WHERE session_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_aud_request_logs_conv_fp
+    ON aud_request_logs USING btree (tenant_id, conv_fingerprint, created_at) WHERE conv_fingerprint IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_aud_request_logs_resp_hash
+    ON aud_request_logs USING btree (tenant_id, resp_msg_hash) WHERE resp_msg_hash IS NOT NULL;
 
 COMMENT ON TABLE  aud_request_logs IS '请求审计日志（记录所有 API 代理请求）';
 COMMENT ON COLUMN aud_request_logs.id IS '主键ID';
@@ -94,13 +109,20 @@ COMMENT ON COLUMN aud_request_logs.task_result IS '异步任务完成时上游�
 COMMENT ON COLUMN aud_request_logs.task_upstream_headers IS '异步任务完成时上游返回的响应头（仅审计级别为 full 时记录）';
 COMMENT ON COLUMN aud_request_logs.task_completed_at IS '异步任务达到终态的时间';
 COMMENT ON COLUMN aud_request_logs.model_name IS '请求使用的模型名（用户请求体中的原始模型，未经渠道映射）';
+COMMENT ON COLUMN aud_request_logs.session_key IS '会话关联键（sk:来源:sha256），仅显式会话信号（X-Session-Id 头/Claude metadata.user_id/Responses 链）命中时写入，NULL=无显式键';
+COMMENT ON COLUMN aud_request_logs.session_source IS '会话键来源：header/anthropic/openai，NULL=无显式键';
+COMMENT ON COLUMN aud_request_logs.conv_fingerprint IS '会话指纹 fp1:sha256（system+首条user消息规范化哈希），同会话各轮共享，内容分组用';
+COMMENT ON COLUMN aud_request_logs.resp_msg_hash IS '本条响应 assistant 消息规范化哈希 mh1:sha256，衔接链前驱查询用';
+COMMENT ON COLUMN aud_request_logs.last_asst_msg_hash IS '本条请求 messages 最后一条 assistant 消息规范化哈希 mh1:sha256，与上一轮 resp_msg_hash 相等即两轮衔接';
+COMMENT ON COLUMN aud_request_logs.is_context_reset IS '写时检测到上下文压缩/重写标记（best-effort，权威判定在会话重组查询时按消息量骤降判定）';
+COMMENT ON COLUMN aud_request_logs.user_field IS '请求体 user 字段原文（OpenAI 协议 hint，不参与会话键解析）';
 
 -- ============================================================
 -- 增量变更（存量审计库升级用）
 --
 -- 本脚本整体幂等（IF NOT EXISTS），存量审计库升级时直接重跑全脚本即可；
 -- 也可只执行下方对应版本的增量语句。主库的同等变更由 goose 迁移
--- migrations/000022、000024 管理，两边需保持同步。
+-- migrations/000022、000024、000025 管理，两边需保持同步。
 -- ============================================================
 
 -- 000022：补记模型名（存量行无法回填，模型名自升级后开始记录）
@@ -110,3 +132,19 @@ CREATE INDEX IF NOT EXISTS idx_aud_request_logs_model
     ON aud_request_logs (model_name, created_at);
 CREATE INDEX IF NOT EXISTS idx_aud_request_logs_created_bt
     ON aud_request_logs USING btree (created_at);
+
+-- 000025：会话关联列（哈希均在原始请求/响应体上计算，先于审计级别处理与截断，
+-- 关联能力不受审计级别影响；设计见 docs/会话关联与完整会话提取方案.md）
+ALTER TABLE aud_request_logs ADD COLUMN IF NOT EXISTS session_key VARCHAR(128);
+ALTER TABLE aud_request_logs ADD COLUMN IF NOT EXISTS session_source VARCHAR(20);
+ALTER TABLE aud_request_logs ADD COLUMN IF NOT EXISTS conv_fingerprint VARCHAR(80);
+ALTER TABLE aud_request_logs ADD COLUMN IF NOT EXISTS resp_msg_hash VARCHAR(80);
+ALTER TABLE aud_request_logs ADD COLUMN IF NOT EXISTS last_asst_msg_hash VARCHAR(80);
+ALTER TABLE aud_request_logs ADD COLUMN IF NOT EXISTS is_context_reset BOOLEAN DEFAULT FALSE NOT NULL;
+ALTER TABLE aud_request_logs ADD COLUMN IF NOT EXISTS user_field VARCHAR(255);
+CREATE INDEX IF NOT EXISTS idx_aud_request_logs_session
+    ON aud_request_logs USING btree (tenant_id, session_key, created_at) WHERE session_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_aud_request_logs_conv_fp
+    ON aud_request_logs USING btree (tenant_id, conv_fingerprint, created_at) WHERE conv_fingerprint IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_aud_request_logs_resp_hash
+    ON aud_request_logs USING btree (tenant_id, resp_msg_hash) WHERE resp_msg_hash IS NOT NULL;

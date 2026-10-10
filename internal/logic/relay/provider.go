@@ -484,6 +484,11 @@ func (p *DataProviderImpl) RecordAudit(ctx context.Context, record *common.Audit
 			return
 		}
 
+		// 会话关联摘要：必须在 ApplyAuditLevel / truncateBody 之前的原始 body 上计算，
+		// 关联能力才不受审计级别与 2 KiB 截断影响（设计见 docs/会话关联与完整会话提取方案.md）
+		digest := lcommon.ExtractSessionDigest(record.Path, record.RequestBody, record.ResponseBody,
+			record.IsStream, record.HeaderSessionID, record.TenantID, record.Model)
+
 		// 按系统级别处理
 		sysReq, sysResp := lcommon.ApplyAuditLevel(globalLevel, record.RequestBody, record.ResponseBody, record.IsStream, record.Path)
 		// 按租户级别处理
@@ -549,6 +554,26 @@ func (p *DataProviderImpl) RecordAudit(ctx context.Context, record *common.Audit
 			ResponseHeaders:    responseHeadersJSON,
 			ForwardingTrace:    forwardingTraceJSON,
 		}
+
+		// 会话关联列：空值不设字段（do 留 nil → 落 NULL，配合部分索引与查询过滤，
+		// 避免空串进索引造成膨胀与误命中）
+		if digest.SessionKey != "" {
+			insertData.SessionKey = digest.SessionKey
+			insertData.SessionSource = digest.SessionSource
+		}
+		if digest.ConvFingerprint != "" {
+			insertData.ConvFingerprint = digest.ConvFingerprint
+		}
+		if digest.RespMsgHash != "" {
+			insertData.RespMsgHash = digest.RespMsgHash
+		}
+		if digest.LastAsstMsgHash != "" {
+			insertData.LastAsstMsgHash = digest.LastAsstMsgHash
+		}
+		if digest.UserField != "" {
+			insertData.UserField = digest.UserField
+		}
+		insertData.IsContextReset = digest.IsContextReset
 
 		// 异步任务字段
 		if record.TaskID != "" {

@@ -345,6 +345,14 @@ func (s *sAdmin) ListRequestAuditLogs(ctx context.Context, req *v1.RequestAuditL
 		conditions = append(conditions, "status_code = ?")
 		args = append(args, req.StatusCode)
 	}
+	if req.SessionKey != "" {
+		conditions = append(conditions, "session_key = ?")
+		args = append(args, req.SessionKey)
+	}
+	if req.SessionSource != "" {
+		conditions = append(conditions, "session_source = ?")
+		args = append(args, req.SessionSource)
+	}
 	if req.StartDate != "" {
 		conditions = append(conditions, "created_at >= ?")
 		args = append(args, common.StartOfRange(req.StartDate))
@@ -358,7 +366,8 @@ func (s *sAdmin) ListRequestAuditLogs(ctx context.Context, req *v1.RequestAuditL
 	// 列表白名单：表格列 + EnrichAuditRecords 回填名称所需的关联键。
 	// user_id / project_id 仅作关联查询键（username / project_name 据此回填），表格不展示，出参剔除；
 	// request_id / query_params / user_agent 等列表不展示的字段经详情接口获取。
-	auditFields := "id, tenant_id, user_id, api_key_id, project_id, method, path, model_name, status_code, client_ip, latency_ms, first_token_ms, audit_level, created_at"
+	// session 三列供前端「会话」列展示关联来源（conv_fingerprint 非空表示可内容链关联）。
+	auditFields := "id, tenant_id, user_id, api_key_id, project_id, method, path, model_name, status_code, client_ip, latency_ms, first_token_ms, audit_level, session_key, session_source, conv_fingerprint, created_at"
 
 	items, total, err := queryAuditPage(ctx, common.GetAuditDB(), "aud_request_logs", auditFields, where, args, page, pageSize)
 	if err != nil {
@@ -396,6 +405,25 @@ func (s *sAdmin) GetRequestAuditLogDetail(ctx context.Context, req *v1.RequestAu
 	var detail map[string]any
 	_ = json.Unmarshal(b, &detail)
 	return &v1.RequestAuditLogDetailRes{Data: detail}, nil
+}
+
+// GetRequestAuditLogConversation 会话视图：从锚点审计记录还原完整对话。
+// 内容为系统副本（request_body/response_body，按全局审计级别产物渲染）；
+// 含完整对话正文，属敏感读取，落留痕。admin 全局视角，租户按锚点记录收敛。
+func (s *sAdmin) GetRequestAuditLogConversation(ctx context.Context, req *v1.RequestAuditLogConversationReq) (*v1.RequestAuditLogConversationRes, error) {
+	common.LogSensitiveAccess(ctx, common.GetCtxUserID(ctx), "admin", "request_log_conversation", req.Id, "view", "查看审计日志会话视图")
+
+	view, err := common.LoadConversationView(ctx, req.Id, 0, common.SysBodyColumns())
+	if err != nil {
+		return nil, err
+	}
+	b, err := json.Marshal(view)
+	if err != nil {
+		return nil, err
+	}
+	var data map[string]any
+	_ = json.Unmarshal(b, &data)
+	return &v1.RequestAuditLogConversationRes{Data: data}, nil
 }
 
 // ForwardingTraceGet 按 request_id 查询请求转发路径追踪（仅管理员，用量日志详情懒加载用）。

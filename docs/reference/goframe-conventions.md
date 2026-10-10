@@ -995,3 +995,17 @@ pgsql 驱动的 `TableFields` 要实时查 `pg_attribute` 系统表（`'表名':
 - **永远不要**调不带内容的 `WriteStatus(code)` 再接其他 Write——那是给"只要状态文本作为响应体"的场景用的。
 
 排查信号：响应体以 `OK`/`Conflict`/`Bad Request` 等状态文本开头；第三方网关按协议精确比对应答时判定失败并持续重推回调。
+
+### 2026-10-11：INSERT 数据含表里不存在的列时 gdb 静默过滤、不报错
+
+**问题**：`aud_request_logs` 新增会话关联列后，通过 `do` 结构体 INSERT 的字段（session_key 等）既没落库也没报错，`RecordAudit` 的错误日志一条没打，行照常插入——像是代码没执行，极易误判为接线丢失。
+
+**原因**：gdb（GoFrame ORM）在构造 INSERT 前会读取目标表结构并**过滤掉表中不存在的字段**（do 结构体的 interface{} 字段映射到 map 后按表 schema 白名单过滤），无任何 warning/error。当时 dev 环境的独立审计库（`database.audit` → `teamapi_log`）还没执行增量 DDL，主库 goose 迁移已完成，两边表结构不一致导致写入端"半静默"丢字段。
+
+**正确做法（通用规则）**：
+
+- 涉及 `aud_request_logs` 等走独立审计库的表加列时，**主库 goose 迁移与审计库结构必须同步变更**：审计库以 `docs/audit-db-schema.sql` 为唯一结构源（建表段 + 底部增量段双写），存量审计库重跑该脚本即可升级（整体幂等）；
+- 排查"字段写入丢失"类问题时，先查**实际写入目标库**的 `information_schema.columns`（本可用 `AuditModelCtx` 同一连接查询），不要只看代码与主库迁移状态；
+- 测试直连 DB 时需显式 import 驱动（`_ "github.com/gogf/gf/contrib/drivers/pgsql/v2"`、`_ ".../nosql/redis/v2"`），主程序的 bootstrap import 不会带入测试二进制；`g.Cfg()` 文件适配器需 `SetPath` 指向 `manifest/config`（测试工作目录在包目录下）。
+
+排查信号：INSERT 无报错但新列为 NULL；`SELECT *` 返回的 map 里根本没有新列名（而非值为空）——后者说明表结构就没这列。

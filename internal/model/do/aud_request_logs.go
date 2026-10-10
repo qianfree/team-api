@@ -43,4 +43,11 @@ type AudRequestLogs struct {
 	TaskUpstreamHeaders any         // 异步任务完成时上游返回的响应头（仅审计级别为 full 时记录）
 	TaskCompletedAt     *gtime.Time // 异步任务达到终态的时间
 	ModelName           any         // 请求使用的模型名（用户请求体中的原始模型，未经渠道映射）
+	SessionKey          any         // 会话关联键（sk:来源:sha256），仅显式会话信号（X-Session-Id 头/Claude metadata.user_id/Responses 链）命中时写入，NULL=无显式键
+	SessionSource       any         // 会话键来源：header/anthropic/openai，NULL=无显式键
+	ConvFingerprint     any         // 会话指纹 fp1:sha256（system+首条user消息规范化哈希），同会话各轮共享，内容分组用
+	RespMsgHash         any         // 本条响应 assistant 消息规范化哈希 mh1:sha256，衔接链前驱查询用
+	LastAsstMsgHash     any         // 本条请求 messages 最后一条 assistant 消息规范化哈希 mh1:sha256，与上一轮 resp_msg_hash 相等即两轮衔接
+	IsContextReset      any         // 写时检测到上下文压缩/重写标记（best-effort，权威判定在会话重组查询时按消息量骤降判定）
+	UserField           any         // 请求体 user 字段原文（OpenAI 协议 hint，不参与会话键解析）
 }
