@@ -169,7 +169,7 @@ const columns: TableColumnData[] = [
 
 <template>
   <div class="page-table">
-    <PageHeader title="登录历史" description="查看所有管理员的登录记录" />
+    <PageHeader title="后台登录历史" description="查看所有管理员的登录记录" />
 
     <ACard :bordered="false" style="margin-bottom: 16px">
       <AForm :model="searchForm" layout="inline" @submit="onSearch">

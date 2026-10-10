@@ -492,16 +492,21 @@ func RecordLoginHistory(ctx context.Context, userType string, userID, tenantID i
 	return nil
 }
 
-// DeviceFingerprint generates a simple device fingerprint from User-Agent + IP.
-func DeviceFingerprint(ua, ip string) string {
-	// Simple fingerprint: hash of normalized UA + IP prefix
+// DeviceFingerprint 计算设备指纹：优先使用前端上报的持久设备 ID（localStorage 生成、随登录请求携带），
+// 无设备 ID 时退化为 UA 哈希。IP 不参与指纹——家宽拨号/VPN 切换导致的 IP 变化曾使每次登录都被误判为新设备。
+// dev:/ua: 前缀标识指纹来源便于排查，指纹值恒为 32 位十六进制（总长 36，适配 VARCHAR(128) 列）。
+func DeviceFingerprint(deviceID, ua string) string {
+	if deviceID != "" {
+		if len(deviceID) > 128 {
+			deviceID = deviceID[:128]
+		}
+		return "dev:" + sha256Sum(deviceID)[:32]
+	}
 	normalized := strings.ToLower(ua)
 	if len(normalized) > 200 {
 		normalized = normalized[:200]
 	}
-	data := normalized + "|" + ip
-	hash := sha256Sum(data)
-	return hash[:32]
+	return "ua:" + sha256Sum(normalized)[:32]
 }
 
 // ExtractDeviceInfo 从请求上下文提取会话设备信息并编码为合法 JSON。

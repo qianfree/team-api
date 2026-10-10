@@ -87,7 +87,7 @@ func (s *sAdmin) Verify2FA(ctx context.Context, req *v1.Admin2FAVerifyReq) (*v1.
 
 	// Record login history
 	ua := g.RequestFromCtx(ctx).Header.Get("User-Agent")
-	deviceFP := common.DeviceFingerprint(ua, ipAddress)
+	deviceFP := common.DeviceFingerprint(req.DeviceId, ua)
 	_ = common.RecordLoginHistory(ctx, "admin", user.Id, 0, "totp", ipAddress, ua, deviceFP, true, "")
 
 	res := &v1.Admin2FAVerifyRes{

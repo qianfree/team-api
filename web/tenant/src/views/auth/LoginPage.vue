@@ -6,6 +6,7 @@ import { useTenantAuthStore } from '@/stores/tenant-auth'
 import { usePublicSettings } from '@/composables/usePublicSettings'
 import { extractApiError } from '@/utils/request'
 import request from '@/utils/request'
+import { getDeviceId } from '@/utils/deviceId'
 import AuthLayout from '@/components/layout/AuthLayout.vue'
 import Icon from '@/components/common/Icon.vue'
 import SlideCaptcha from '@/components/common/SlideCaptcha.vue'
@@ -228,6 +229,7 @@ async function handle2FAVerify() {
 		const res = await request.post('/tenant/auth/2fa/verify', {
 			provisional_token: provisionalToken.value,
 			code: totpCode.value,
+			device_id: getDeviceId(),
 		}, { _suppressErrorMsg: true } as any)
 		authStore.applyTokensFrom2FA(res.data.data)
 		proceedAfterLogin()

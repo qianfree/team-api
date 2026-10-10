@@ -9,6 +9,7 @@ type AdminLoginReq struct {
 	Password   string `json:"password" v:"required#请输入密码" dc:"密码"`
 	CaptchaKey string `json:"captcha_key" dc:"验证码key（验证码启用时必填）"`
 	CaptchaX   int    `json:"captcha_x" dc:"滑块X坐标（验证码启用时必填）"`
+	DeviceId   string `json:"device_id" dc:"设备ID（前端 localStorage 持久化，用于新设备识别）"`
 }
 
 type AdminLoginRes struct {

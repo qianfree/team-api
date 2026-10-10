@@ -35,7 +35,7 @@ func (s *sAdmin) Login(ctx context.Context, req *v1.AdminLoginReq) (*v1.AdminLog
 	// Get client info early for login history recording
 	ipAddress := g.RequestFromCtx(ctx).GetClientIp()
 	ua := g.RequestFromCtx(ctx).Header.Get("User-Agent")
-	deviceFP := common.DeviceFingerprint(ua, ipAddress)
+	deviceFP := common.DeviceFingerprint(req.DeviceId, ua)
 
 	// Find admin user by username
 	var user *entity.SysAdminUsers

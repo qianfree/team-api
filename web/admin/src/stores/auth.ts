@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import request, { setTokens, clearTokens, onTokenRefreshed, onAuthExpired, setRememberMe, getRememberMe } from '@/utils/request'
 import { setAdminSession, clearAdminSession, ADMIN_ROLES } from '@/utils/permission'
+import { getDeviceId } from '@/utils/deviceId'
 
 export interface AdminUser {
   id: number
@@ -115,6 +116,7 @@ export const useAuthStore = defineStore('admin-auth', () => {
       password,
       captcha_key: captcha?.captchaKey,
       captcha_x: captcha?.captchaX,
+      device_id: getDeviceId(),
     })
     if (data.data?.totp_required) {
       return data.data
