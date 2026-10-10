@@ -355,7 +355,7 @@ const ALL_MENU_GROUPS = [
     label: '安全审计',
     icon: IconSafe,
     items: [
-      { name: 'AdminLoginHistory', label: '登录历史', icon: IconClockCircle, perm: 'audit:view' },
+      { name: 'AdminLoginHistory', label: '后台登录历史', icon: IconClockCircle, perm: 'audit:view' },
       { name: 'AdminTenantLoginHistory', label: '租户登录历史', icon: IconClockCircle, perm: 'audit:view' },
       { name: 'AdminSessions', label: '会话管理', icon: IconClockCircle, perm: 'user:edit' },
       { name: 'AdminAudit', label: '操作日志', icon: IconFile, perm: 'audit:view' },

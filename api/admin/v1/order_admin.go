@@ -8,17 +8,21 @@ import (
 // === 订单管理（管理后台） ===
 
 type OrderListReq struct {
-	g.Meta   `path:"/orders" method:"get" mime:"json" tags:"管理后台-订单" summary:"订单列表"`
-	Page     int    `json:"page" in:"query" d:"1"`
-	PageSize int    `json:"page_size" in:"query" d:"20"`
-	Status   string `json:"status" in:"query"`
-	TenantID string `json:"tenant_id" in:"query"`
+	g.Meta    `path:"/orders" method:"get" mime:"json" tags:"管理后台-订单" summary:"订单列表"`
+	Page      int    `json:"page" in:"query" d:"1"`
+	PageSize  int    `json:"page_size" in:"query" d:"20"`
+	Status    string `json:"status" in:"query"`
+	TenantID  string `json:"tenant_id" in:"query"`
+	OrderNo   string `json:"order_no" in:"query" dc:"订单号模糊搜索"`
+	StartDate string `json:"start_date" in:"query" dc:"开始日期（YYYY-MM-DD，含当天）"`
+	EndDate   string `json:"end_date" in:"query" dc:"结束日期（YYYY-MM-DD，含当天）"`
 }
 
 type OrderItem struct {
 	Id             int64       `json:"id"`
 	OrderNo        string      `json:"order_no"`
 	TenantId       int64       `json:"tenant_id"`
+	TenantName     string      `json:"tenant_name" dc:"租户名称（列表联表填充，详情接口为空）"`
 	UserId         int64       `json:"user_id"`
 	OrderType      string      `json:"order_type"`
 	PlanId         int64       `json:"plan_id"`
@@ -76,10 +80,13 @@ type OrderCompleteRes struct{}
 
 // OrderExportReq 导出订单列表请求
 type OrderExportReq struct {
-	g.Meta   `path:"/orders/export" method:"get" mime:"json" tags:"管理后台-订单" summary:"导出订单列表"`
-	Format   string `json:"format" in:"query" d:"csv" v:"in:csv,xlsx" dc:"导出格式：csv / xlsx"`
-	Status   string `json:"status" in:"query" dc:"状态筛选"`
-	TenantID string `json:"tenant_id" in:"query" dc:"租户ID筛选"`
+	g.Meta    `path:"/orders/export" method:"get" mime:"json" tags:"管理后台-订单" summary:"导出订单列表"`
+	Format    string `json:"format" in:"query" d:"csv" v:"in:csv,xlsx" dc:"导出格式：csv / xlsx"`
+	Status    string `json:"status" in:"query" dc:"状态筛选"`
+	TenantID  string `json:"tenant_id" in:"query" dc:"租户ID筛选"`
+	OrderNo   string `json:"order_no" in:"query" dc:"订单号模糊筛选"`
+	StartDate string `json:"start_date" in:"query" dc:"开始日期（YYYY-MM-DD，含当天）"`
+	EndDate   string `json:"end_date" in:"query" dc:"结束日期（YYYY-MM-DD，含当天）"`
 }
 
 type OrderExportRes struct{}

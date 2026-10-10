@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import request, { setTokens, clearTokens, onTokenRefreshed, onAuthExpired, setRememberMe, getRememberMe } from '@/utils/request'
 import { setTenantSession, clearTenantSession, TENANT_ROLES } from '@/utils/permission'
+import { getDeviceId } from '@/utils/deviceId'
 
 export interface TenantInfo {
   id: number
@@ -134,6 +135,7 @@ export const useTenantAuthStore = defineStore('tenant-auth', () => {
       captcha_key: captcha?.captchaKey,
       captcha_x: captcha?.captchaX,
       turnstile_token: captcha?.turnstileToken,
+      device_id: getDeviceId(),
     }, { _suppressErrorMsg: true } as any)
     if (data.data?.totp_required) {
       return data.data

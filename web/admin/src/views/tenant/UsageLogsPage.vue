@@ -11,6 +11,7 @@ import request from '@/utils/request'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import { useExport } from '@/composables/useExport'
 import { useDateRange } from '@/composables/useDateRange'
+import { useTenantOptions } from '@/composables/useTenantOptions'
 import { useIsMobile } from '@/composables/useIsMobile'
 import { displayCurrency, formatBilling } from '@/composables/useCurrency'
 
@@ -47,9 +48,11 @@ const filterStatus = ref<string | undefined>(undefined)
 const filterUpstreamRequestId = ref<string | undefined>(undefined)
 const filterDateRange = ref<string[]>(defaultTodayRange())
 
-const tenantOptions = ref<{ label: string; value: number }[]>([])
 const modelOptions = ref<{ label: string; value: string }[]>([])
 const channelOptions = ref<{ label: string; value: number }[]>([])
+
+// 租户下拉：远程搜索 + 防抖（共享 composable）
+const { tenantOptions, fetchTenantOptions, handleTenantSearch } = useTenantOptions()
 
 const statusOptions = [
 	{ label: '成功', value: 'success' },
@@ -64,28 +67,6 @@ const requestTypeOptions = [
 	{ label: '异步', value: '3' },
 	{ label: 'WebSocket', value: '4' },
 ]
-
-let tenantSearchTimer: ReturnType<typeof setTimeout> | null = null
-
-async function fetchTenantOptions(keyword = '') {
-	try {
-		const res: any = await request.get('/admin/tenants/select', {
-			params: { page: 1, page_size: 50, keyword }
-		})
-		const list = res.data?.data?.list || []
-		tenantOptions.value = list.map((t: any) => ({
-			label: `${t.name}（${t.code}）`,
-			value: t.id,
-		}))
-	} catch {
-		tenantOptions.value = []
-	}
-}
-
-function handleTenantSearch(value: string) {
-	if (tenantSearchTimer) clearTimeout(tenantSearchTimer)
-	tenantSearchTimer = setTimeout(() => fetchTenantOptions(value), 300)
-}
 
 // 模型下拉数据：专用不分页接口 /admin/models/options，一次拉回全部 active 模型后本地过滤。
 // 不用 /admin/models 列表接口——那是模型管理页的重接口（分页 + 定价 JSONB 展开 +

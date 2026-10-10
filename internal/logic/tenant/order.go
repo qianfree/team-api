@@ -134,7 +134,7 @@ func (s *sTenant) OrderCreate(ctx context.Context, req *v1.TenantOrderCreateReq)
 	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		var promoID int64
 		if req.PromoCode != "" {
-			promoResult, err := validatePromoCode(ctx, tenantID, req.PromoCode, amount, planID, true)
+			promoResult, err := validatePromoCode(ctx, tenantID, req.PromoCode, amount, planID, false, true)
 			if err != nil {
 				return err
 			}
@@ -374,6 +374,25 @@ func updateOrderPaymentChannel(ctx context.Context, orderID int64, channel, paym
 	return err
 }
 
+// computeTierDiscount 计算充值档位折扣实付基数：仅当金额为整数且与配置档位完全一致时命中
+// （int 截断会让 100.99 误命中 100 档，非档位金额不享受档位折扣）。
+// 返回折后基数与档位折扣额，无命中时基数=原价、折扣=0；金额运算全程 decimal。
+// RechargeCreate 下单与 ValidatePromoCode 预检共用，保证两侧口径一致。
+func computeTierDiscount(settings *payment.GlobalPaymentSettings, amount decimal.Decimal) (finalBase, tierDiscount decimal.Decimal) {
+	finalBase = amount
+	tierDiscount = billing.Zero
+	if settings == nil || !amount.IsInteger() {
+		return
+	}
+	discount, ok := settings.AmountDiscount[int(amount.IntPart())]
+	if !ok || discount <= 0 {
+		return
+	}
+	finalBase = billing.MultiplyMoney(amount, billing.NewFromFloat(discount))
+	tierDiscount = billing.SubtractMoney(amount, finalBase)
+	return
+}
+
 // RechargeCreate 创建充值订单并发起支付（一步完成）
 func (s *sTenant) RechargeCreate(ctx context.Context, req *v1.TenantRechargeCreateReq) (*v1.TenantRechargeCreateRes, error) {
 	role := middleware.GetUserRole(ctx)
@@ -393,7 +412,22 @@ func (s *sTenant) RechargeCreate(ctx context.Context, req *v1.TenantRechargeCrea
 		return nil, lcommon.NewBusinessError(422, fmt.Sprintf("充值金额不能小于 %.2f", minTopup))
 	}
 
-	// 2. 从 sys_options 加载渠道配置
+	// 2. 计算档位折扣实付基数。
+	// 折扣语义为「付折后价、按原价入账」：充 100 配 0.9 折 → 实付 90，履约按 100 CNY 等值 USD 入账
+	// （入账口径见 payment.FulfillOrder 的 recharge 分支，使用订单 Amount 原价换算）。
+	// 折扣叠加顺序：先档位折扣得实付基数，优惠码再作用于该基数（min_amount 门槛与百分比乘数同基数）。
+	amount := billing.NewFromFloat(req.Amount)
+	finalBase, tierDiscount := computeTierDiscount(settings, amount)
+
+	// 3. 优惠码只读预检：在渠道配置校验前拒绝无效优惠码，用户不必填完支付信息才看到优惠码报错；
+	// 权威校验（行锁 + 记用量）仍在建单事务内执行
+	if req.PromoCode != "" {
+		if _, err := validatePromoCode(ctx, tenantID, req.PromoCode, finalBase, 0, true, false); err != nil {
+			return nil, err
+		}
+	}
+
+	// 4. 从 sys_options 加载渠道配置
 	if err := payment.RequireCallbackBaseURL(ctx); err != nil {
 		return nil, err
 	}
@@ -407,22 +441,7 @@ func (s *sTenant) RechargeCreate(ctx context.Context, req *v1.TenantRechargeCrea
 		return nil, lcommon.NewBusinessError(422, "不支持的支付渠道")
 	}
 
-	// 3. 计算折扣后实付金额。
-	// 折扣语义为「付折后价、按原价入账」：充 100 配 0.9 折 → 实付 90，履约按 100 CNY 等值 USD 入账
-	// （入账口径见 payment.FulfillOrder 的 recharge 分支，使用订单 Amount 原价换算）。
-	// 档位仅在金额为整数且与配置档位完全一致时命中：此前 int(req.Amount) 截断会让 100.99
-	// 也误命中 100 档，非档位金额享受档位折扣。
-	finalAmount := req.Amount
-	if settings != nil {
-		if intAmt := int(req.Amount); float64(intAmt) == req.Amount {
-			if discount, ok := settings.AmountDiscount[intAmt]; ok && discount > 0 {
-				// 用 decimal 避免 amount × discount 的浮点误差
-				finalAmount = billing.InexactFloat64(billing.MultiplyMoney(billing.NewFromFloat(req.Amount), billing.NewFromFloat(discount)))
-			}
-		}
-	}
-
-	// 4. 生成订单号并创建订单
+	// 5. 生成订单号
 	randBytes := make([]byte, 4)
 	if _, err := rand.Read(randBytes); err != nil {
 		return nil, err
@@ -430,39 +449,69 @@ func (s *sTenant) RechargeCreate(ctx context.Context, req *v1.TenantRechargeCrea
 	orderNo := fmt.Sprintf("RCH%s%08x", time.Now().Format("20060102150405"), randBytes)
 	description := fmt.Sprintf("钱包充值 ¥%.2f", req.Amount)
 
-	result, err := dao.OrdOrders.Ctx(ctx).Insert(do.OrdOrders{
-		OrderNo:        orderNo,
-		TenantId:       tenantID,
-		UserId:         userID,
-		OrderType:      "recharge",
-		Amount:         req.Amount,
-		DiscountAmount: req.Amount - finalAmount,
-		FinalAmount:    finalAmount,
-		Currency:       "CNY",
-		PaymentChannel: req.PaymentChannel,
-		PaymentMethod:  req.PaymentMethod,
-		Status:         "pending",
-		ExpiredAt:      gtime.Now().Add(30 * time.Minute),
-		Description:    description,
+	// 事务：优惠码行锁校验 → 建单 → 记使用；任一步失败整体回滚，优惠码用量不会被无订单空耗
+	// （与 OrderCreate 同款模式，见 promo_code.go 的 validatePromoCode/recordPromoUsageTx 注释）。
+	var orderID int64
+	var finalAmount decimal.Decimal
+	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		discount := billing.Zero
+		finalAmount = finalBase
+		var promoID int64
+		if req.PromoCode != "" {
+			promoResult, err := validatePromoCode(ctx, tenantID, req.PromoCode, finalBase, 0, true, true)
+			if err != nil {
+				return err
+			}
+			promoID = promoResult.PromoCodeID
+			discount = promoResult.Discount
+			finalAmount = promoResult.FinalAmount
+		}
+		result, err := dao.OrdOrders.Ctx(ctx).Insert(do.OrdOrders{
+			OrderNo:        orderNo,
+			TenantId:       tenantID,
+			UserId:         userID,
+			OrderType:      "recharge",
+			Amount:         amount,
+			DiscountAmount: billing.AddMoney(tierDiscount, discount),
+			FinalAmount:    finalAmount,
+			Currency:       "CNY",
+			PaymentChannel: req.PaymentChannel,
+			PaymentMethod:  req.PaymentMethod,
+			Status:         "pending",
+			ExpiredAt:      gtime.Now().Add(30 * time.Minute),
+			Description:    description,
+		})
+		if err != nil {
+			return err
+		}
+		orderID, err = result.LastInsertId()
+		if err != nil {
+			return err
+		}
+		if promoID != 0 {
+			if err := recordPromoUsageTx(ctx, promoID, tenantID, userID, orderID, discount); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	orderID, _ := result.LastInsertId()
 
-	// 5. 构建回调 URL 和 ReturnURL
+	// 6. 构建回调 URL 和 ReturnURL
 	baseURL := ""
 	if settings != nil {
 		baseURL = settings.CallbackBaseURL
 	}
 	notifyURL := baseURL + "/api/payment/callback/" + req.PaymentChannel
 	returnURL := baseURL + "/api/payment/epay/return"
-	// 6. 调用 Provider 生成支付链接
+	// 7. 调用 Provider 生成支付链接（外部调用不入事务）
 	payResult, err := provider.CreatePayment(ctx, &payment.PaymentOrder{
 		OrderID:       orderID,
 		OrderNo:       orderNo,
 		TenantID:      tenantID,
-		Amount:        finalAmount,
+		Amount:        billing.InexactFloat64(finalAmount),
 		Currency:      "CNY",
 		OrderType:     "recharge",
 		Description:   gatewayProductName("recharge"),
@@ -471,8 +520,31 @@ func (s *sTenant) RechargeCreate(ctx context.Context, req *v1.TenantRechargeCrea
 		ReturnURL:     returnURL,
 	}, cfg)
 	if err != nil {
-		dao.OrdOrders.Ctx(ctx).Where("id", orderID).
-			Data(do.OrdOrders{Status: "cancelled"}).Update()
+		// 支付发起失败：取消订单并归还优惠码用量，小事务保证「订单终止」与「名额归还」原子
+		// （与 task.ExpirePendingOrders 同款模式）；条件置 cancelled 防止并发状态下误覆盖。
+		if txErr := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+			result, err := dao.OrdOrders.Ctx(ctx).
+				Where("id", orderID).
+				Where("status", "pending").
+				Data(do.OrdOrders{Status: "cancelled"}).
+				Update()
+			if err != nil {
+				return err
+			}
+			rows, err := result.RowsAffected()
+			if err != nil {
+				return err
+			}
+			if rows == 0 {
+				// 订单已被并发支付回调置为 paid：该订单仍会履约（优惠码折扣已真实消耗），
+				// 不得归还用量，否则限用名额被泄漏
+				g.Log().Warningf(ctx, "recharge order %d paid concurrently before payment-failure cancel, skip promo release", orderID)
+				return nil
+			}
+			return payment.ReleasePromoUsageForOrders(ctx, []int64{orderID})
+		}); txErr != nil {
+			g.Log().Errorf(ctx, "cancel recharge order %d after payment failure failed: %v", orderID, txErr)
+		}
 		return nil, err
 	}
 
@@ -483,7 +555,7 @@ func (s *sTenant) RechargeCreate(ctx context.Context, req *v1.TenantRechargeCrea
 		PaymentNo:   payResult.PaymentNo,
 		Params:      payResult.Params,
 		IsRedirect:  payResult.IsRedirect,
-		FinalAmount: finalAmount,
+		FinalAmount: billing.InexactFloat64(finalAmount),
 	}, nil
 }
 

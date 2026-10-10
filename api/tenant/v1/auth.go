@@ -57,6 +57,7 @@ type TenantLoginReq struct {
 	CaptchaKey     string `json:"captcha_key" dc:"验证码key（Turnstile关闭时必填）"`
 	CaptchaX       int    `json:"captcha_x" dc:"滑块X坐标（Turnstile关闭时必填）"`
 	TurnstileToken string `json:"turnstile_token" dc:"Cloudflare Turnstile验证token（Turnstile启用时必填）"`
+	DeviceId       string `json:"device_id" dc:"设备ID（前端 localStorage 持久化，用于新设备识别）"`
 }
 
 type TenantLoginRes struct {

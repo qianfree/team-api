@@ -97,6 +97,7 @@ type TenantRechargeCreateReq struct {
 	Amount         float64 `json:"amount" v:"required|min:0.01#请输入充值金额|充值金额不能小于 0.01"`
 	PaymentChannel string  `json:"payment_channel" v:"required|in:epay#请选择支付渠道|不支持的支付渠道"`
 	PaymentMethod  string  `json:"payment_method" v:"required#请选择支付方式"`
+	PromoCode      string  `json:"promo_code" dc:"优惠码（可选，折扣作用于档位折后实付金额）"`
 }
 
 type TenantRechargeCreateRes struct {

@@ -302,7 +302,7 @@ func (s *sTenant) Login(ctx context.Context, req *v1.TenantLoginReq) (*v1.Tenant
 	// Get client info early for login history recording
 	ipAddress := g.RequestFromCtx(ctx).GetClientIp()
 	ua := g.RequestFromCtx(ctx).Header.Get("User-Agent")
-	deviceFP := common.DeviceFingerprint(ua, ipAddress)
+	deviceFP := common.DeviceFingerprint(req.DeviceId, ua)
 
 	var tenant *entity.TntTenants
 	var user *entity.TntUsers

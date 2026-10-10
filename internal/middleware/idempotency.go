@@ -136,8 +136,10 @@ func buildIdempotencyKey(userType string, tenantID, userID int64, clientKey stri
 }
 
 // writeConflictResponse writes a 409 Conflict response for duplicate idempotency keys.
+// 注意用 WriteHeader 而非 WriteStatus(409)：后者不带内容时会先写状态文本 "Conflict"，
+// 再拼 JSON 会让响应体变成 Conflict{...} 破坏 JSON 解析。
 func writeConflictResponse(r *ghttp.Request) {
-	r.Response.WriteStatus(409)
+	r.Response.WriteHeader(409)
 	r.Response.WriteJson(g.Map{
 		"error": g.Map{
 			"type":    "conflict",

@@ -14,8 +14,9 @@ import (
 func HandlePaymentCallback(r *ghttp.Request) {
 	channel := r.Get("channel").String()
 	if channel == "" {
-		r.Response.WriteStatus(400)
-		r.Response.Write("fail")
+		// 注意：WriteStatus(code) 不带内容时会写入状态文本（200→"OK"），导致响应体变成
+		// "OKfail"/"OKsuccess"；易支付协议要求回调应答精确等于 success/fail，必须显式传内容。
+		r.Response.WriteStatus(400, "fail")
 		return
 	}
 
@@ -25,13 +26,11 @@ func HandlePaymentCallback(r *ghttp.Request) {
 		// 否则签名伪造/篡改尝试在服务端完全不可追溯。返回 200 fail 供渠道停止重推。
 		g.Log().Warningf(r.Context(), "[Payment] callback failed: channel=%s clientIP=%s err=%v",
 			channel, r.GetClientIp(), err)
-		r.Response.WriteStatus(200)
-		r.Response.Write("fail")
+		r.Response.WriteStatus(200, "fail")
 		return
 	}
 
-	r.Response.WriteStatus(200)
-	r.Response.Write("success")
+	r.Response.WriteStatus(200, "success")
 }
 
 // HandlePaymentEpayReturn 处理 Epay 支付完成后的浏览器同步跳转。

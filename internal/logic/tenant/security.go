@@ -80,7 +80,7 @@ func (s *sTenant) Verify2FA(ctx context.Context, req *v1.Tenant2FAVerifyReq) (*v
 	}).Update()
 
 	ua := g.RequestFromCtx(ctx).Header.Get("User-Agent")
-	deviceFP := common.DeviceFingerprint(ua, ipAddress)
+	deviceFP := common.DeviceFingerprint(req.DeviceId, ua)
 	_ = common.RecordLoginHistory(ctx, "tenant", user.Id, user.TenantId, "totp", ipAddress, ua, deviceFP, true, "")
 
 	// Get tenant info

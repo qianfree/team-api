@@ -74,6 +74,20 @@ func (s *sTenant) RedeemCode(ctx context.Context, req *v1.TenantRedeemCodeReq) (
 			return lcommon.NewBusinessError(422, "兑换码已全部使用")
 		}
 
+		// 每码每租户仅可兑换一次：权益（钱包/套餐）归属租户，按租户维度去重，
+		// 防止单一租户反复兑换耗尽整码额度。处于兑换码行锁保护内，
+		// 后到事务的检查能看到先到事务已提交的使用记录。
+		dupCount, err := dao.OrdRedemptionUsages.Ctx(ctx).
+			Where("redemption_id", redemption.ID).
+			Where("tenant_id", tenantID).
+			Count()
+		if err != nil {
+			return err
+		}
+		if dupCount > 0 {
+			return lcommon.NewBusinessError(422, "该组织已兑换过此兑换码")
+		}
+
 		res = &v1.TenantRedeemCodeRes{Code: req.Code, Type: redemption.Type}
 		var txID int64
 		usageValue := billing.Zero
@@ -132,6 +146,11 @@ func (s *sTenant) RedeemCode(ctx context.Context, req *v1.TenantRedeemCodeReq) (
 			TransactionId: txID,
 		})
 		if err != nil {
+			if lcommon.IsDuplicateKeyError(err) {
+				// 行锁下极小概率的竞态撞 (redemption_id, tenant_id) 唯一约束：
+				// 转为友好业务错误（事务回滚，Redis 钱包补偿自动逆转已入账金额）
+				return lcommon.NewBusinessError(422, "该组织已兑换过此兑换码")
+			}
 			return gerror.Wrapf(err, "记录兑换使用记录失败")
 		}
 

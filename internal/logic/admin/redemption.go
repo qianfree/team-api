@@ -79,7 +79,7 @@ func (s *sAdmin) BatchCreateRedemptions(ctx context.Context, req *v1.RedemptionC
 				MaxUses:      maxUses,
 				BatchNo:      batchNo,
 				Status:       "active",
-				ExpiresAt:    gtime.Now().Add(90 * 24 * time.Hour),
+				ExpiresAt:    gtime.Now().Add(time.Duration(req.ExpiresDays) * 24 * time.Hour),
 			})
 			if err != nil {
 				return err

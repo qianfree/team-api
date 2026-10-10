@@ -137,7 +137,7 @@ const adminRoutes: RouteRecordRaw[] = [
         path: 'login-history',
         name: 'AdminLoginHistory',
         component: () => import('@/views/security/LoginHistoryPage.vue'),
-        meta: { title: '登录历史', perm: 'audit:view' },
+        meta: { title: '后台登录历史', perm: 'audit:view' },
       },
       {
         path: 'tenant-login-history',

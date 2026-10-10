@@ -192,39 +192,58 @@ func TestConfirmTokenCannotParseAsProvisional(t *testing.T) {
 // ─── DeviceFingerprint ──────────────────────────────────────────────
 
 func TestDeviceFingerprint_Deterministic(t *testing.T) {
-	fp1 := DeviceFingerprint("Mozilla/5.0", "192.168.1.1")
-	fp2 := DeviceFingerprint("Mozilla/5.0", "192.168.1.1")
+	fp1 := DeviceFingerprint("", "Mozilla/5.0")
+	fp2 := DeviceFingerprint("", "Mozilla/5.0")
 	if fp1 != fp2 {
 		t.Fatalf("same input produced different fingerprints: %q vs %q", fp1, fp2)
 	}
 }
 
 func TestDeviceFingerprint_DifferentUA(t *testing.T) {
-	fp1 := DeviceFingerprint("Chrome/120", "192.168.1.1")
-	fp2 := DeviceFingerprint("Firefox/115", "192.168.1.1")
+	fp1 := DeviceFingerprint("", "Chrome/120")
+	fp2 := DeviceFingerprint("", "Firefox/115")
 	if fp1 == fp2 {
 		t.Fatal("different UAs should produce different fingerprints")
 	}
 }
 
-func TestDeviceFingerprint_DifferentIP(t *testing.T) {
-	fp1 := DeviceFingerprint("Chrome/120", "10.0.0.1")
-	fp2 := DeviceFingerprint("Chrome/120", "10.0.0.2")
-	if fp1 == fp2 {
-		t.Fatal("different IPs should produce different fingerprints")
+func TestDeviceFingerprint_DeviceIDPreferred(t *testing.T) {
+	// 有设备 ID 时优先走 dev: 分支，UA 差异不影响指纹
+	fp1 := DeviceFingerprint("device-abc", "Chrome/120")
+	fp2 := DeviceFingerprint("device-abc", "Firefox/115")
+	if fp1 != fp2 {
+		t.Fatal("same device ID should produce same fingerprint regardless of UA")
+	}
+	if !strings.HasPrefix(fp1, "dev:") {
+		t.Fatalf("device ID fingerprint should have dev: prefix, got %q", fp1)
+	}
+
+	fp3 := DeviceFingerprint("device-xyz", "Chrome/120")
+	if fp1 == fp3 {
+		t.Fatal("different device IDs should produce different fingerprints")
+	}
+}
+
+func TestDeviceFingerprint_FallbackPrefix(t *testing.T) {
+	fp := DeviceFingerprint("", "Mozilla/5.0")
+	if !strings.HasPrefix(fp, "ua:") {
+		t.Fatalf("UA fallback fingerprint should have ua: prefix, got %q", fp)
 	}
 }
 
 func TestDeviceFingerprint_Length(t *testing.T) {
-	fp := DeviceFingerprint("some-ua", "1.2.3.4")
-	if len(fp) != 32 {
-		t.Fatalf("expected length 32, got %d", len(fp))
+	// dev: 前缀 4 字符 + 32 hex = 36；ua: 前缀 3 字符 + 32 hex = 35
+	if fp := DeviceFingerprint("some-device", ""); len(fp) != 36 {
+		t.Fatalf("expected length 36 for device ID branch, got %d", len(fp))
+	}
+	if fp := DeviceFingerprint("", "some-ua"); len(fp) != 35 {
+		t.Fatalf("expected length 35 for UA fallback branch, got %d", len(fp))
 	}
 }
 
 func TestDeviceFingerprint_CaseInsensitive(t *testing.T) {
-	fp1 := DeviceFingerprint("Mozilla/5.0", "10.0.0.1")
-	fp2 := DeviceFingerprint("MOZILLA/5.0", "10.0.0.1")
+	fp1 := DeviceFingerprint("", "Mozilla/5.0")
+	fp2 := DeviceFingerprint("", "MOZILLA/5.0")
 	if fp1 != fp2 {
 		t.Fatal("fingerprint should be case-insensitive on UA")
 	}
@@ -232,22 +251,36 @@ func TestDeviceFingerprint_CaseInsensitive(t *testing.T) {
 
 func TestDeviceFingerprint_LongUA(t *testing.T) {
 	longUA := strings.Repeat("A", 500)
-	fp := DeviceFingerprint(longUA, "1.2.3.4")
-	if len(fp) != 32 {
-		t.Fatalf("expected length 32 for long UA, got %d", len(fp))
+	fp := DeviceFingerprint("", longUA)
+	if len(fp) != 35 {
+		t.Fatalf("expected length 35 for long UA, got %d", len(fp))
 	}
 
 	truncatedUA := strings.Repeat("A", 200)
-	fpTruncated := DeviceFingerprint(truncatedUA, "1.2.3.4")
+	fpTruncated := DeviceFingerprint("", truncatedUA)
 	if fp != fpTruncated {
 		t.Fatal("UA beyond 200 chars should not affect fingerprint")
 	}
 }
 
+func TestDeviceFingerprint_LongDeviceID(t *testing.T) {
+	longID := strings.Repeat("d", 500)
+	fp := DeviceFingerprint(longID, "")
+	if len(fp) != 36 {
+		t.Fatalf("expected length 36 for long device ID, got %d", len(fp))
+	}
+
+	truncatedID := strings.Repeat("d", 128)
+	fpTruncated := DeviceFingerprint(truncatedID, "")
+	if fp != fpTruncated {
+		t.Fatal("device ID beyond 128 chars should not affect fingerprint")
+	}
+}
+
 func TestDeviceFingerprint_Empty(t *testing.T) {
 	fp := DeviceFingerprint("", "")
-	if len(fp) != 32 {
-		t.Fatalf("expected length 32 for empty input, got %d", len(fp))
+	if len(fp) != 35 {
+		t.Fatalf("expected length 35 for empty input, got %d", len(fp))
 	}
 }
 

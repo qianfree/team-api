@@ -37,8 +37,20 @@ func (s *sAdmin) ListPromoCodes(ctx context.Context, req *v1.PromoCodeListReq) (
 	}, nil
 }
 
+// validatePromoDiscountBound percentage 类型折扣值边界校验：必须 ∈ (0,100]。
+// 超过 100 时折扣会超过订单金额产生负数实付（fixed 类型由消费侧封顶到订单金额保证不为负）。
+func validatePromoDiscountBound(typ string, value float64) error {
+	if typ == "percentage" && (value <= 0 || value > 100) {
+		return common.NewBusinessError(422, "百分比类型的折扣值必须在 (0, 100] 之间")
+	}
+	return nil
+}
+
 // CreatePromoCode 创建优惠码
 func (s *sAdmin) CreatePromoCode(ctx context.Context, req *v1.PromoCodeCreateReq) (*v1.PromoCodeCreateRes, error) {
+	if err := validatePromoDiscountBound(req.Type, req.DiscountValue); err != nil {
+		return nil, err
+	}
 	// code 留空时自动生成 12 位随机码（与前端「留空自动生成」提示对应）
 	code := strings.TrimSpace(req.Code)
 	if code == "" {
@@ -72,12 +84,35 @@ func (s *sAdmin) CreatePromoCode(ctx context.Context, req *v1.PromoCodeCreateReq
 
 // UpdatePromoCode 更新优惠码
 func (s *sAdmin) UpdatePromoCode(ctx context.Context, req *v1.PromoCodeUpdateReq) (*v1.PromoCodeUpdateRes, error) {
-	count, err := dao.OrdPromoCodes.Ctx(ctx).Where("id", req.Id).Count()
+	// 读取现值：存在性校验与折扣值边界校验共用一次查询
+	var existing *struct {
+		Type          string  `json:"type"`
+		DiscountValue float64 `json:"discount_value"`
+	}
+	err := dao.OrdPromoCodes.Ctx(ctx).
+		Where("id", req.Id).
+		Fields("type", "discount_value").
+		Scan(&existing)
 	if err != nil {
 		return nil, err
 	}
-	if count == 0 {
+	if existing == nil {
 		return nil, common.NewNotFoundError("优惠码")
+	}
+
+	// percentage 折扣值边界（创建侧同款）：类型/折扣值可能只传其一，
+	// 与库中现值合成生效值后校验，防止「fixed 200 仅改 type 为 percentage」这类绕过边界的更新
+	if req.Type != nil || req.DiscountValue != nil {
+		typ, value := existing.Type, existing.DiscountValue
+		if req.Type != nil {
+			typ = *req.Type
+		}
+		if req.DiscountValue != nil {
+			value = *req.DiscountValue
+		}
+		if err := validatePromoDiscountBound(typ, value); err != nil {
+			return nil, err
+		}
 	}
 
 	// 指针字段非 nil 才更新（留空不更新），code 创建后不可改，

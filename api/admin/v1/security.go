@@ -54,6 +54,7 @@ type Admin2FAVerifyReq struct {
 	g.Meta      `path:"/auth/2fa/verify" method:"post" mime:"json" tags:"管理后台-认证" summary:"2FA登录验证" group:"public" middleware:"-"`
 	Provisional string `json:"provisional_token" v:"required#缺少临时令牌" dc:"登录时返回的临时令牌"`
 	Code        string `json:"code" v:"required#请输入验证码" dc:"TOTP 验证码或恢复码"`
+	DeviceId    string `json:"device_id" dc:"设备ID（前端 localStorage 持久化，用于新设备识别）"`
 }
 
 type Admin2FAVerifyRes struct {

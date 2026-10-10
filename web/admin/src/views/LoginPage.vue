@@ -8,6 +8,7 @@ import { useAuthStore } from '@/stores/auth'
 import type { PendingAgreement } from '@/stores/auth'
 import { extractApiError } from '@/utils/request'
 import request from '@/utils/request'
+import { getDeviceId } from '@/utils/deviceId'
 import SlideCaptcha from '@/components/SlideCaptcha.vue'
 import { useSiteName } from '@/composables/useSiteName'
 
@@ -99,8 +100,6 @@ async function acceptAgreements() {
 }
 
 // Check if already logged in on mount
-import { onMounted } from 'vue'
-
 onMounted(() => {
   // If already logged in, redirect to dashboard
   if (authStore.isLoggedIn) {
@@ -147,6 +146,7 @@ async function handle2FAVerify() {
     const res = await request.post('/api/admin/auth/2fa/verify', {
       provisional_token: provisionalToken.value,
       code: totpCode.value,
+      device_id: getDeviceId(),
     })
     authStore.applyTokensFrom2FA(res.data.data)
     proceedAfterLogin()
