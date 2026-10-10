@@ -413,11 +413,15 @@ onBeforeUnmount(() => {
 <template>
 	<div class="wallet-page space-y-6">
 		<!-- Page Header -->
-		<div class="page-header">
-			<div>
+		<div class="page-header flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+			<div class="min-w-0">
 				<h1 class="page-title">钱包</h1>
 				<p class="page-description">查看余额并为账户充值</p>
 			</div>
+			<button class="btn btn-secondary flex-shrink-0 self-start lg:self-auto" @click="openRedeemModal">
+				<Icon name="gift" size="sm" />
+				兑换码
+			</button>
 		</div>
 
 		<!-- Pay Result Banner -->
@@ -524,18 +528,12 @@ onBeforeUnmount(() => {
 
 			<div class="card wallet-card overflow-hidden">
 				<div class="border-b border-slate-100/80 px-5 py-4 sm:px-6">
-					<div class="flex items-center justify-between gap-3">
-						<div class="flex min-w-0 items-center gap-3">
-							<div class="recharge-icon"><Icon name="plus" size="md" /></div>
-							<div class="min-w-0">
-								<h2 class="text-base font-semibold text-slate-900">钱包充值</h2>
-								<p class="mt-0.5 text-xs text-slate-400">选择金额和支付方式后前往收银台</p>
-							</div>
+					<div class="flex min-w-0 items-center gap-3">
+						<div class="recharge-icon"><Icon name="plus" size="md" /></div>
+						<div class="min-w-0">
+							<h2 class="text-base font-semibold text-slate-900">钱包充值</h2>
+							<p class="mt-0.5 text-xs text-slate-400">选择金额和支付方式后前往收银台</p>
 						</div>
-						<button class="btn btn-secondary btn-sm flex-shrink-0" @click="openRedeemModal">
-							<Icon name="gift" size="sm" />
-							<span class="hidden sm:inline">兑换码</span>
-						</button>
 					</div>
 				</div>
 
