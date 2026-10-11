@@ -188,6 +188,13 @@ const adminRoutes: RouteRecordRaw[] = [
         meta: { title: '请求审计日志', perm: 'audit:view' },
       },
       {
+        // ai-req-analyze 插件页面：插件未安装/未启用时页面内给出引导（路由常驻，权限点控制访问）
+        path: 'ai-req-analyze',
+        name: 'AdminAiReqAnalyze',
+        component: () => import('@/views/plugin/ai-req-analyze/index.vue'),
+        meta: { title: 'AI请求分析', perm: 'ai-req-analyze:view' },
+      },
+      {
         path: 'notification-templates',
         name: 'AdminNotificationTemplates',
         component: () => import('@/views/operation/NotificationTemplatesPage.vue'),

@@ -7,6 +7,7 @@ import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
+import PluginConfigModal from '@/components/PluginConfigModal.vue'
 import request from '@/utils/request'
 
 const loading = ref(false)
@@ -65,13 +66,9 @@ const statusTagLabel: Record<string, string> = {
   error: '异常',
 }
 
-// --- Config modal ---
+// --- Config modal（渲染与逻辑在通用组件 PluginConfigModal，此处只保留开关状态） ---
 const showConfigModal = ref(false)
 const configPluginName = ref('')
-const configSchema = ref<any[]>([])
-const configForm = ref<Record<string, any>>({})
-const configLoading = ref(false)
-const configSubmitting = ref(false)
 
 async function fetchData() {
   loading.value = true
@@ -107,46 +104,7 @@ async function doAction(action: string, name: string, extra?: Record<string, any
 
 async function openConfig(name: string) {
   configPluginName.value = name
-  configLoading.value = true
   showConfigModal.value = true
-  configForm.value = {}
-  configSchema.value = []
-
-  try {
-    const [schemaRes, configRes] = await Promise.all([
-      request.get(`/admin/plugins/${name}/config-schema`),
-      request.get(`/admin/plugins/${name}`),
-    ])
-    configSchema.value = schemaRes.data?.data?.list || []
-    const currentConfig = configRes.data?.data?.config || {}
-    // init form with defaults then overlay current values
-    const form: Record<string, any> = {}
-    for (const field of configSchema.value) {
-      form[field.key] = currentConfig[field.key] ?? field.default
-    }
-    configForm.value = form
-  } catch {
-    Message.error('加载配置失败')
-    showConfigModal.value = false
-  } finally {
-    configLoading.value = false
-  }
-}
-
-async function submitConfig() {
-  configSubmitting.value = true
-  try {
-    await request.put(`/admin/plugins/${configPluginName.value}/config`, {
-      config: configForm.value,
-    })
-    Message.success('配置已保存')
-    showConfigModal.value = false
-    fetchData()
-  } catch {
-    // error handled by interceptor
-  } finally {
-    configSubmitting.value = false
-  }
 }
 
 // --- Columns ---
@@ -327,70 +285,12 @@ onMounted(() => {
       </div>
     </ACard>
 
-    <!-- Config Modal -->
-    <AModal
+    <!-- Config Modal（通用组件，配置渲染与保存逻辑内聚在组件内） -->
+    <PluginConfigModal
       v-model:visible="showConfigModal"
-      :title="`配置 - ${configPluginName}`"
-      :mask-closable="false"
-      :width="550"
-      :ok-loading="configSubmitting"
-      :on-before-ok="submitConfig"
-      @cancel="showConfigModal = false"
-    >
-      <ASpin :loading="configLoading" style="width: 100%">
-        <AForm :model="configForm" layout="vertical" v-if="configSchema.length > 0">
-          <AFormItem
-            v-for="field in configSchema"
-            :key="field.key"
-            :label="field.label"
-            :required="field.required"
-          >
-            <!-- string -->
-            <AInput
-              v-if="field.type === 'string'"
-              v-model="configForm[field.key]"
-              :placeholder="field.description"
-            />
-            <!-- int -->
-            <AInputNumber
-              v-else-if="field.type === 'int'"
-              v-model="configForm[field.key]"
-              :placeholder="field.description"
-              style="width: 100%"
-            />
-            <!-- bool -->
-            <ASwitch
-              v-else-if="field.type === 'bool'"
-              v-model="configForm[field.key]"
-            />
-            <!-- select -->
-            <ASelect
-              v-else-if="field.type === 'select'"
-              v-model="configForm[field.key]"
-              :options="field.options?.map((o: string) => ({ label: o, value: o }))"
-              :placeholder="field.description"
-            />
-            <!-- json -->
-            <ATextarea
-              v-else-if="field.type === 'json'"
-              v-model="configForm[field.key]"
-              :placeholder="field.description"
-              :auto-size="{ minRows: 3, maxRows: 8 }"
-            />
-            <!-- fallback -->
-            <AInput
-              v-else
-              v-model="configForm[field.key]"
-              :placeholder="field.description"
-            />
-            <div v-if="field.description" style="font-size: 12px; color: var(--color-text-3); margin-top: 4px;">
-              {{ field.description }}
-            </div>
-          </AFormItem>
-        </AForm>
-        <AEmpty v-else description="该插件无可配置项" />
-      </ASpin>
-    </AModal>
+      :plugin-name="configPluginName"
+      @saved="fetchData"
+    />
   </div>
 </template>
 

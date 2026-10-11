@@ -115,11 +115,14 @@ type CronJobDef struct {
 type ConfigFieldDef struct {
 	Key         string      // 配置键，如 "smtp_host"
 	Label       string      // 显示名
-	Type        string      // 类型：string/int/bool/select/json
+	Type        string      // 类型：string/int/bool/select/json/text（text=长文本多行输入）
 	Default     interface{} // 默认值
 	Options     []string    // select 类型的选项
 	Required    bool        // 是否必填
-	Description string      // 说明
+	Description string      // 说明（展示在输入框下方）
+	Encrypted   bool        // 敏感字段：存储时 AES-256-GCM 加密，管理界面读取时掩码显示；更新时空值/掩码值表示保持现值
+	Group       string      // 分组名：配置界面按组渲染小节；空值不分组（平铺）
+	HalfWidth   bool        // 半宽布局：与相邻半宽字段同行；不声明时按类型默认（string/json/text 整行，int/bool/select 半宽）
 }
 
 // RelayRequest Relay 请求信息。

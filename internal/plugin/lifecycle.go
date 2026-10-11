@@ -8,6 +8,7 @@ import (
 	"github.com/gogf/gf/v2/os/glog"
 
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/common"
 	do "github.com/qianfree/team-api/internal/model/do"
 )
 
@@ -96,6 +97,9 @@ func Disable(ctx context.Context, name string) error {
 	// 摘除动态权限规则：插件路由回落到默认拒绝（权限点本身保持有效，见 permission.go）
 	ClearPermissionRules(name)
 
+	// 摘除定时任务：否则禁用后插件的后台任务仍按计划继续执行
+	removePluginCronJobs(entry)
+
 	entry.Status = StatusDisabled
 	_, err := dao.SysPlugins.Ctx(ctx).
 		Where("name", name).
@@ -132,6 +136,7 @@ func Uninstall(ctx context.Context, name string, keepData bool) error {
 
 	// 防御性摘除：正常路径下卸载前必已禁用（规则已摘），这里兜底清理
 	ClearPermissionRules(name)
+	removePluginCronJobs(entry)
 
 	entry.Status = StatusRegistered
 	glog.Infof(ctx, "plugin %s: uninstalled (keepData=%v)", name, keepData)
@@ -204,6 +209,17 @@ func DisableForTenant(ctx context.Context, pluginName string, tenantID int64) er
 }
 
 // --- 内部辅助函数 ---
+
+// removePluginCronJobs 摘除插件的全部定时任务（注册时加了 plugin_ 前缀）。
+// 摘除是幂等的：任务不存在时 Remove 静默返回，防御性调用无副作用。
+func removePluginCronJobs(entry *PluginEntry) {
+	if c, ok := entry.Plugin.(Cronable); ok {
+		cs := common.GetCronScheduler()
+		for _, job := range c.CronJobs() {
+			cs.Remove("plugin_" + job.Name)
+		}
+	}
+}
 
 func checkDependencies(entry *PluginEntry) error {
 	for _, dep := range entry.Info.Dependencies {

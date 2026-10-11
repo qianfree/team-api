@@ -7,10 +7,18 @@ import request from '@/utils/request'
 // 关联置信度透明展示（精确/内容/推断分层），压缩断点可见摘要，
 // 每条消息脚注可跳转对应审计详情（审核追溯闭环）。
 
-const props = defineProps<{
-	visible: boolean
-	recordId: number | null
-}>()
+const props = withDefaults(
+	defineProps<{
+		visible: boolean
+		recordId: number | null
+		// 自定义数据端点：默认走审计模块会话视图；ai-req-analyze 报告等调用方
+		// 未必有 audit:view 权限，传自己的端点（参数为 recordId，其语义由调用方定义）
+		fetchUrl?: (recordId: number) => string
+	}>(),
+	{
+		fetchUrl: (id: number) => `/admin/audit/request-logs/${id}/conversation`,
+	},
+)
 const emit = defineEmits<{
 	(e: 'update:visible', v: boolean): void
 	(e: 'open-record', id: number): void
@@ -31,7 +39,7 @@ async function fetchView(id: number) {
 	loading.value = true
 	view.value = null
 	try {
-		const res: any = await request.get(`/admin/audit/request-logs/${id}/conversation`)
+		const res: any = await request.get(props.fetchUrl(id))
 		view.value = res.data?.data || null
 	} catch {
 		view.value = null

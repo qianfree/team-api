@@ -108,6 +108,9 @@ type PluginConfigFieldItem struct {
 	Options     []string `json:"options,omitempty"`
 	Required    bool     `json:"required"`
 	Description string   `json:"description"`
+	Encrypted   bool     `json:"encrypted,omitempty"` // 敏感字段：密码型输入，回显掩码，留空保持现值
+	Group       string   `json:"group,omitempty"`     // 分组名：配置界面按组渲染小节
+	HalfWidth   bool     `json:"half_width,omitempty"` // 半宽布局：与相邻半宽字段同行
 }
 
 type PluginConfigSchemaRes struct {
