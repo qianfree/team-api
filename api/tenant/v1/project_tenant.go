@@ -24,7 +24,7 @@ type TenantProjectListRes struct {
 
 type TenantProjectCreateReq struct {
 	g.Meta      `path:"/projects" method:"post" mime:"json" tags:"租户控制台-项目" summary:"创建项目"`
-	Name        string  `json:"name" v:"required"`
+	Name        string  `json:"name" v:"required|regex:^[^<>]*$#项目名称不能包含 < 或 > 字符"`
 	Description string  `json:"description"`
 	Budget      float64 `json:"budget"`
 }
@@ -36,7 +36,7 @@ type TenantProjectCreateRes struct {
 type TenantProjectUpdateReq struct {
 	g.Meta      `path:"/projects/{id}" method:"put" mime:"json" tags:"租户控制台-项目" summary:"更新项目"`
 	Id          int64   `json:"id" in:"path" v:"required|min:1"`
-	Name        string  `json:"name"`
+	Name        string  `json:"name" v:"regex:^[^<>]*$#项目名称不能包含 < 或 > 字符"`
 	Description string  `json:"description"`
 	Budget      float64 `json:"budget"`
 }
@@ -96,7 +96,7 @@ type TenantProjectApiKeyListRes struct {
 type TenantProjectApiKeyCreateReq struct {
 	g.Meta               `path:"/projects/{id}/api-keys" method:"post" mime:"json" tags:"租户控制台-项目" summary:"项目密钥创建"`
 	Id                   int64       `json:"id" in:"path" v:"required|min:1"`
-	Name                 string      `json:"name" v:"required"`
+	Name                 string      `json:"name" v:"required|regex:^[^<>]*$#密钥名称不能包含 < 或 > 字符"`
 	Scope                string      `json:"scope" d:"full"`
 	ExpiresAt            *gtime.Time `json:"expires_at"`
 	RateLimitQps         *int        `json:"rate_limit_qps"`

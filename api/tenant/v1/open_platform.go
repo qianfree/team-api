@@ -42,7 +42,7 @@ type OpenAppItem struct {
 // OpenAppCreateReq 创建应用
 type OpenAppCreateReq struct {
 	g.Meta      `path:"/open/apps" method:"post" mime:"json" tags:"租户控制台-开放平台" summary:"创建应用"`
-	Name        string   `json:"name" v:"required|length:2,100#请输入应用名称|应用名称长度为2-100位" dc:"应用名称"`
+	Name        string   `json:"name" v:"required|length:2,100|regex:^[^<>]*$#请输入应用名称|应用名称长度为2-100位|应用名称不能包含 < 或 > 字符" dc:"应用名称"`
 	Description string   `json:"description" v:"length:0,500#描述不超过500字" dc:"应用描述"`
 	Permissions []string `json:"permissions" v:"required#请选择权限范围" dc:"权限范围"`
 	IPWhitelist []string `json:"ip_whitelist" dc:"IP 白名单"`
@@ -123,7 +123,7 @@ type WebhookConfigItem struct {
 // WebhookConfigCreateReq 创建 Webhook
 type WebhookConfigCreateReq struct {
 	g.Meta                 `path:"/open/webhooks" method:"post" mime:"json" tags:"租户控制台-开放平台" summary:"创建Webhook配置"`
-	Name                   string   `json:"name" v:"required|length:2,100#请输入名称|名称长度2-100" dc:"配置名称"`
+	Name                   string   `json:"name" v:"required|length:2,100|regex:^[^<>]*$#请输入名称|名称长度2-100|名称不能包含 < 或 > 字符" dc:"配置名称"`
 	URL                    string   `json:"url" v:"required|length:10,500#请输入URL|URL长度不正确" dc:"回调URL（HTTPS）"`
 	Events                 []string `json:"events" v:"required#请选择事件" dc:"订阅事件列表"`
 	MaxConsecutiveFailures int      `json:"max_consecutive_failures" d:"10" dc:"最大连续失败次数"`

@@ -183,6 +183,8 @@ var (
 			s.Use(middleware.Recovery)
 			s.Use(middleware.RequestId)
 			s.Use(middleware.ServiceName)
+			// 全局安全响应头（CSP/XFO/nosniff/Referrer-Policy/HSTS），覆盖 API 与前端静态资源
+			s.Use(middleware.SecurityHeaders)
 
 			// IP 黑名单：业务链路第一道闸门（Recovery/RequestId/ServiceName 就绪之后、
 			// setup 守卫与所有路由组之前），命中黑名单的请求在任何路由之前直接 403
@@ -266,6 +268,8 @@ var (
 
 				// Captcha — public, no auth required (shared by admin + tenant)
 				group.Group("/captcha", func(g *ghttp.RouterGroup) {
+					// 无认证 + CPU 密集（滑块图生成），必须限流防未认证洪水
+					g.Middleware(middleware.CaptchaRateLimit)
 					g.Bind(captchaController.NewV1())
 				})
 				// Settings — public settings, no auth required

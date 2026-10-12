@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
@@ -59,8 +60,11 @@ func HandleFileServe(r *ghttp.Request) {
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
+	// 存储型 XSS 纵深防御：mime_type 来自上传/上游响应头，不可信。inline 仅对
+	// 无脚本执行能力的位图图片与 PDF 放行；SVG（可内嵌脚本）、text/html 等一律
+	// 强制 attachment 下载，杜绝在管理后台同源下渲染执行。
 	disposition := "attachment"
-	if r.GetQuery("disposition").String() == "inline" {
+	if r.GetQuery("disposition").String() == "inline" && isInlineSafeContentType(contentType) {
 		disposition = "inline"
 	}
 	filename := record.OriginalName
@@ -87,4 +91,17 @@ func HandleFileServe(r *ghttp.Request) {
 func writeServeError(r *ghttp.Request, status int, msg string) {
 	r.Response.WriteStatus(status)
 	r.Response.WriteJson(g.Map{"code": status, "message": msg})
+}
+
+// isInlineSafeContentType 判断该 MIME 类型是否允许浏览器内联渲染。
+// 仅放行位图图片与 PDF；SVG 可携带脚本、text/html 同源可执行，均不允许 inline。
+func isInlineSafeContentType(ct string) bool {
+	if i := strings.IndexByte(ct, ';'); i >= 0 {
+		ct = ct[:i]
+	}
+	switch strings.ToLower(strings.TrimSpace(ct)) {
+	case "image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf":
+		return true
+	}
+	return false
 }

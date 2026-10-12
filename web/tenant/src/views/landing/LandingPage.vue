@@ -569,11 +569,18 @@ useSeo({
   canonicalUrl: 'https://team-api.net/',
 })
 
+/* JSON.stringify 不转义 <：admin 可控字段（站点名/描述）若含 </script> 会逃逸
+   script 块造成 HTML 注入。统一把 < > 转义为 \u003c/\u003e 后再注入 innerHTML
+   （JSON 字符串里 \u003c 与 < 等价，不影响结构化数据解析） */
+function safeJsonLd(obj: Record<string, unknown>): string {
+  return JSON.stringify(obj).replace(/</g, '\\u003c').replace(/>/g, '\\u003e')
+}
+
 useHead({
   script: [
     {
       type: 'application/ld+json',
-      innerHTML: JSON.stringify({
+      innerHTML: safeJsonLd({
         '@context': 'https://schema.org',
         '@type': 'SoftwareApplication',
         name: siteName.value,
@@ -603,7 +610,7 @@ useHead({
     },
     {
       type: 'application/ld+json',
-      innerHTML: JSON.stringify({
+      innerHTML: safeJsonLd({
         '@context': 'https://schema.org',
         '@type': 'Organization',
         name: siteName.value,
@@ -614,7 +621,7 @@ useHead({
     },
     {
       type: 'application/ld+json',
-      innerHTML: JSON.stringify({
+      innerHTML: safeJsonLd({
         '@context': 'https://schema.org',
         '@type': 'WebSite',
         name: siteName.value,

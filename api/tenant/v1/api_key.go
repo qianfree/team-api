@@ -25,7 +25,7 @@ type TenantApiKeyListRes struct {
 
 type TenantApiKeyCreateReq struct {
 	g.Meta               `path:"/api-keys" method:"post" mime:"json" tags:"租户控制台-API Key" summary:"创建API Key"`
-	Name                 string      `json:"name" v:"required"`
+	Name                 string      `json:"name" v:"required|regex:^[^<>]*$#密钥名称不能包含 < 或 > 字符"`
 	Scope                string      `json:"scope"`
 	KeyType              string      `json:"key_type"`
 	ProjectID            int64       `json:"project_id"`
@@ -56,7 +56,7 @@ type TenantApiKeyDeleteRes struct{}
 type TenantApiKeyUpdateReq struct {
 	g.Meta               `path:"/api-keys/{id}" method:"put" mime:"json" tags:"租户控制台-API Key" summary:"更新API Key"`
 	Id                   int64       `json:"id" in:"path" v:"required|min:1"`
-	Name                 string      `json:"name"`
+	Name                 string      `json:"name" v:"regex:^[^<>]*$#密钥名称不能包含 < 或 > 字符"`
 	Scope                string      `json:"scope"`
 	Status               string      `json:"status"`
 	ExpiresAt            *gtime.Time `json:"expires_at"`

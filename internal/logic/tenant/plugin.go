@@ -66,15 +66,20 @@ func (s *sTenant) TenantPluginDetail(ctx context.Context, req *v1.TenantPluginDe
 		enabled = record["enabled"].Bool()
 	}
 
-	return &v1.TenantPluginDetailRes{
+	res := &v1.TenantPluginDetailRes{
 		Name:        entry.Info.Name,
 		Label:       entry.Info.Label,
 		Description: entry.Info.Description,
 		Version:     entry.Info.Version,
 		Category:    entry.Info.Category,
 		Enabled:     enabled,
-		Config:      config,
-	}, nil
+	}
+	// 插件元信息保持全员可见（与列表口径一致），但配置原文可能包含第三方凭据
+	// （见写侧 assertPluginManager 注释），config 仅 owner/admin 可读
+	if role := middleware.GetUserRole(ctx); role == "owner" || role == "admin" {
+		res.Config = config
+	}
+	return res, nil
 }
 
 // assertPluginManager 校验插件的写操作权限。

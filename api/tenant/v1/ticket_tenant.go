@@ -10,7 +10,7 @@ import (
 type TenantTicketCreateReq struct {
 	g.Meta      `path:"/tickets" method:"post" mime:"json" tags:"租户控制台-工单" summary:"创建工单"`
 	Category    string `json:"category" v:"required|in:billing,technical,feature_request,other"`
-	Title       string `json:"title" v:"required"`
+	Title       string `json:"title" v:"required|regex:^[^<>]*$#标题不能包含 < 或 > 字符"`
 	Description string `json:"description" v:"required"`
 	Urgency     string `json:"urgency" v:"required|in:low,normal,high,urgent"`
 }

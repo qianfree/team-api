@@ -141,7 +141,7 @@ type OpenKeyItem struct {
 // OpenKeyCreate 创建 API Key
 type OpenKeyCreateReq struct {
 	g.Meta      `path:"/v1/keys" method:"post" mime:"json" tags:"开放平台API" summary:"创建API Key"`
-	Name        string   `json:"name" v:"required|length:2,100#请输入Key名称|名称长度2-100" dc:"Key名称"`
+	Name        string   `json:"name" v:"required|length:2,100|regex:^[^<>]*$#请输入Key名称|名称长度2-100|名称不能包含 < 或 > 字符" dc:"Key名称"`
 	ProjectID   int64    `json:"project_id" dc:"关联项目 ID（可选；填写后该 Key 随项目归档一并失效）"`
 	Scope       string   `json:"scope" d:"full" v:"in:full,chat_only,embeddings_only,images_only,read_only#权限范围无效" dc:"权限范围"`
 	ModelScopes []string `json:"model_scopes" dc:"可用模型列表（为空则不限）"`
@@ -255,7 +255,7 @@ type OpenProjectItem struct {
 // OpenProjectCreate 创建项目
 type OpenProjectCreateReq struct {
 	g.Meta      `path:"/v1/projects" method:"post" mime:"json" tags:"开放平台API" summary:"创建项目"`
-	Name        string  `json:"name" v:"required|length:1,100#请输入项目名称|项目名称长度1-100" dc:"项目名称"`
+	Name        string  `json:"name" v:"required|length:1,100|regex:^[^<>]*$#请输入项目名称|项目名称长度1-100|项目名称不能包含 < 或 > 字符" dc:"项目名称"`
 	Description string  `json:"description" dc:"项目描述"`
 	Budget      float64 `json:"budget" dc:"项目预算上限(USD，0=不限)"`
 }
@@ -343,7 +343,7 @@ type OpenProjectKeyItem struct {
 type OpenProjectKeyCreateReq struct {
 	g.Meta     `path:"/v1/projects/{id}/api-keys" method:"post" mime:"json" tags:"开放平台API" summary:"创建项目密钥"`
 	Id         int64       `json:"id" in:"path" v:"required#请指定项目ID" dc:"项目ID"`
-	Name       string      `json:"name" v:"required|length:1,100#请输入Key名称|名称长度1-100" dc:"Key名称"`
+	Name       string      `json:"name" v:"required|length:1,100|regex:^[^<>]*$#请输入Key名称|名称长度1-100|名称不能包含 < 或 > 字符" dc:"Key名称"`
 	Scope      string      `json:"scope" d:"full" v:"in:full,chat_only,embeddings_only,images_only,read_only#权限范围无效" dc:"权限范围"`
 	ExpiresAt  *gtime.Time `json:"expires_at" dc:"过期时间"`
 	ModelNames []string    `json:"model_names" dc:"可用模型列表"`

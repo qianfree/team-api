@@ -10,7 +10,7 @@ import (
 type FeedbackCreateReq struct {
 	g.Meta      `path:"/feedbacks" method:"post" mime:"json" tags:"租户-反馈" summary:"提交反馈"`
 	Category    string         `json:"category" v:"required|in:bug_report,feature_request,suggestion,complaint" dc:"反馈类型"`
-	Title       string         `json:"title" v:"required|length:1,200" dc:"反馈标题"`
+	Title       string         `json:"title" v:"required|length:1,200|regex:^[^<>]*$#请输入反馈标题|标题长度1-200|标题不能包含 < 或 > 字符" dc:"反馈标题"`
 	Description string         `json:"description" v:"required|length:1,5000" dc:"反馈详细描述"`
 	Metadata    map[string]any `json:"metadata,omitempty" dc:"元数据（环境信息、截图链接等）"`
 }

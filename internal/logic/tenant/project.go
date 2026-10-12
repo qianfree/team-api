@@ -182,6 +182,11 @@ func CheckProjectBudget(ctx context.Context, tenantID, projectID int64) error {
 
 // ProjectList returns a paginated list of projects for a tenant.
 func (s *sTenant) ProjectList(ctx context.Context, req *v1.TenantProjectListReq) (*v1.TenantProjectListRes, error) {
+	// 项目含预算与用量成本等管理视角数据（前端路由同口径 owner/admin）：
+	// member 不得拉取项目列表，此处为服务端强制
+	if role := middleware.GetUserRole(ctx); role != "owner" && role != "admin" {
+		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
+	}
 	tenantID := middleware.GetTenantID(ctx)
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
@@ -423,6 +428,10 @@ func CheckBudgetExhausted(ctx context.Context) error {
 
 // ProjectGet 根据 ID 获取单个项目详情（含统计摘要）
 func (s *sTenant) ProjectGet(ctx context.Context, req *v1.TenantProjectGetReq) (*v1.TenantProjectGetRes, error) {
+	// 项目详情含预算/月消费/密钥统计，与 ProjectList 同口径 owner/admin
+	if role := middleware.GetUserRole(ctx); role != "owner" && role != "admin" {
+		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
+	}
 	tenantID := middleware.GetTenantID(ctx)
 
 	var p *projectRow

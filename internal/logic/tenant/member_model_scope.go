@@ -16,6 +16,10 @@ import (
 
 // MemberModelScopes returns the model IDs available for a member.
 func (s *sTenant) MemberModelScopes(ctx context.Context, req *v1.TenantMemberModelScopesReq) (*v1.TenantMemberModelScopesRes, error) {
+	// 成员授权范围属管理视角数据，与写侧 MemberModelScopesSet 同口径 owner/admin
+	if role := middleware.GetUserRole(ctx); role != "owner" && role != "admin" {
+		return nil, lcommon.NewForbiddenError("需要 owner 或 admin 权限")
+	}
 	tenantID := middleware.GetTenantID(ctx)
 
 	// 验证用户属于当前租户
