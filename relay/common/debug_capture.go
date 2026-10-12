@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -33,8 +34,17 @@ func DebugAttemptFromContext(ctx context.Context) *DebugAttemptCapture {
 	return a
 }
 
-// DebugAttemptCapture 单次上游尝试的传输层捕获器。tee 完整累积请求/响应字节，不截断
-// （调试用途，可能含 base64 图片；靠管理端提示及时清理控制数据量）。
+// debugCaptureMaxBytes 单段报文的捕获内存上限（100MB）。调试捕获只在开关开启时生效，
+// 且可能含 base64 图片等大报文，上限须留足余量；设上限的目的仅是封顶——杜绝恶意/
+// 异常上游用超大响应或 gzip 炸弹无限累积把 worker OOM。截断处追加标记文本，排障时
+// 可识别数据不完整。注意：内存占用 = 上限 × 并发大请求数，调试期间仍应避免大流量。
+const debugCaptureMaxBytes = 100 << 20
+
+// debugTruncatedMarker 截断标记（追加在截断点，SSE/JSON 文本中可读；从上限常量生成，改值只动一处）
+var debugTruncatedMarker = []byte(fmt.Sprintf("\n...[debug capture truncated at %dMB]", debugCaptureMaxBytes>>20))
+
+// DebugAttemptCapture 单次上游尝试的传输层捕获器。tee 镜像请求/响应字节，
+// 单段超过 100MB 截断（见 debugCaptureMaxBytes）。
 type DebugAttemptCapture struct {
 	mu sync.Mutex
 
@@ -130,7 +140,16 @@ func (t *debugTeeReadCloser) Read(p []byte) (int, error) {
 	n, err := t.src.Read(p)
 	if n > 0 {
 		t.a.mu.Lock()
-		*t.field = append(*t.field, p[:n]...)
+		// 只限制镜像缓冲，透传读取不受影响；超限后停止追加并一次性打截断标记
+		if len(*t.field) < debugCaptureMaxBytes {
+			room := debugCaptureMaxBytes - len(*t.field)
+			if n > room {
+				*t.field = append(*t.field, p[:room]...)
+				*t.field = append(*t.field, debugTruncatedMarker...)
+			} else {
+				*t.field = append(*t.field, p[:n]...)
+			}
+		}
 		t.a.mu.Unlock()
 	}
 	return n, err
@@ -173,8 +192,8 @@ func (t *DebugRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 	return resp, nil
 }
 
-// DebugClientWriter 渠道调试日志的客户端响应捕获 writer：完整累积、不截断
-// （区别于审计的 ResponseCaptureWriter，后者有 256KB head+tail 截断）。
+// DebugClientWriter 渠道调试日志的客户端响应捕获 writer：镜像写出的字节，
+// 单段超过 100MB 截断（见 debugCaptureMaxBytes，防超大/压缩炸弹响应 OOM）。
 // 仅在调试开关开启时由 RelayHandler 包在 rc.Writer 外层，请求结束后由
 // DebugSession.FinalizeAndSubmit 取走数据。
 type DebugClientWriter struct {
@@ -212,7 +231,16 @@ func (w *DebugClientWriter) Write(b []byte) (int, error) {
 	n, err := w.ResponseWriter.Write(b)
 
 	w.mu.Lock()
-	w.buf = append(w.buf, b[:n]...)
+	// 只限制捕获缓冲，客户端写入不受影响；超限后停止追加并一次性打截断标记
+	if len(w.buf) < debugCaptureMaxBytes {
+		room := debugCaptureMaxBytes - len(w.buf)
+		if n > room {
+			w.buf = append(w.buf, b[:room]...)
+			w.buf = append(w.buf, debugTruncatedMarker...)
+		} else {
+			w.buf = append(w.buf, b[:n]...)
+		}
+	}
 	w.mu.Unlock()
 	return n, err
 }
