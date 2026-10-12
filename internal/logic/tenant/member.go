@@ -28,6 +28,11 @@ import (
 
 // ListMembers returns a paginated list of tenant members.
 func (s *sTenant) ListMembers(ctx context.Context, req *v1.TenantMemberListReq) (*v1.TenantMemberListRes, error) {
+	// 成员列表含邮箱、额度与月消费等管理视角数据，与 GetMember 同口径：
+	// member 角色不得拉取全组织成员信息（前端路由已按角色隐藏，此处为服务端强制）
+	if role := middleware.GetUserRole(ctx); role != "owner" && role != "admin" {
+		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
+	}
 	tenantID := middleware.GetTenantID(ctx)
 
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)

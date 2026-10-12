@@ -21,6 +21,7 @@ import (
 	do "github.com/qianfree/team-api/internal/model/do"
 	"github.com/qianfree/team-api/internal/model/entity"
 	"github.com/qianfree/team-api/internal/utility/crypto"
+	"github.com/qianfree/team-api/internal/utility/ssrf"
 )
 
 // ============================================================
@@ -411,6 +412,12 @@ func (s *sTenant) WebhookConfigCreate(ctx context.Context, req *v1.WebhookConfig
 	}
 	tenantID := middleware.GetTenantID(ctx)
 
+	// SSRF 防护：回调 URL 由租户配置，入库前先做 scheme/字面量 IP 预检；
+	// 域名解析到内网地址的情形由投递侧 ssrf.Transport 在 dial 阶段兜底拦截
+	if err := ssrf.ValidateURL(req.URL); err != nil {
+		return nil, common.NewBadRequestError("回调 URL 不合法：仅支持 http/https，且不能指向内网或保留地址")
+	}
+
 	// Generate signing key
 	keyBytes := make([]byte, 24)
 	if _, err := rand.Read(keyBytes); err != nil {
@@ -455,8 +462,9 @@ func (s *sTenant) WebhookConfigUpdate(ctx context.Context, req *v1.WebhookConfig
 		hasUpdate = true
 	}
 	if req.URL != nil {
-		if !strings.HasPrefix(*req.URL, "https://") && !strings.HasPrefix(*req.URL, "http://") {
-			return nil, common.NewBadRequestError("回调 URL 必须以 http:// 或 https:// 开头")
+		// SSRF 防护：与创建同口径，scheme/字面量 IP 预检，域名内网解析由投递侧兜底
+		if err := ssrf.ValidateURL(*req.URL); err != nil {
+			return nil, common.NewBadRequestError("回调 URL 不合法：仅支持 http/https，且不能指向内网或保留地址")
 		}
 		data.Url = *req.URL
 		hasUpdate = true

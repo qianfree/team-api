@@ -307,24 +307,19 @@ func (s *sTenant) OAuthCallback(ctx context.Context, req *v1.OAuthCallbackReq) (
 		}
 	}
 
-	// 查找用户角色（先校验再创建 session）
-	var user *struct {
-		Role string `json:"role"`
-	}
-	err = dao.TntUsers.Ctx(ctx).Where("id", userID).Scan(&user)
-	if err != nil {
+	// 签发会话前统一校验主体状态：被禁用用户、被停服租户不得经由 OAuth 获得新会话
+	// （此前此处只查角色不查状态，OAuth 是绕过用户/租户禁用的第二条登录通道）
+	principal, err := common.LoadTenantPrincipal(ctx, userID, tenantID)
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
-	if user == nil {
+	if principal == nil {
 		return nil, common.NewBusinessError(10060, "OAuth 登录失败：用户不存在")
 	}
-
-	// 创建 session
-	refreshToken, err := common.GenerateRefreshToken()
-	if err != nil {
+	if err := common.ValidateTenantPrincipal(principal); err != nil {
 		return nil, err
 	}
-	refreshTokenHash := common.HashRefreshToken(refreshToken)
+
 	r := g.RequestFromCtx(ctx)
 	ipAddress := ""
 	deviceInfo := `{"user_agent":"unknown"}`
@@ -334,6 +329,28 @@ func (s *sTenant) OAuthCallback(ctx context.Context, req *v1.OAuthCallbackReq) (
 		deviceInfo = fmt.Sprintf(`{"user_agent":"%s"}`, ua)
 	}
 
+	// 已开启 2FA 的用户不得经 OAuth 旁路二次校验：与密码登录同路径，只发临时令牌，
+	// 由 /auth/2fa/verify 验证 TOTP 通过后再签发正式会话
+	if principal.TotpEnabled {
+		provisionalToken, err := common.GenerateProvisionalToken(ctx, userID, "tenant", principal.Role, tenantID)
+		if err != nil {
+			return nil, err
+		}
+		_ = common.RecordLoginHistory(ctx, "tenant", userID, tenantID, "sso", ipAddress, deviceInfo, "", true, "")
+		return &v1.OAuthCallbackRes{
+			TotpRequired:     true,
+			ProvisionalToken: provisionalToken,
+			IsNewUser:        isNewUser,
+		}, nil
+	}
+
+	// 创建 session
+	refreshToken, err := common.GenerateRefreshToken()
+	if err != nil {
+		return nil, err
+	}
+	refreshTokenHash := common.HashRefreshToken(refreshToken)
+
 	jti := common.GenerateJti()
 	sessionID, err := common.CreateSession(ctx, "tenant", userID, tenantID, refreshTokenHash, ipAddress, deviceInfo, jti)
 	if err != nil {
@@ -342,7 +359,7 @@ func (s *sTenant) OAuthCallback(ctx context.Context, req *v1.OAuthCallbackReq) (
 	refreshToken = common.BindSessionIDToRefreshToken(refreshToken, sessionID)
 
 	// 生成 JWT token pair
-	tokenPair, err := common.GenerateTokenPair(ctx, userID, "tenant", user.Role, tenantID, sessionID, jti)
+	tokenPair, err := common.GenerateTokenPair(ctx, userID, "tenant", principal.Role, tenantID, sessionID, jti)
 	if err != nil {
 		return nil, err
 	}

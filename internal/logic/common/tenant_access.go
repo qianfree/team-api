@@ -12,6 +12,7 @@ type TenantPrincipal struct {
 	Role         string `json:"role"`
 	UserStatus   string `json:"user_status"`
 	TenantStatus string `json:"tenant_status"`
+	TotpEnabled  bool   `json:"totp_enabled"`
 }
 
 // LoadTenantPrincipal loads a user's current role and both account statuses.
@@ -21,7 +22,7 @@ func LoadTenantPrincipal(ctx context.Context, userID, tenantID int64) (*TenantPr
 		InnerJoin("tnt_tenants t ON t.id = u.tenant_id").
 		Where("u.id", userID).
 		Where("u.tenant_id", tenantID).
-		Fields("u.role, u.status AS user_status, t.status AS tenant_status").
+		Fields("u.role, u.status AS user_status, t.status AS tenant_status, u.totp_enabled").
 		Scan(&principal)
 	if err = IgnoreScanNoRows(err); err != nil {
 		return nil, err

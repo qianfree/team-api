@@ -26,6 +26,10 @@ type OAuthCallbackRes struct {
 	RefreshToken string `json:"refresh_token"`
 	ExpiresAt    string `json:"expires_at"`
 	IsNewUser    bool   `json:"is_new_user"`
+	// 已开启 2FA 的用户：不签发正式令牌，改发临时令牌，
+	// 需走 /auth/2fa/verify 验证 TOTP 后完成登录（字段命名与 TenantLoginRes 对齐）
+	TotpRequired     bool   `json:"totp_required,omitempty"`
+	ProvisionalToken string `json:"provisional_token,omitempty"`
 }
 
 type OAuthLinkReq struct {

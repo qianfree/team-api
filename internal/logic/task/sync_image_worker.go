@@ -9,10 +9,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
-	"net"
 	"net/http"
-	"net/url"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -27,6 +24,7 @@ import (
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/monitor"
 	"github.com/qianfree/team-api/internal/logic/relay"
+	"github.com/qianfree/team-api/internal/utility/ssrf"
 	"github.com/qianfree/team-api/relay/channel"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
@@ -874,86 +872,8 @@ func rehostImage(ctx context.Context, job *SyncImageJob, data []byte, contentTyp
 // 校验而非仅在请求前校验，可关闭 DNS rebinding 的 TOCTOU 窗口（攻击者 DNS 先返回公网 IP
 // 绕过预检、实际连接时再返回内网 IP）。
 var syncImageDownloadClient = &http.Client{
-	Timeout: 120 * time.Second,
-	Transport: &http.Transport{
-		DialContext:     ssrfSafeDialContext,
-		Proxy:           nil, // 显式禁用代理，避免通过代理绕过 IP 校验访问内网
-		IdleConnTimeout: 30 * time.Second,
-	},
-}
-
-// errSSRFBlocked 表示 URL 解析出的目标地址落在禁止访问的网段。
-var errSSRFBlocked = errors.New("url host resolves to a forbidden (private/link-local/loopback) address")
-
-// isForbiddenIP 判断 ip 是否落在服务端抓取永远不应触达的地址段（SSRF 黑名单）：
-// loopback、link-local（含 169.254.169.254 云元数据）、RFC1918 私网、multicast、unspecified。
-func isForbiddenIP(ip net.IP) bool {
-	if ip == nil {
-		return true
-	}
-	return ip.IsLoopback() ||
-		ip.IsLinkLocalUnicast() ||
-		ip.IsLinkLocalMulticast() ||
-		ip.IsPrivate() ||
-		ip.IsMulticast() ||
-		ip.IsUnspecified()
-}
-
-// validateSSRFURL 对即将下载的 URL 做请求前的快速校验：仅允许 http/https scheme，
-// 并对字面量 IP 主机直接判定网段。域名主机由 ssrfSafeDialContext 在 dial 时再校验。
-func validateSSRFURL(rawURL string) error {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return fmt.Errorf("parse url: %w", err)
-	}
-	scheme := strings.ToLower(u.Scheme)
-	if scheme != "http" && scheme != "https" {
-		return fmt.Errorf("unsupported scheme %q (only http/https allowed)", u.Scheme)
-	}
-	host := u.Hostname()
-	if host == "" {
-		return errors.New("url host is empty")
-	}
-	// 字面量 IP 在请求前即可判定；域名留待 dial 时按解析结果判定（防 DNS rebinding）。
-	if ip := net.ParseIP(host); ip != nil && isForbiddenIP(ip) {
-		return errSSRFBlocked
-	}
-	return nil
-}
-
-// ssrfSafeDialContext 在连接阶段解析主机名并拒绝任何指向 loopback / link-local / 私网 /
-// multicast / unspecified 的地址，随后用解析到的 IP 直接建立连接（不再二次解析，杜绝
-// rebinding）。检查放在 dial 而非仅请求前，可关闭「预检解析为公网、连接时解析为内网」的
-// TOCTOU 窗口。
-func ssrfSafeDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
-	host, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return nil, err
-	}
-	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-	if err != nil {
-		return nil, err
-	}
-	for _, ip := range ips {
-		if isForbiddenIP(ip.IP) {
-			return nil, errSSRFBlocked
-		}
-	}
-	// 直接用已校验的 IP 拨号，避免 Transport 内部再次走 DNS（可能被 rebind 到内网）。
-	dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
-	var lastErr error
-	for _, ip := range ips {
-		conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(ip.IP.String(), port))
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		return conn, nil
-	}
-	if lastErr == nil {
-		lastErr = errors.New("no usable address after SSRF filter")
-	}
-	return nil, lastErr
+	Timeout:   120 * time.Second,
+	Transport: ssrf.NewTransport(),
 }
 
 func rehostFromURL(ctx context.Context, job *SyncImageJob, url string, index int) (string, error) {
@@ -963,7 +883,7 @@ func rehostFromURL(ctx context.Context, job *SyncImageJob, url string, index int
 	}
 	// SSRF 预检：拒绝 file://、gopher:// 等非 http(s) scheme，以及字面量内网 IP。
 	// 域名主机的网段校验由 syncImageDownloadClient 的 DialContext 在 dial 时兜底。
-	if err := validateSSRFURL(url); err != nil {
+	if err := ssrf.ValidateURL(url); err != nil {
 		return "", fmt.Errorf("reject image url: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)

@@ -17,6 +17,7 @@ import (
 	"github.com/qianfree/team-api/internal/logic/common"
 	do "github.com/qianfree/team-api/internal/model/do"
 	"github.com/qianfree/team-api/internal/model/entity"
+	"github.com/qianfree/team-api/internal/utility/ssrf"
 )
 
 const (
@@ -26,7 +27,13 @@ const (
 )
 
 // webhookHTTPClient 全局复用的 HTTP 客户端，共享连接池，避免每次投递创建新实例。
-var webhookHTTPClient = &http.Client{Timeout: webhookTimeout}
+// SSRF 加固：webhook URL 由租户自行配置，Transport 在 dial 阶段拒绝内网/环回/链路本地
+// 地址（含云元数据 169.254.169.254）并显式禁代理；重定向每一跳复检，防 302 跳内网绕过预检。
+var webhookHTTPClient = &http.Client{
+	Timeout:       webhookTimeout,
+	Transport:     ssrf.NewTransport(),
+	CheckRedirect: ssrf.RedirectPolicy,
+}
 
 var retryIntervals = []time.Duration{
 	1 * time.Minute,
