@@ -389,9 +389,80 @@ function formatRemaining(seconds: number): string {
 	return m > 0 ? `${m}分${s}秒` : `${s}秒`
 }
 
+// ===== 未支付订单提醒（继续支付 / 取消）=====
+// 与挂起订单上限（后端 5 笔）配合：提示用户处理存量 pending 订单，释放下单名额
+const pendingOrders = ref<any[]>([])
+const resumingOrderId = ref(0)
+const cancellingOrderId = ref(0)
+
+const pendingTotalCny = computed(() =>
+	pendingOrders.value.reduce((sum, o) => sum + (Number(o.final_amount) || 0), 0),
+)
+
+async function fetchPendingOrders() {
+	try {
+		// 静默拉取：提示条加载失败不打扰用户
+		const res: any = await request.get('/tenant/orders', {
+			params: { status: 'pending', page: 1, page_size: 5 },
+			_suppressErrorMsg: true,
+		})
+		const raw = res.data?.data
+		pendingOrders.value = Array.isArray(raw) ? raw : (raw?.list || [])
+	} catch {
+		pendingOrders.value = []
+	}
+}
+
+// 剩余支付时间（expired_at 兼容时间戳与 gtime 字符串两种形态；Safari 不认空格分隔，替换为 T）
+function orderRemainingText(order: any): string {
+	const v = order?.expired_at
+	if (!v) return ''
+	const ts = typeof v === 'number' ? v : Math.floor(new Date(String(v).replace(' ', 'T')).getTime() / 1000)
+	if (!ts || Number.isNaN(ts)) return ''
+	const minutes = Math.ceil((ts - Date.now() / 1000) / 60)
+	return minutes <= 0 ? '即将过期' : `剩余 ${minutes} 分钟`
+}
+
+// 继续支付：后端 OrderPay 对 pending 订单重新生成支付表单并整页跳转收银台
+async function handleResumePay(order: any) {
+	if (resumingOrderId.value) return
+	resumingOrderId.value = order.id
+	try {
+		// 支付方式优先用充值卡片当前选中（页面加载后自动选中第一个），其次订单留存的渠道
+		const res: any = await request.post(`/tenant/orders/${order.id}/pay`, {
+			payment_channel: selectedChannel.value || order.payment_channel || '',
+			payment_method: selectedPaymentMethod.value || order.payment_method || '',
+		})
+		const data = res.data?.data
+		if (data?.payment_url) {
+			dispatchPayment(data)
+			return
+		}
+		fetchPendingOrders()
+	} catch {
+		// interceptor handles error toast
+	} finally {
+		resumingOrderId.value = 0
+	}
+}
+
+async function handlePendingCancel(order: any) {
+	if (cancellingOrderId.value) return
+	cancellingOrderId.value = order.id
+	try {
+		await request.post(`/tenant/orders/${order.id}/cancel`)
+		await fetchPendingOrders()
+	} catch {
+		// interceptor handles error toast
+	} finally {
+		cancellingOrderId.value = 0
+	}
+}
+
 onMounted(() => {
 	fetchWallet()
 	fetchPaymentInfo()
+	fetchPendingOrders()
 
 	// Handle pay result from return URL
 	const pay = route.query.pay as string
@@ -400,6 +471,7 @@ onMounted(() => {
 		if (pay === 'success') {
 			setTimeout(() => { payResult.value = '' }, 5000)
 			fetchWallet()
+			fetchPendingOrders()
 		} else if (pay === 'processing') {
 			// 异步回调可能仍在途：延迟刷新余额，到账后自动更新；超时后提示联系客服
 			fetchWallet()
@@ -470,6 +542,48 @@ onBeforeUnmount(() => {
 				</button>
 			</div>
 		</transition>
+
+		<!-- Pending Orders：未支付订单提醒（继续支付 / 取消），与挂起订单上限联动 -->
+		<div v-if="pendingOrders.length" class="card border-amber-200 bg-amber-50/60 p-4 sm:p-5">
+			<div class="flex items-center gap-2.5">
+				<div class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-600">
+					<Icon name="exclamationTriangle" size="md" />
+				</div>
+				<div class="min-w-0">
+					<p class="text-sm font-semibold text-amber-900">
+						您有 {{ pendingOrders.length }} 笔未支付订单（合计 ¥{{ pendingTotalCny.toFixed(2) }}）
+					</p>
+					<p class="mt-0.5 text-xs text-amber-700">订单 30 分钟未支付将自动过期；处理完未支付订单后才能发起新的充值，如有问题可提交站内工单</p>
+				</div>
+			</div>
+			<div class="mt-3 space-y-2">
+				<div
+					v-for="order in pendingOrders"
+					:key="order.id"
+					class="flex flex-wrap items-center gap-2.5 rounded-xl bg-white/80 px-3.5 py-2.5"
+				>
+					<span class="font-mono text-xs text-slate-500">{{ order.order_no }}</span>
+					<span class="text-sm font-semibold text-slate-800">¥{{ Number(order.final_amount || 0).toFixed(2) }}</span>
+					<span v-if="orderRemainingText(order)" class="badge badge-warning">{{ orderRemainingText(order) }}</span>
+					<span class="flex-1"></span>
+					<button
+						class="btn btn-primary btn-sm"
+						:disabled="resumingOrderId === order.id"
+						@click="handleResumePay(order)"
+					>
+						<Icon v-if="resumingOrderId === order.id" name="refresh" size="xs" class="animate-spin" />
+						继续支付
+					</button>
+					<button
+						class="btn btn-secondary btn-sm"
+						:disabled="cancellingOrderId === order.id"
+						@click="handlePendingCancel(order)"
+					>
+						{{ cancellingOrderId === order.id ? '取消中...' : '取消订单' }}
+					</button>
+				</div>
+			</div>
+		</div>
 
 		<section class="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(280px,.72fr)_minmax(0,1.28fr)]">
 			<div class="card wallet-card balance-card p-5 sm:p-6">

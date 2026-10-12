@@ -6,6 +6,7 @@ import Icon from '@/components/common/Icon.vue'
 import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
 import { renderBadge, formatMoney, tableScrollX } from '@/utils/renderUtils'
 import request from '@/utils/request'
+import { dispatchPayment } from '@/utils/payment'
 import { useExport } from '@/composables/useExport'
 
 const loading = ref(false)
@@ -87,7 +88,17 @@ async function fetchOrders() {
 
 async function handlePay(order: any) {
   try {
-    await request.post(`/tenant/orders/${order.id}/pay`)
+    // 后端 OrderPay 要求必传支付渠道：优先用订单留存的渠道，缺失时兜底 epay
+    const res: any = await request.post(`/tenant/orders/${order.id}/pay`, {
+      payment_channel: order.payment_channel || 'epay',
+      payment_method: order.payment_method || 'alipay',
+    })
+    const data = res.data?.data
+    if (data?.payment_url) {
+      // 整页跳转易支付收银台完成付款
+      dispatchPayment(data)
+      return
+    }
     fetchOrders()
   } catch (e) {
     // interceptor handles error toast
