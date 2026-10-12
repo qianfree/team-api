@@ -240,6 +240,11 @@ function goBack() {
 
 		<!-- Step 2: Code + New Password -->
 		<form v-else @submit.prevent="handleReset" class="space-y-5">
+			<!-- 防枚举文案：后端对未注册/非主账号邮箱静默按成功响应，此处用条件式表述
+			     提示真实用户核对地址与垃圾邮件箱，而不泄露邮箱是否注册 -->
+			<p class="rounded-xl bg-primary-50 px-4 py-3 text-sm text-gray-600">
+				如果 <span class="font-medium text-gray-800">{{ form.email }}</span> 已注册，验证码已发送至该邮箱，请查收（含垃圾邮件箱）；若长时间未收到，请返回核对邮箱地址
+			</p>
 			<div>
 				<label class="input-label">验证码</label>
 				<div class="flex gap-2">
