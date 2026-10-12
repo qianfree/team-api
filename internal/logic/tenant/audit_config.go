@@ -178,7 +178,7 @@ func (s *sTenant) TenantRequestAuditLogs(ctx context.Context, req *v1.TenantRequ
 		var users []userRow
 		err := g.DB().Ctx(ctx).Model("tnt_users").
 			Where("tenant_id", tenantID).
-			Where("username LIKE ?", "%"+req.Username+"%").
+			Where("username LIKE ?", "%"+common.EscapeLikePattern(req.Username)+"%").
 			Fields("id").
 			Scan(&users)
 		if err != nil {
@@ -206,7 +206,7 @@ func (s *sTenant) TenantRequestAuditLogs(ctx context.Context, req *v1.TenantRequ
 	}
 	if req.Path != "" {
 		conditions = append(conditions, "path LIKE ?")
-		args = append(args, "%"+req.Path+"%")
+		args = append(args, "%"+common.EscapeLikePattern(req.Path)+"%")
 	}
 	if req.Model != "" {
 		conditions = append(conditions, "model_name = ?")

@@ -53,7 +53,7 @@ func GetTenantAvailableModels(ctx context.Context, tenantID int64, category, ven
 		explicitQuery = explicitQuery.Where("m.vendor", vendor)
 	}
 	if search != "" {
-		explicitQuery = explicitQuery.Where("m.model_id LIKE ? OR m.model_name LIKE ?", "%"+search+"%", "%"+search+"%")
+		explicitQuery = explicitQuery.Where("m.model_id LIKE ? OR m.model_name LIKE ?", "%"+EscapeLikePattern(search)+"%", "%"+EscapeLikePattern(search)+"%")
 	}
 
 	err := explicitQuery.
@@ -121,7 +121,7 @@ func GetTenantAvailableModels(ctx context.Context, tenantID int64, category, ven
 		groupQuery = groupQuery.Where("m.vendor", vendor)
 	}
 	if search != "" {
-		groupQuery = groupQuery.Where("m.model_id LIKE ? OR m.model_name LIKE ?", "%"+search+"%", "%"+search+"%")
+		groupQuery = groupQuery.Where("m.model_id LIKE ? OR m.model_name LIKE ?", "%"+EscapeLikePattern(search)+"%", "%"+EscapeLikePattern(search)+"%")
 	}
 
 	_ = groupQuery.

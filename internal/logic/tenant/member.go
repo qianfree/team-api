@@ -19,6 +19,7 @@ import (
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/logic/common"
+	"github.com/qianfree/team-api/internal/logic/relay"
 	"github.com/qianfree/team-api/internal/middleware"
 	"github.com/qianfree/team-api/internal/utility/crypto"
 	"github.com/qianfree/team-api/internal/utility/export"
@@ -628,6 +629,13 @@ func (s *sTenant) RemoveMember(ctx context.Context, req *v1.TenantMemberRemoveRe
 		removedDisplayName = "[已移除成员]"
 	}
 
+	// 先取出该成员全部 Key 前缀：事务提交后逐个失效认证缓存，
+	// 否则 60s 缓存 TTL 内被移除成员的 Key 仍可通过 /v1 认证继续消费
+	memberKeyPrefixes, err := getMemberApiKeyPrefixes(ctx, tenantID, memberID)
+	if err != nil {
+		return nil, err
+	}
+
 	// Revoke all sessions（Redis + DB 会话表）。会话撤销属于尽力而为的安全动作，
 	// 放在事务外先行执行：即便后续 DB 事务回滚，也已让该成员的活跃会话失效（fail-safe 方向）。
 	common.RevokeAllSessions(ctx, "tenant", memberID)
@@ -672,7 +680,33 @@ func (s *sTenant) RemoveMember(ctx context.Context, req *v1.TenantMemberRemoveRe
 		return nil, err
 	}
 
+	// 事务提交后失效该成员全部 Key 的认证缓存（立即切断 /v1 访问，不等 TTL 自然过期）
+	for _, prefix := range memberKeyPrefixes {
+		relay.InvalidateApiKey(ctx, prefix)
+	}
+
 	return nil, nil
+}
+
+// getMemberApiKeyPrefixes 查询成员全部 API Key 前缀（含已禁用的），
+// 供成员移除/禁用后失效认证缓存使用
+func getMemberApiKeyPrefixes(ctx context.Context, tenantID, userID int64) ([]string, error) {
+	var rows []struct {
+		KeyPrefix string `json:"key_prefix"`
+	}
+	err := dao.ApiKeys.Ctx(ctx).
+		Where("tenant_id", tenantID).
+		Where("user_id", userID).
+		Fields("key_prefix").
+		Scan(&rows)
+	if err != nil {
+		return nil, err
+	}
+	prefixes := make([]string, 0, len(rows))
+	for _, r := range rows {
+		prefixes = append(prefixes, r.KeyPrefix)
+	}
+	return prefixes, nil
 }
 
 // DisableMember disables a member and revokes all their API keys.
@@ -698,8 +732,14 @@ func (s *sTenant) DisableMember(ctx context.Context, tenantID, userID int64) err
 		return nil // already disabled
 	}
 
+	// 先取出该成员全部 Key 前缀，事务成功后失效认证缓存（同 RemoveMember）
+	memberKeyPrefixes, err := getMemberApiKeyPrefixes(ctx, tenantID, userID)
+	if err != nil {
+		return err
+	}
+
 	// 撤销 API Key 与更新成员状态放入同一事务，避免「Key 已禁用但成员状态未更新」的不一致。
-	return g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		// Revoke all active API keys
 		if _, err := dao.ApiKeys.Ctx(ctx).
 			Where("tenant_id", tenantID).
@@ -719,6 +759,15 @@ func (s *sTenant) DisableMember(ctx context.Context, tenantID, userID int64) err
 			}).Update()
 		return err
 	})
+	if err != nil {
+		return err
+	}
+
+	// 事务提交后失效该成员全部 Key 的认证缓存（立即切断 /v1 访问，不等 TTL 自然过期）
+	for _, prefix := range memberKeyPrefixes {
+		relay.InvalidateApiKey(ctx, prefix)
+	}
+	return nil
 }
 
 // EnableMember re-enables a member and restores their API keys.
@@ -1174,7 +1223,7 @@ func (s *sTenant) ExportMembers(ctx context.Context, req *v1.TenantMemberExportR
 			model := dao.TntUsers.Ctx(ctx).
 				Where("tenant_id", tenantID)
 			if req.Keyword != "" {
-				keyword := "%" + strings.TrimSpace(req.Keyword) + "%"
+				keyword := "%" + common.EscapeLikePattern(strings.TrimSpace(req.Keyword)) + "%"
 				model = model.Where("username LIKE ? OR email LIKE ?", keyword, keyword)
 			}
 			if req.Role != "" {

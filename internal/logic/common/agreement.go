@@ -2,7 +2,6 @@ package common
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/os/gtime"
@@ -47,10 +46,10 @@ func GetPendingAgreements(ctx context.Context, userType string, userID int64) ([
 		Where("is_current", true).
 		Where("status", "published").
 		Where("force_accept", true).
-		Where(fmt.Sprintf(
-			"id NOT IN (SELECT agreement_id FROM sys_agreement_acceptances WHERE user_type = '%s' AND user_id = %d)",
+		Where(
+			"id NOT IN (SELECT agreement_id FROM sys_agreement_acceptances WHERE user_type = ? AND user_id = ?)",
 			userType, userID,
-		)).
+		).
 		Scan(&rows)
 	if err != nil {
 		return nil, err
@@ -64,10 +63,10 @@ func HasPendingAgreements(ctx context.Context, userType string, userID int64) bo
 		Where("is_current", true).
 		Where("status", "published").
 		Where("force_accept", true).
-		Where(fmt.Sprintf(
-			"id NOT IN (SELECT agreement_id FROM sys_agreement_acceptances WHERE user_type = '%s' AND user_id = %d)",
+		Where(
+			"id NOT IN (SELECT agreement_id FROM sys_agreement_acceptances WHERE user_type = ? AND user_id = ?)",
 			userType, userID,
-		)).
+		).
 		Count()
 	if err != nil {
 		return false

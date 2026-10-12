@@ -6,6 +6,7 @@ import (
 	"github.com/gogf/gf/v2/database/gdb"
 
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/common"
 )
 
 // TransactionQueryParams holds common filter parameters for transaction queries.
@@ -40,10 +41,10 @@ func BuildTransactionQuery(ctx context.Context, params TransactionQueryParams) *
 		// ① 筛选条件因此不依赖任何 JOIN，调用方的 COUNT / 聚合路径可以完全不联表；
 		// ② 避免把 tnt_users 拖成驱动表（EXISTS 内是主键等值探测，代价低）。
 		// 语义与 LEFT JOIN 后过滤一致：user_id 无对应用户的行同样被过滤掉。
-		query = query.Where("EXISTS (SELECT 1 FROM tnt_users ut WHERE ut.id = bil_transactions.user_id AND ut.tenant_id = bil_transactions.tenant_id AND ut.username LIKE ?)", "%"+params.Username+"%")
+		query = query.Where("EXISTS (SELECT 1 FROM tnt_users ut WHERE ut.id = bil_transactions.user_id AND ut.tenant_id = bil_transactions.tenant_id AND ut.username LIKE ?)", "%"+common.EscapeLikePattern(params.Username)+"%")
 	}
 	if params.ModelName != "" {
-		query = query.Where("bil_transactions.model_name LIKE ?", "%"+params.ModelName+"%")
+		query = query.Where("bil_transactions.model_name LIKE ?", "%"+common.EscapeLikePattern(params.ModelName)+"%")
 	}
 
 	return query

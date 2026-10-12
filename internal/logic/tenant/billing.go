@@ -198,7 +198,7 @@ func buildTenantUsageLogFilter(f tenantUsageLogFilter) (where string, args []any
 		// 且避免把 tnt_users 拖成驱动表（EXISTS 内是主键等值探测，代价低）。
 		// 语义与 LEFT JOIN 后过滤一致：用户不存在的行同样被过滤掉。
 		conditions = append(conditions, "EXISTS (SELECT 1 FROM tnt_users ut WHERE ut.id = u.user_id AND ut.tenant_id = u.tenant_id AND ut.username LIKE ?)")
-		args = append(args, "%"+f.Username+"%")
+		args = append(args, "%"+common.EscapeLikePattern(f.Username)+"%")
 	}
 	if f.Model != "" {
 		conditions = append(conditions, "u.model_name = ?")
@@ -598,7 +598,7 @@ func (s *sTenant) ExportWalletTransactions(ctx context.Context, req *v1.TenantWa
 				q = q.Where("amount <= ?", req.AmountMax)
 			}
 			if req.ModelName != "" {
-				q = q.Where("model_name LIKE ?", "%"+req.ModelName+"%")
+				q = q.Where("model_name LIKE ?", "%"+common.EscapeLikePattern(req.ModelName)+"%")
 			}
 			if cursorID > 0 {
 				q = q.Where("id < ?", cursorID)

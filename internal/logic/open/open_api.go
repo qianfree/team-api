@@ -85,7 +85,7 @@ func (s *sOpen) OpenMemberList(ctx context.Context, req *v1.OpenMemberListReq) (
 
 	m := dao.TntUsers.Ctx(ctx).Where("tenant_id", tenantID)
 	if req.Keyword != "" {
-		kw := "%" + strings.TrimSpace(req.Keyword) + "%"
+		kw := "%" + common.EscapeLikePattern(strings.TrimSpace(req.Keyword)) + "%"
 		m = m.Where("username LIKE ? OR email LIKE ?", kw, kw)
 	}
 	if req.Role != "" {
@@ -831,7 +831,7 @@ func (s *sOpen) OpenProjectList(ctx context.Context, req *v1.OpenProjectListReq)
 		m = m.Where("status", req.Status)
 	}
 	if req.Keyword != "" {
-		kw := "%" + strings.TrimSpace(req.Keyword) + "%"
+		kw := "%" + common.EscapeLikePattern(strings.TrimSpace(req.Keyword)) + "%"
 		m = m.Where("name LIKE ?", kw)
 	}
 
@@ -1038,7 +1038,7 @@ func (s *sOpen) OpenProjectUpdate(ctx context.Context, req *v1.OpenProjectUpdate
 		return nil, nil
 	}
 
-	_, err = dao.TntProjects.Ctx(ctx).Where("id", req.Id).Data(data).Update()
+	_, err = dao.TntProjects.Ctx(ctx).Where("id", req.Id).Where("tenant_id", tenantID).Data(data).Update()
 	return nil, err
 }
 
@@ -1074,7 +1074,7 @@ func (s *sOpen) OpenProjectArchive(ctx context.Context, req *v1.OpenProjectArchi
 		return nil, err
 	}
 
-	_, err = dao.TntProjects.Ctx(ctx).Where("id", req.Id).
+	_, err = dao.TntProjects.Ctx(ctx).Where("id", req.Id).Where("tenant_id", tenantID).
 		Data(do.TntProjects{Status: "archived"}).Update()
 	if err == nil {
 		invalidateApiKeyPrefixes(ctx, keyPrefixes)
@@ -1099,7 +1099,7 @@ func (s *sOpen) OpenProjectUnarchive(ctx context.Context, req *v1.OpenProjectUna
 		return nil, errOpen(consts.CodeBadRequest, "只有归档状态的项目可以取消归档")
 	}
 
-	_, err = dao.TntProjects.Ctx(ctx).Where("id", req.Id).
+	_, err = dao.TntProjects.Ctx(ctx).Where("id", req.Id).Where("tenant_id", tenantID).
 		Data(do.TntProjects{Status: "active"}).Update()
 	return nil, err
 }

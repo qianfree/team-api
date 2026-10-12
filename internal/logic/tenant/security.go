@@ -207,7 +207,7 @@ func (s *sTenant) LoginHistory(ctx context.Context, req *v1.TenantLoginHistoryRe
 	}
 
 	if req.IpAddress != "" {
-		q = q.WhereLike("ip_address", "%"+req.IpAddress+"%")
+		q = q.WhereLike("ip_address", "%"+common.EscapeLikePattern(req.IpAddress)+"%")
 	}
 	if req.Success != nil {
 		q = q.Where("success", *req.Success)
@@ -273,7 +273,7 @@ func tenantUserIdsByUsernameLocal(ctx context.Context, tenantID int64, keyword s
 	err := dao.TntUsers.Ctx(ctx).
 		Fields("id").
 		Where("tenant_id", tenantID).
-		Where("username LIKE ? OR display_name LIKE ?", "%"+keyword+"%", "%"+keyword+"%").
+		Where("username LIKE ? OR display_name LIKE ?", "%"+common.EscapeLikePattern(keyword)+"%", "%"+common.EscapeLikePattern(keyword)+"%").
 		Scan(&users)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err

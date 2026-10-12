@@ -41,15 +41,16 @@ func (s *sTenant) SendCode(ctx context.Context, req *v1.TenantSendCodeReq) (*v1.
 		if err = common.IgnoreScanNoRows(err); err != nil {
 			return nil, err
 		}
-		if owner == nil {
-			return nil, common.NewBadRequestError("该邮箱未注册或非主账号，无法通过邮箱重置密码")
-		}
-		if owner.Status != "active" {
-			return nil, common.NewBadRequestError("账号状态异常，请联系管理员")
+		// 防枚举：邮箱不存在/非主账号/状态异常一律按成功响应（静默不发信），
+		// 与真实发送路径的响应完全一致，避免借此探测哪些邮箱是 owner 账号
+		if owner == nil || owner.Status != "active" {
+			return nil, nil
 		}
 	case common.VerifyPurposeChangeEmail:
-		// Check if new email is already taken by another user in same tenant
-		// Tenant context should be available
+		// 公开发码端点不受理修改邮箱用途：该流程必须经登录态调用
+		// SendChangeEmailCode（带新邮箱占用预检），此处放行会允许匿名对任意邮箱
+		// 触发验证码邮件（邮件轰炸/钓鱼铺垫）
+		return nil, common.NewBadRequestError("修改邮箱请登录后在安全设置中操作")
 	default:
 		return nil, common.NewBadRequestError("无效的验证码用途")
 	}

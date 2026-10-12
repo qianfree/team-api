@@ -86,7 +86,7 @@ func (s *sTenant) OpenAppList(ctx context.Context, req *v1.OpenAppListReq) (*v1.
 
 	m := dao.OpnApps.Ctx(ctx).Where("tenant_id", tenantID)
 	if req.Keyword != "" {
-		m = m.Where("name LIKE ?", "%"+req.Keyword+"%")
+		m = m.Where("name LIKE ?", "%"+common.EscapeLikePattern(req.Keyword)+"%")
 	}
 
 	total, err := m.Count()

@@ -316,6 +316,11 @@ func Verify2FACode(ctx context.Context, userType string, userID int64, code stri
 
 	// Try TOTP code first
 	if validateTOTPOnce(ctx, userType, userID, code, secret) {
+		// 重放防护：TOTP 校验本身无状态，同一码在 30s 时间窗内可原样重复使用
+		// （拦截/窃取到的码即可重放）。以码值为键做一次性消耗标记。
+		if !consumeTotpCode(ctx, userType, userID, code) {
+			return false, nil
+		}
 		return true, nil
 	}
 
@@ -331,6 +336,27 @@ func Verify2FACode(ctx context.Context, userType string, userID int64, code stri
 	}
 
 	return false, nil
+}
+
+// consumeTotpCode 以 SET NX 记录已使用的 TOTP 验证码，同一码在 TTL 内不可重复使用。
+// 返回 false 表示该码已被使用（重放）。TTL 取 120s 覆盖 ±2 个时间窗。
+// Redis 故障（含未配置 panic）时放行：可用性优先，且重放窗口本就只有数十秒。
+func consumeTotpCode(ctx context.Context, userType string, userID int64, code string) (usable bool) {
+	defer func() {
+		if recover() != nil {
+			usable = true
+		}
+	}()
+	key := fmt.Sprintf("totp_used:%s:%d:%s", userType, userID, code)
+	ok, err := g.Redis().Do(ctx, "SET", key, "1", "NX", "EX", 120)
+	if err != nil {
+		g.Log().Warningf(ctx, "[TOTP] 重放标记写入失败: %v", err)
+		return true
+	}
+	if ok.IsNil() {
+		return false // 已存在 → 该码已被使用，判定为重放
+	}
+	return true
 }
 
 // GetUserTOTPSecret decrypts and returns the TOTP secret and backup codes for a user.

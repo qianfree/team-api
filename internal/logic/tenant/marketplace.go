@@ -11,6 +11,7 @@ import (
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/billing"
+	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/model/entity"
 )
 
@@ -54,7 +55,7 @@ func (s *sTenant) GetModelList(ctx context.Context, req *v1.MarketplaceListReq) 
 			Where("mdl_group_models.group_id", defaultGroup.Id).
 			Where("mdl_models.status", "active")
 		if req.Keyword != "" {
-			keyword := "%" + req.Keyword + "%"
+			keyword := "%" + common.EscapeLikePattern(req.Keyword) + "%"
 			q = q.Where("(mdl_models.model_id LIKE ? OR mdl_models.model_name LIKE ? OR mdl_models.description LIKE ?)", keyword, keyword, keyword)
 		}
 		if req.Category != "" {
