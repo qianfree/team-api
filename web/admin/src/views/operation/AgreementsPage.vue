@@ -5,6 +5,7 @@ import {
 } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import { marked } from 'marked'
+import { sanitizeHtml } from '@/utils/sanitize'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
@@ -244,7 +245,7 @@ async function fetchAcceptances() {
 const showPreview = ref(false)
 const previewHtml = computed(() => {
   if (!form.content) return ''
-  return marked(form.content) as string
+  return sanitizeHtml(marked(form.content) as string)
 })
 
 onMounted(fetchList)

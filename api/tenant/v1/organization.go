@@ -24,7 +24,7 @@ type TenantOrgInfoRes struct {
 // TenantOrgUpdateReq 更新组织信息请求
 type TenantOrgUpdateReq struct {
 	g.Meta  `path:"/organization" method:"put" mime:"json" tags:"租户控制台-组织" summary:"更新组织信息"`
-	Name    *string `json:"name" dc:"组织名称（汉字最多8个，字母最多16个）"`
+	Name    *string `json:"name" v:"regex:^[^<>]*$#组织名称不能包含 < 或 > 字符" dc:"组织名称（汉字最多8个，字母最多16个）"`
 	Code    *string `json:"code" v:"length:3,30|regex:^[a-z0-9][a-z0-9-]*[a-z0-9]$#组织代码长度为3-30位|组织代码格式不正确" dc:"组织代码（首次设置即激活团队功能）"`
 	LogoURL *string `json:"logo_url" dc:"Logo URL"`
 }
@@ -58,7 +58,7 @@ type TenantProfileRes struct {
 // TenantProfileUpdateReq 更新个人信息请求
 type TenantProfileUpdateReq struct {
 	g.Meta      `path:"/profile" method:"put" mime:"json" tags:"租户控制台-组织" summary:"更新个人信息"`
-	DisplayName *string `json:"display_name" dc:"显示名称"`
+	DisplayName *string `json:"display_name" v:"regex:^[^<>]*$#显示名称不能包含 < 或 > 字符" dc:"显示名称"`
 }
 
 type TenantProfileUpdateRes struct{}

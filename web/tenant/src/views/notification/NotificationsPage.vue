@@ -4,6 +4,7 @@ import { NDropdown } from 'naive-ui'
 import Icon from '@/components/common/Icon.vue'
 import BasePagination from '@/components/common/BasePagination.vue'
 import request from '@/utils/request'
+import { sanitizeHtml } from '@/utils/sanitize'
 import { useExport } from '@/composables/useExport'
 import { useNotificationCount } from '@/composables/useNotificationCount'
 
@@ -208,7 +209,7 @@ onMounted(() => {
 										{{ typeLabel[n.type] || n.type }}
 									</span>
 								</div>
-								<div class="text-sm text-gray-600 notification-content" v-html="n.content"></div>
+								<div class="text-sm text-gray-600 notification-content" v-html="sanitizeHtml(n.content)"></div>
 							</div>
 						</div>
 

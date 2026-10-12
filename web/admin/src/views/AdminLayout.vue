@@ -4,6 +4,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { Message } from '@arco-design/web-vue'
 import axios from 'axios'
 import { marked } from 'marked'
+import { sanitizeHtml } from '@/utils/sanitize'
 import request from '@/utils/request'
 import RouteErrorBoundary from '@/components/RouteErrorBoundary.vue'
 import { useWatermark } from '@/composables/useWatermark'
@@ -71,7 +72,7 @@ const updatePoller = createPoller(fetchUpdateStatus, 2000)
 
 const releaseNotesHtml = computed(() => {
   if (!releaseNotes.value) return ''
-  return marked(releaseNotes.value) as string
+  return sanitizeHtml(marked(releaseNotes.value) as string)
 })
 
 const isUpdating = computed(() => updateStatus.value?.updating === true)

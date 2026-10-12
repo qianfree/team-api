@@ -6,6 +6,7 @@ import { useRoute } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
 import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
 import { renderBadge, tableScrollX } from '@/utils/renderUtils'
+import { sanitizeHtml } from '@/utils/sanitize'
 import request, { extractApiError } from '@/utils/request'
 import { dispatchPayment } from '@/utils/payment'
 import { formatBilling, formatOrder, displayCurrency, currencySymbol, displayToCny, cnyToDisplay } from '@/composables/useCurrency'
@@ -520,8 +521,8 @@ onBeforeUnmount(() => {
 					<!-- 支付说明（管理员配置，支持纯文本或 HTML） -->
 					<div v-if="paymentInfo?.payment_notice" class="payment-notice mt-3">
 						<Icon name="infoCircle" size="xs" class="mt-0.5 flex-shrink-0" />
-						<!-- 内容由平台管理员配置，信任来源，支持 HTML 渲染 -->
-						<div v-html="paymentInfo.payment_notice" class="payment-notice-content"></div>
+						<!-- 内容由平台管理员配置，支持 HTML 渲染；仍过白名单净化兜底 -->
+						<div v-html="sanitizeHtml(paymentInfo.payment_notice)" class="payment-notice-content"></div>
 					</div>
 				</template>
 			</div>

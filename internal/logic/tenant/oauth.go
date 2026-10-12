@@ -257,10 +257,13 @@ func (s *sTenant) OAuthCallback(ctx context.Context, req *v1.OAuthCallbackReq) (
 		if username == "" {
 			username = fmt.Sprintf("%s_%s", req.Provider, userInfo.ProviderUserID)
 		}
+		// 第三方昵称（GitHub name 等）可自由填写任意字符，剥离尖括号防止异常名称入库
+		// （输出侧已有 Vue 转义 + DOMPurify 双防护，此处为输入侧兜底）
+		displayName := strings.NewReplacer("<", "", ">", "").Replace(userInfo.DisplayName)
 		result, err := dao.TntUsers.Ctx(ctx).Data(do.TntUsers{
 			TenantId:    tenant.Id,
 			Username:    username,
-			DisplayName: userInfo.DisplayName,
+			DisplayName: displayName,
 			Email:       userInfo.Email,
 			Role:        "member",
 			Status:      "active",
@@ -270,7 +273,7 @@ func (s *sTenant) OAuthCallback(ctx context.Context, req *v1.OAuthCallbackReq) (
 			result, err = dao.TntUsers.Ctx(ctx).Data(do.TntUsers{
 				TenantId:    tenant.Id,
 				Username:    username,
-				DisplayName: userInfo.DisplayName,
+				DisplayName: displayName,
 				Email:       userInfo.Email,
 				Role:        "member",
 				Status:      "active",

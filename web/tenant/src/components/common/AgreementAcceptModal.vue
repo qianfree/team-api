@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { marked } from 'marked'
+import { sanitizeHtml } from '@/utils/sanitize'
 import type { PendingAgreement } from '@/stores/tenant-auth'
 import request from '@/utils/request'
 import Icon from '@/components/common/Icon.vue'
@@ -22,7 +23,7 @@ const allChecked = ref(false)
 
 const contentHtml = computed(() => {
 	if (!agreementContent.value) return ''
-	return marked(agreementContent.value) as string
+	return sanitizeHtml(marked(agreementContent.value) as string)
 })
 
 watch(() => props.show, (val) => {

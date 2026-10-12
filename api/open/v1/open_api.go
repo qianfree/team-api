@@ -38,11 +38,11 @@ type OpenMemberItem struct {
 // OpenMemberCreate 创建成员
 type OpenMemberCreateReq struct {
 	g.Meta      `path:"/v1/members" method:"post" mime:"json" tags:"开放平台API" summary:"创建成员"`
-	Username    string `json:"username" v:"required|length:2,50#请输入用户名|用户名长度2-50" dc:"用户名"`
+	Username    string `json:"username" v:"required|length:2,50|regex:^[^<>]*$#请输入用户名|用户名长度2-50|用户名不能包含 < 或 > 字符" dc:"用户名"`
 	Email       string `json:"email" v:"required|email#请输入邮箱|邮箱格式不正确" dc:"邮箱"`
 	Password    string `json:"password" v:"required|length:8,64#请输入密码|密码长度6-50" dc:"密码"`
 	Role        string `json:"role" v:"required|in:admin,member#请选择角色|角色无效" dc:"角色"`
-	DisplayName string `json:"display_name" dc:"显示名称"`
+	DisplayName string `json:"display_name" v:"regex:^[^<>]*$#显示名称不能包含 < 或 > 字符" dc:"显示名称"`
 }
 
 type OpenMemberCreateRes struct {
@@ -54,7 +54,7 @@ type OpenMemberUpdateReq struct {
 	g.Meta      `path:"/v1/members/{id}" method:"put" mime:"json" tags:"开放平台API" summary:"更新成员"`
 	Id          int64   `json:"id" in:"path" v:"required#请指定成员ID" dc:"成员ID"`
 	Role        *string `json:"role" v:"in:admin,member#角色无效" dc:"角色"`
-	DisplayName *string `json:"display_name" dc:"显示名称"`
+	DisplayName *string `json:"display_name" v:"regex:^[^<>]*$#显示名称不能包含 < 或 > 字符" dc:"显示名称"`
 	Status      *string `json:"status" v:"in:active,disabled#状态无效" dc:"状态"`
 }
 

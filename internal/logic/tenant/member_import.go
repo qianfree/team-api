@@ -243,6 +243,15 @@ func startImport(ctx context.Context, tenantID, creatorID int64, filename string
 			continue
 		}
 
+		// 导入的 username 会作为 display_name 入库并在成员列表展示，禁止尖括号字符
+		if strings.ContainsAny(username, "<>") {
+			result.Status = "fail"
+			result.Error = "用户名不能包含 < 或 > 字符"
+			result.Username = username
+			results = append(results, result)
+			continue
+		}
+
 		// Check duplicate within CSV
 		lowerUsername := strings.ToLower(username)
 		if seenUsernames[lowerUsername] {

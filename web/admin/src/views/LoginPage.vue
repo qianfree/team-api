@@ -4,6 +4,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { Message } from '@arco-design/web-vue'
 import type { FormInstance } from '@arco-design/web-vue'
 import { marked } from 'marked'
+import { sanitizeHtml } from '@/utils/sanitize'
 import { useAuthStore } from '@/stores/auth'
 import type { PendingAgreement } from '@/stores/auth'
 import { extractApiError } from '@/utils/request'
@@ -46,7 +47,7 @@ const allChecked = ref(false)
 
 const agreementContentHtml = computed(() => {
   if (!agreementContent.value) return ''
-  return marked(agreementContent.value) as string
+  return sanitizeHtml(marked(agreementContent.value) as string)
 })
 
 function proceedAfterLogin() {

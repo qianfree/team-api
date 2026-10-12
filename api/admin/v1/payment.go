@@ -7,10 +7,10 @@ import "github.com/gogf/gf/v2/frame/g"
 type AdminMemberCreateReq struct {
 	g.Meta      `path:"/members" method:"post" mime:"json" tags:"管理后台-成员" summary:"添加成员"`
 	TenantID    int64  `json:"tenant_id" v:"required|min:1#请选择租户|租户ID无效" dc:"租户ID"`
-	Username    string `json:"username" v:"required|length:3,50#请输入用户名|用户名长度为3-50位" dc:"用户名"`
+	Username    string `json:"username" v:"required|length:3,50|regex:^[^<>]*$#请输入用户名|用户名长度为3-50位|用户名不能包含 < 或 > 字符" dc:"用户名"`
 	Email       string `json:"email" v:"required|email#请输入邮箱|邮箱格式不正确" dc:"邮箱"`
 	Password    string `json:"password" v:"required|length:8,64#请输入密码|密码长度为8-64位" dc:"密码"`
-	DisplayName string `json:"display_name" dc:"显示名称"`
+	DisplayName string `json:"display_name" v:"regex:^[^<>]*$#显示名称不能包含 < 或 > 字符" dc:"显示名称"`
 	Role        string `json:"role" v:"required|in:admin,member#请选择角色|角色无效" dc:"角色：admin/member"`
 }
 

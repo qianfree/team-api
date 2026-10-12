@@ -13,6 +13,7 @@ import Icon from '@/components/common/Icon.vue'
 import MaintenanceBanner from '@/components/common/MaintenanceBanner.vue'
 import RouteErrorBoundary from '@/components/common/RouteErrorBoundary.vue'
 import { marked } from 'marked'
+import { sanitizeHtml } from '@/utils/sanitize'
 import request from '@/utils/request'
 
 const router = useRouter()
@@ -163,7 +164,7 @@ function closeAnnouncementDetail() {
 }
 
 function renderMarkdown(text: string): string {
-	return marked.parse(text) as string
+	return sanitizeHtml(marked.parse(text) as string)
 }
 
 async function handleLogout() {

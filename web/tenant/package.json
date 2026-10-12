@@ -21,6 +21,7 @@
     "@unhead/vue": "1",
     "axios": "^1.15.0",
     "chart.js": "^4.5.1",
+    "dompurify": "^3.4.17",
     "marked": "^18.0.3",
     "naive-ui": "^2.44.1",
     "pinia": "^3.0.4",

@@ -108,10 +108,10 @@ type TenantInviteInfoRes struct {
 type TenantMemberJoinReq struct {
 	g.Meta      `path:"/members/join" method:"post" mime:"json" tags:"租户控制台-成员管理" summary:"通过邀请加入" group:"public" middleware:"-"`
 	Code        string `json:"code" v:"required#请提供邀请码" dc:"邀请码"`
-	Username    string `json:"username" v:"required|length:3,50#请输入用户名|用户名长度为3-50位" dc:"用户名"`
+	Username    string `json:"username" v:"required|length:3,50|regex:^[^<>]*$#请输入用户名|用户名长度为3-50位|用户名不能包含 < 或 > 字符" dc:"用户名"`
 	Password    string `json:"password" v:"required|length:8,64#请输入密码|密码长度为8-64位" dc:"密码"`
 	Email       string `json:"email" v:"email#邮箱格式不正确" dc:"邮箱"`
-	DisplayName string `json:"display_name" dc:"显示名称"`
+	DisplayName string `json:"display_name" v:"regex:^[^<>]*$#显示名称不能包含 < 或 > 字符" dc:"显示名称"`
 }
 
 type TenantMemberJoinRes struct {
@@ -127,10 +127,10 @@ type TenantMemberJoinRes struct {
 // TenantMemberCreateReq 直接创建成员请求
 type TenantMemberCreateReq struct {
 	g.Meta      `path:"/members/create" method:"post" mime:"json" tags:"租户控制台-成员管理" summary:"直接创建成员"`
-	Username    string `json:"username" v:"required|length:3,50#请输入用户名|用户名长度为3-50位" dc:"用户名"`
+	Username    string `json:"username" v:"required|length:3,50|regex:^[^<>]*$#请输入用户名|用户名长度为3-50位|用户名不能包含 < 或 > 字符" dc:"用户名"`
 	Password    string `json:"password" v:"required|length:8,64#请输入密码|密码长度为8-64位" dc:"密码"`
 	Email       string `json:"email" v:"email#邮箱格式不正确" dc:"邮箱"`
-	DisplayName string `json:"display_name" dc:"显示名称"`
+	DisplayName string `json:"display_name" v:"regex:^[^<>]*$#显示名称不能包含 < 或 > 字符" dc:"显示名称"`
 	Role        string `json:"role" d:"member" v:"in:admin,member#角色无效" dc:"角色"`
 }
 

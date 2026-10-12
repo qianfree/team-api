@@ -442,6 +442,7 @@ import { useHead } from '@unhead/vue'
 import { usePublicSettings } from '@/composables/usePublicSettings'
 import { currencySymbol } from '@/composables/useCurrency'
 import { marked } from 'marked'
+import { sanitizeHtml } from '@/utils/sanitize'
 import request from '@/utils/request'
 
 const { settings: publicSettings, fetchSettings } = usePublicSettings()
@@ -553,7 +554,7 @@ async function fetchAndShowAnnouncement() {
 }
 
 function renderMarkdown(text: string): string {
-  return marked.parse(text) as string
+  return sanitizeHtml(marked.parse(text) as string)
 }
 
 /* ==================== SEO ==================== */

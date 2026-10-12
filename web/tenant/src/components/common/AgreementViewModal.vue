@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue'
 import { marked } from 'marked'
+import { sanitizeHtml } from '@/utils/sanitize'
 import request from '@/utils/request'
 import Icon from '@/components/common/Icon.vue'
 
@@ -17,7 +18,7 @@ const error = ref('')
 
 const contentHtml = computed(() => {
 	if (!content.value) return ''
-	return marked(content.value) as string
+	return sanitizeHtml(marked(content.value) as string)
 })
 
 watch(() => props.show, async (val) => {

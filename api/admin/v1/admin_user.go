@@ -38,7 +38,7 @@ type AdminUserItem struct {
 // AdminUserCreateReq 创建管理员请求
 type AdminUserCreateReq struct {
 	g.Meta   `path:"/users" method:"post" mime:"json" tags:"管理后台-用户管理" summary:"创建管理员"`
-	Username string `json:"username" v:"required|length:3,50#请输入用户名|用户名长度为3-50位" dc:"用户名"`
+	Username string `json:"username" v:"required|length:3,50|regex:^[^<>]*$#请输入用户名|用户名长度为3-50位|用户名不能包含 < 或 > 字符" dc:"用户名"`
 	Password string `json:"password" v:"required|length:8,64#请输入密码|密码长度为8-64位" dc:"密码"`
 	Email    string `json:"email" v:"email#邮箱格式不正确" dc:"邮箱"`
 	Role     string `json:"role" d:"admin" v:"in:super_admin,admin#角色只能是 super_admin 或 admin" dc:"角色：super_admin / admin"`
@@ -55,7 +55,7 @@ type AdminUserCreateRes struct {
 type AdminUserUpdateReq struct {
 	g.Meta      `path:"/users/{id}" method:"put" mime:"json" tags:"管理后台-用户管理" summary:"更新管理员"`
 	Id          int64   `json:"id" in:"path" v:"required" dc:"管理员ID"`
-	DisplayName *string `json:"display_name" dc:"显示名称"`
+	DisplayName *string `json:"display_name" v:"regex:^[^<>]*$#显示名称不能包含 < 或 > 字符" dc:"显示名称"`
 	Email       *string `json:"email" dc:"邮箱"`
 	Role        *string `json:"role" v:"in:super_admin,admin#角色只能是 super_admin 或 admin" dc:"角色"`
 }
