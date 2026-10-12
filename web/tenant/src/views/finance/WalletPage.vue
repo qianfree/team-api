@@ -88,6 +88,10 @@ const payMethods = computed(() => {
 
 const minimumAmount = computed(() => Number(paymentInfo.value?.min_topup) || 1)
 
+// 单笔充值上限：锚定 CNY 100000（后端 RechargeCreate 同口径校验），输入框上限换算为显示货币
+const MAX_RECHARGE_CNY = 100000
+const displayMaxAmount = computed(() => cnyToDisplay(MAX_RECHARGE_CNY))
+
 // 充值页显示口径换算：minimumAmount 是 CNY 门槛，输入框的最小值需换算为显示货币
 const displayMinAmount = computed(() => cnyToDisplay(minimumAmount.value))
 
@@ -125,12 +129,14 @@ const hasPayDiscount = computed(() => selectedDiscount.value < 1 || !!promoResul
 const rechargeValidationMessage = computed(() => {
 	if (!rechargeAmount.value) return ''
 	if (rechargeCnyAmount.value < minimumAmount.value) return `最低充值金额为 ${formatOrder(minimumAmount.value, 2)}`
+	if (rechargeCnyAmount.value > MAX_RECHARGE_CNY) return `单笔充值金额不能超过 ${formatOrder(MAX_RECHARGE_CNY, 0)}，更大额度请联系客服走线下充值`
 	return ''
 })
 
 const rechargeReady = computed(() =>
 	!!rechargeAmount.value
 	&& rechargeCnyAmount.value >= minimumAmount.value
+	&& rechargeCnyAmount.value <= MAX_RECHARGE_CNY
 	&& !!selectedChannel.value
 	&& !!selectedPaymentMethod.value,
 )
@@ -548,7 +554,7 @@ onBeforeUnmount(() => {
 					<div>
 						<div class="flex items-center justify-between">
 							<label class="text-xs font-semibold text-slate-600">充值金额</label>
-							<span class="text-[11px] text-slate-400">最低 {{ formatOrder(minimumAmount, 2) }}</span>
+							<span class="text-[11px] text-slate-400">最低 {{ formatOrder(minimumAmount, 2) }} · 最高 {{ formatOrder(MAX_RECHARGE_CNY, 0) }}</span>
 						</div>
 						<div class="mt-3 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
 							<button
@@ -568,6 +574,7 @@ onBeforeUnmount(() => {
 							<n-input-number
 								v-model:value="customAmount"
 								:min="displayMinAmount"
+								:max="displayMaxAmount"
 								:step="0.01"
 								:status="rechargeValidationMessage ? 'error' : undefined"
 								placeholder="输入其他金额"

@@ -393,6 +393,11 @@ func computeTierDiscount(settings *payment.GlobalPaymentSettings, amount decimal
 	return
 }
 
+// maxRechargeAmountCNY 单笔充值金额上限（CNY）。充值订单走真实支付渠道，
+// 无上限会放大异常输入（误输多位数）与渠道限额问题；10 万覆盖正常个人与团队充值，
+// 更大额度的诉求走线下充值/人工调账。
+const maxRechargeAmountCNY float64 = 100000
+
 // RechargeCreate 创建充值订单并发起支付（一步完成）
 func (s *sTenant) RechargeCreate(ctx context.Context, req *v1.TenantRechargeCreateReq) (*v1.TenantRechargeCreateRes, error) {
 	role := middleware.GetUserRole(ctx)
@@ -410,6 +415,9 @@ func (s *sTenant) RechargeCreate(ctx context.Context, req *v1.TenantRechargeCrea
 	}
 	if req.Amount < minTopup {
 		return nil, lcommon.NewBusinessError(422, fmt.Sprintf("充值金额不能小于 %.2f", minTopup))
+	}
+	if req.Amount > maxRechargeAmountCNY {
+		return nil, lcommon.NewBusinessError(422, fmt.Sprintf("单笔充值金额不能超过 %.0f，更大额度请联系客服走线下充值", maxRechargeAmountCNY))
 	}
 
 	// 2. 计算档位折扣实付基数。
