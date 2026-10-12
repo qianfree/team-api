@@ -77,6 +77,27 @@ func (s *sTenant) OrderDetail(ctx context.Context, req *v1.TenantOrderDetailReq)
 }
 
 // OrderCreate 创建订单
+// maxPendingOrdersPerTenant 单租户同时挂起的未支付订单数上限。反复下单不支付会堆积
+// 无效订单，且大量不成交的支付请求可能导致收款渠道侧风控/账号受限；达到上限后拒绝
+// 新建，引导用户先完成支付、取消或等待过期（订单过期 cron 自动清理 pending）。
+const maxPendingOrdersPerTenant = 5
+
+// checkPendingOrderLimit 校验租户挂起的未支付订单数未达上限。
+// 防滥用性质的限制：极端并发下的竞态窗口可能多放行一单，可接受，不作为资金闸门。
+func checkPendingOrderLimit(ctx context.Context, tenantID int64) error {
+	count, err := dao.OrdOrders.Ctx(ctx).
+		Where("tenant_id", tenantID).
+		Where("status", "pending").
+		Count()
+	if err != nil {
+		return err
+	}
+	if count >= maxPendingOrdersPerTenant {
+		return lcommon.NewBusinessError(422, fmt.Sprintf("未支付订单已达上限（最多 %d 笔），请先完成支付或等待订单过期后再发起，如有问题可提交站内工单处理", maxPendingOrdersPerTenant))
+	}
+	return nil
+}
+
 func (s *sTenant) OrderCreate(ctx context.Context, req *v1.TenantOrderCreateReq) (*v1.TenantOrderCreateRes, error) {
 	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
@@ -406,6 +427,11 @@ func (s *sTenant) RechargeCreate(ctx context.Context, req *v1.TenantRechargeCrea
 	}
 	tenantID := middleware.GetTenantID(ctx)
 	userID := middleware.GetUserID(ctx)
+
+	// 挂起订单数上限校验（防反复下单不支付堆订单、拖累收款渠道）
+	if err := checkPendingOrderLimit(ctx, tenantID); err != nil {
+		return nil, err
+	}
 
 	// 1. 校验金额
 	settings, _ := payment.GetGlobalPaymentSettings(ctx)
