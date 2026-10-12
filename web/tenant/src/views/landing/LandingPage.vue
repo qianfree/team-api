@@ -569,7 +569,7 @@ useSeo({
   canonicalUrl: 'https://team-api.net/',
 })
 
-/* JSON.stringify 不转义 <：admin 可控字段（站点名/描述）若含 </script> 会逃逸
+/* JSON.stringify 不转义 <：admin 可控字段（站点名/描述）若含 "<\\/script>"（转义写法，SFC script 块内禁止出现字面结束标签）会逃逸
    script 块造成 HTML 注入。统一把 < > 转义为 \u003c/\u003e 后再注入 innerHTML
    （JSON 字符串里 \u003c 与 < 等价，不影响结构化数据解析） */
 function safeJsonLd(obj: Record<string, unknown>): string {
