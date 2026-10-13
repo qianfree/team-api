@@ -13,3 +13,6 @@ func (c *ControllerV1) MarketplaceList(ctx context.Context, req *v1.MarketplaceL
 func (c *ControllerV1) MarketplaceDetail(ctx context.Context, req *v1.MarketplaceDetailReq) (res *v1.MarketplaceDetailRes, err error) {
 	return service.Tenant().GetModelDetail(ctx, req)
 }
+func (c *ControllerV1) MarketplaceShowcase(ctx context.Context, req *v1.MarketplaceShowcaseReq) (res *v1.MarketplaceShowcaseRes, err error) {
+	return service.Tenant().GetMarketplaceShowcase(ctx, req)
+}

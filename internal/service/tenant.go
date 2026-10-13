@@ -142,6 +142,9 @@ type (
 		CancelClosure(ctx context.Context, req *v1.TenantCancelClosureReq) (*v1.TenantCancelClosureRes, error)
 		// GetModelList 获取模型广场列表（从默认模型分组加载）
 		GetModelList(ctx context.Context, req *v1.MarketplaceListReq) (*v1.MarketplaceListRes, error)
+		// GetMarketplaceShowcase 获取模型广场展示带：推荐位（运营精选，display_order 排序）
+		// 与上新位（运营标记，created_at 倒序）。均为编辑推荐位，不参与用户筛选
+		GetMarketplaceShowcase(ctx context.Context, req *v1.MarketplaceShowcaseReq) (*v1.MarketplaceShowcaseRes, error)
 		// GetModelDetail 获取模型详情
 		GetModelDetail(ctx context.Context, req *v1.MarketplaceDetailReq) (*v1.MarketplaceDetailRes, error)
 		// ListMembers returns a paginated list of tenant members.
@@ -240,7 +243,6 @@ type (
 		OrderList(ctx context.Context, req *v1.TenantOrderListReq) (*v1.TenantOrderListRes, error)
 		// OrderDetail 获取订单详情
 		OrderDetail(ctx context.Context, req *v1.TenantOrderDetailReq) (*v1.TenantOrderDetailRes, error)
-		// OrderCreate 创建订单
 		OrderCreate(ctx context.Context, req *v1.TenantOrderCreateReq) (*v1.TenantOrderCreateRes, error)
 		// OrderCancel 取消订单
 		OrderCancel(ctx context.Context, req *v1.TenantOrderCancelReq) (*v1.TenantOrderCancelRes, error)
@@ -307,7 +309,9 @@ type (
 		ProjectUsageStats(ctx context.Context, req *v1.TenantProjectUsageStatsReq) (*v1.TenantProjectUsageStatsRes, error)
 		// ProjectUsageLogs 获取项目用量日志（分页）（owner/admin 权限）
 		ProjectUsageLogs(ctx context.Context, req *v1.TenantProjectUsageLogsReq) (*v1.TenantProjectUsageLogsRes, error)
-		// ValidatePromoCode 校验优惠码并返回折扣金额（只读预检端点，不加锁、不消耗用量）
+		// ValidatePromoCode 校验优惠码并返回折扣金额（充值场景只读预检，不加锁、不消耗用量）。
+		// 入参 amount 为充值原价（CNY）：先应用档位折扣得实付基数，优惠码再作用于该基数，
+		// 与 RechargeCreate 下单口径一致；返回的 FinalAmount 即预期实付金额。
 		ValidatePromoCode(ctx context.Context, req *v1.TenantValidatePromoCodeReq) (*v1.TenantValidatePromoCodeRes, error)
 		// RedeemCode 租户兑换码
 		RedeemCode(ctx context.Context, req *v1.TenantRedeemCodeReq) (*v1.TenantRedeemCodeRes, error)

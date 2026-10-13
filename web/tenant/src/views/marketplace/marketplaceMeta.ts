@@ -125,3 +125,188 @@ export function timePriceText(model: MarketplaceModel, tp: TimePriceItem): strin
 	}
 	return `输入 ${formatPrice(tp.input_price)} · 输出 ${formatPrice(tp.output_price)}${model.billing_mode === 'tiered' ? ' 起' : ''}`
 }
+
+// ── 模型卡片：按品类/计费模式自适应（价格锚是全卡唯一大号元素） ──
+
+export interface CardPriceSlot {
+	label: string
+	value: string
+	/** 单位附注（11px 灰） */
+	unit: string
+	primary: boolean
+}
+
+export interface CardView {
+	price: {
+		slots: CardPriceSlot[]
+		/** tiered=首档价、per_second=多规格 → 角标「起」 */
+		fromNote: boolean
+		/** 配置了分时段价 → 价格区角落显示时钟提示 */
+		hasTimePrices: boolean
+	}
+	/** 规格行片段（等宽值），如 [上下文 400K · 最大输出 64K] / [480p · 720p] */
+	specSegments: { label: string; value: string }[]
+}
+
+// per_second 矩阵展示档摘要：取非 "*" 的规格键（字典序），最多两档
+function perSecondSpecs(prices: Record<string, number> | null | undefined): string[] {
+	if (!prices) return []
+	return Object.keys(prices)
+		.filter(k => k !== '*')
+		.sort()
+		.slice(0, 2)
+}
+
+// per_second 价格锚：兜底档 "*" 优先，无则取最低档（多档时 from=true）
+function perSecondAnchor(prices: Record<string, number> | null | undefined): { value: number; from: boolean } {
+	if (!prices) return { value: 0, from: false }
+	if (prices['*'] != null && prices['*'] > 0) return { value: prices['*'], from: false }
+	const positive = Object.values(prices).filter(v => v > 0)
+	if (!positive.length) return { value: 0, from: false }
+	return { value: Math.min(...positive), from: Object.keys(prices).length > 1 }
+}
+
+export function getCardView(model: MarketplaceModel): CardView {
+	const mode = model.billing_mode || 'token'
+	const hasTimePrices = !!model.time_prices?.length
+
+	// 按次计费（图像等）：单价锚 + tags 作规格行
+	if (mode === 'per_request') {
+		return {
+			price: {
+				slots: [{ label: '按次计费', value: formatPrice(model.per_request_price), unit: '/ 次', primary: true }],
+				fromNote: false,
+				hasTimePrices,
+			},
+			specSegments: (model.tags || []).slice(0, 2).map(t => ({ label: t, value: '' })),
+		}
+	}
+
+	// 按秒计费（视频等）：每秒价锚 + 规格档摘要
+	if (mode === 'per_second' || mode === 'special') {
+		const anchor = perSecondAnchor(model.per_second_prices)
+		return {
+			price: {
+				slots: [{ label: '按秒计费', value: formatPrice(anchor.value), unit: '/ 秒', primary: true }],
+				fromNote: anchor.from,
+				hasTimePrices,
+			},
+			specSegments: perSecondSpecs(model.per_second_prices).map(s => ({ label: s, value: '' })),
+		}
+	}
+
+	// token / tiered：输入+输出双价锚（向量/重排类只显示输入价）
+	const isEmbeddingLike = model.category === 'embedding' || model.category === 'rerank'
+	const slots: CardPriceSlot[] = [
+		{ label: '输入', value: formatPrice(model.input_price), unit: '/1M tokens', primary: true },
+	]
+	if (!isEmbeddingLike) {
+		slots.push({ label: '输出', value: formatPrice(model.output_price), unit: '/1M tokens', primary: false })
+	}
+
+	// 规格行：chat 类给上下文/输出硬参数；无硬参数时 tags 兜底
+	const specSegments: { label: string; value: string }[] = []
+	if (model.max_context_tokens) specSegments.push({ label: '上下文', value: formatTokens(model.max_context_tokens) })
+	if (model.max_output_tokens && !isEmbeddingLike) specSegments.push({ label: '输出', value: formatTokens(model.max_output_tokens) })
+	if (!specSegments.length) {
+		for (const tag of (model.tags || []).slice(0, 2)) specSegments.push({ label: tag, value: '' })
+	}
+
+	return {
+		price: { slots, fromNote: mode === 'tiered', hasTimePrices },
+		specSegments,
+	}
+}
+
+// ── 卡片状态徽章：至多一枚，优先级 折扣 > NEW(运营标记) > 推荐 ──
+
+export type CardBadgeType = 'deal' | 'new' | 'rec'
+
+export function getCardBadge(model: MarketplaceModel): { type: CardBadgeType; text: string } | null {
+	if (model.discount_label) return { type: 'deal', text: model.discount_label }
+	if (model.is_new) return { type: 'new', text: 'NEW' }
+	if (model.is_recommended) return { type: 'rec', text: '推荐' }
+	return null
+}
+
+// ── 筛选/排序常量 ──
+
+export const marketplaceSortOptions = [
+	{ value: '', label: '默认排序' },
+	{ value: 'newest', label: '最新上架' },
+	{ value: 'price_asc', label: '价格低到高' },
+	{ value: 'price_desc', label: '价格高到低' },
+	{ value: 'context_desc', label: '上下文最长' },
+]
+
+export const marketplaceBillingOptions = [
+	{ value: '', label: '全部' },
+	{ value: 'token', label: '按量计费' },
+	{ value: 'per_request', label: '按次计费' },
+	{ value: 'per_second', label: '按秒计费' },
+	{ value: 'tiered', label: '阶梯计费' },
+]
+
+/** 能力键 → 筛选选项标签（键即后端 capabilities JSONB 键） */
+export function capabilityOptionLabel(key: string): string {
+	return capabilityLabels[key] || key.replaceAll('_', ' ')
+}
+
+// ── 上架时间展示 ──
+
+/** 相对时间：7 天内「N 天前」，更早显示日期（新上线条与详情用） */
+export function relativeCreatedAt(dateStr?: string | null): string {
+	if (!dateStr) return ''
+	const date = new Date(`${dateStr}T00:00:00`)
+	if (Number.isNaN(date.getTime())) return dateStr
+	const days = Math.floor((Date.now() - date.getTime()) / 86_400_000)
+	if (days <= 0) return '今天'
+	if (days < 7) return `${days} 天前`
+	if (days < 30) return `${Math.floor(days / 7)} 周前`
+	return date.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })
+}
+
+// ── 快速接入代码块（详情抽屉） ──
+
+export interface QuickStartSnippet {
+	key: 'curl' | 'python'
+	label: string
+	code: string
+}
+
+/** 接入示例：baseUrl 为当前部署的网关地址（window.location.origin + /v1） */
+export function quickStartSnippets(modelId: string, baseUrl: string): QuickStartSnippet[] {
+	return [
+		{
+			key: 'curl',
+			label: 'cURL',
+			code: [
+				`curl ${baseUrl}/chat/completions \\`,
+				`  -H "Authorization: Bearer $API_KEY" \\`,
+				`  -H "Content-Type: application/json" \\`,
+				`  -d '{`,
+				`    "model": "${modelId}",`,
+				`    "messages": [{"role": "user", "content": "Hello"}]`,
+				`  }'`,
+			].join('\n'),
+		},
+		{
+			key: 'python',
+			label: 'Python',
+			code: [
+				`from openai import OpenAI`,
+				``,
+				`client = OpenAI(`,
+				`    base_url="${baseUrl}",`,
+				`    api_key="$API_KEY",`,
+				`)`,
+				``,
+				`resp = client.chat.completions.create(`,
+				`    model="${modelId}",`,
+				`    messages=[{"role": "user", "content": "Hello"}],`,
+				`)`,
+				`print(resp.choices[0].message.content)`,
+			].join('\n'),
+		},
+	]
+}

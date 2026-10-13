@@ -2,7 +2,9 @@ package tenant
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/frame/g"
@@ -25,9 +27,8 @@ type marketplacePricingRow struct {
 	PriceChangeNote *string `json:"price_change_note"`
 }
 
-// GetModelList 获取模型广场列表（从默认模型分组加载）
-func (s *sTenant) GetModelList(ctx context.Context, req *v1.MarketplaceListReq) (*v1.MarketplaceListRes, error) {
-	// 1. 查找默认模型分组
+// marketplaceDefaultGroup 查找启用中的默认模型分组（模型广场数据源）
+func (s *sTenant) marketplaceDefaultGroup(ctx context.Context) (*entity.MdlModelGroups, error) {
 	var defaultGroup *entity.MdlModelGroups
 	err := dao.MdlModelGroups.Ctx(ctx).
 		Where("is_default", true).
@@ -36,19 +37,101 @@ func (s *sTenant) GetModelList(ctx context.Context, req *v1.MarketplaceListReq) 
 	if err != nil {
 		return nil, err
 	}
+	return defaultGroup, nil
+}
+
+// splitCSV 逗号分隔参数拆分为去空格、去重的值列表
+func splitCSV(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	values := make([]string, 0, 4)
+	for _, part := range strings.Split(raw, ",") {
+		value := strings.TrimSpace(part)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		values = append(values, value)
+	}
+	return values
+}
+
+// mergeCSV 多选参数与旧单选参数合并（单选值并入多选集合，保持旧参数兼容）
+func mergeCSV(multi string, single string) []string {
+	values := splitCSV(multi)
+	if single == "" {
+		return values
+	}
+	for _, value := range values {
+		if value == single {
+			return values
+		}
+	}
+	return append(values, single)
+}
+
+// boolKeySet 值列表 → 键集合
+func boolKeySet(values []string) map[string]struct{} {
+	if len(values) == 0 {
+		return nil
+	}
+	set := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		set[value] = struct{}{}
+	}
+	return set
+}
+
+// applyMarketplaceSort 列表排序分支（白名单已由 API 层 v:"in:" 校验）。
+// 价格排序走 mdl_pricing.sort_price（定价写入路径维护的基准价列，NULL=未配价落尾部），
+// 经标量子查询取值避免 join 破坏 entity 扫描
+func applyMarketplaceSort(m *gdb.Model, sort string) *gdb.Model {
+	switch sort {
+	case "newest":
+		return m.Order("mdl_models.created_at DESC, mdl_models.model_id ASC")
+	case "price_asc":
+		return m.Order("(SELECT sp.sort_price FROM mdl_pricing sp WHERE sp.model_id = mdl_models.id) ASC NULLS LAST, mdl_models.model_id ASC")
+	case "price_desc":
+		return m.Order("(SELECT sp.sort_price FROM mdl_pricing sp WHERE sp.model_id = mdl_models.id) DESC NULLS LAST, mdl_models.model_id ASC")
+	case "context_desc":
+		return m.Order("mdl_models.max_context_tokens DESC, mdl_models.model_id ASC")
+	default:
+		return m.OrderAsc("mdl_models.category").OrderAsc("mdl_models.model_id")
+	}
+}
+
+// GetModelList 获取模型广场列表（从默认模型分组加载）
+func (s *sTenant) GetModelList(ctx context.Context, req *v1.MarketplaceListReq) (*v1.MarketplaceListRes, error) {
+	defaultGroup, err := s.marketplaceDefaultGroup(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if defaultGroup == nil {
-		// 没有默认分组，返回空列表
 		return &v1.MarketplaceListRes{
 			List:     []v1.MarketplaceModelItem{},
 			Total:    0,
 			Page:     req.Page,
 			PageSize: req.PageSize,
 			Vendors:  []string{},
+			Facets:   emptyMarketplaceFacets(),
 		}, nil
 	}
 
-	// 2. 构建查询：通过分组关联查询模型（厂商 facet 与主列表共用同一套基础条件，
-	// 用闭包各自构建链路，避免 gf Model 链式分支共享底层状态的歧义）
+	// 多选筛选解析（品类/厂商旧单选参数并入多选集合）
+	categories := mergeCSV(req.Categories, req.Category)
+	vendors := mergeCSV(req.Vendors, req.Vendor)
+	capabilities := splitCSV(req.Capabilities)
+
+	// 基础查询：默认分组 + active + 关键词。主列表与分面统计共用同一套基础条件
+	// （闭包各自构建链路，避免 gf Model 链式分支共享底层状态的歧义）。
+	// 计费筛选与价格排序经 mdl_pricing 的标量子查询表达而非 LEFT JOIN：主查询保持
+	// 无 pricing join（mdl_group_models 之外不引入新 join 面），子查询写法与 admin
+	// 侧 pricedPredicate 惯用法一致
 	newQuery := func() *gdb.Model {
 		q := dao.MdlModels.Ctx(ctx).
 			LeftJoin("mdl_group_models", "mdl_group_models.model_id = mdl_models.id").
@@ -58,46 +141,66 @@ func (s *sTenant) GetModelList(ctx context.Context, req *v1.MarketplaceListReq) 
 			keyword := "%" + common.EscapeLikePattern(req.Keyword) + "%"
 			q = q.Where("(mdl_models.model_id LIKE ? OR mdl_models.model_name LIKE ? OR mdl_models.description LIKE ?)", keyword, keyword, keyword)
 		}
-		if req.Category != "" {
-			q = q.Where("mdl_models.category", req.Category)
+		return q
+	}
+
+	// 维度筛选（对主列表与分面统计的「其余维度谓词」共用同一语义）
+	applyDimensionFilters := func(q *gdb.Model) *gdb.Model {
+		if len(categories) > 0 {
+			q = q.WhereIn("mdl_models.category", categories)
+		}
+		if len(vendors) > 0 {
+			q = q.WhereIn("mdl_models.vendor", vendors)
+		}
+		if len(capabilities) > 0 {
+			// JSONB 包含匹配，AND 语义（需全部具备）。能力值由管理后台写入为布尔，
+			// @> 匹配与前端 truthy 判定（true/1/"true"）在布尔形态下一致
+			contain := make(map[string]bool, len(capabilities))
+			for _, key := range capabilities {
+				contain[key] = true
+			}
+			raw, _ := json.Marshal(contain)
+			q = q.Where("mdl_models.capabilities @> ?::jsonb", string(raw))
+		}
+		if req.BillingMode != "" {
+			// 计费模式经标量子查询归一：无定价行/空模式兜底 token（与展示侧口径一致）
+			q = q.Where(
+				"COALESCE(NULLIF((SELECT sp.billing_mode FROM mdl_pricing sp WHERE sp.model_id = mdl_models.id), ''), 'token') = ?",
+				req.BillingMode,
+			)
 		}
 		return q
 	}
 
-	m := newQuery()
+	m := applyMarketplaceSort(applyDimensionFilters(newQuery()), req.Sort)
 
-	// 厂商筛选
-	if req.Vendor != "" {
-		m = m.Where("mdl_models.vendor", req.Vendor)
-	}
-
-	// 排序：按类别、模型名称
-	m = m.OrderAsc("mdl_models.category").OrderAsc("mdl_models.model_id")
-
-	// 3. 查询总数
+	// 查询总数
 	total, err := m.Count()
 	if err != nil {
 		return nil, err
 	}
 
-	// 3.1 厂商 facet：在当前关键词/分类条件下（忽略厂商筛选本身）有模型的厂商去重列表，
-	// 前端据此只渲染实际有模型的厂商筛选项，保证点任一厂商都有结果
-	var vendorRows []struct {
-		Vendor string `json:"vendor"`
-	}
-	err = newQuery().
-		Where("mdl_models.vendor <> ''").
-		Fields("DISTINCT mdl_models.vendor").
-		Scan(&vendorRows)
-	if err != nil {
-		return nil, err
-	}
-	vendors := make([]string, 0, len(vendorRows))
-	for _, r := range vendorRows {
-		vendors = append(vendors, r.Vendor)
+	// 分面统计：一条投影查询拉回 keyword 基础条件下的全量候选行，Go 内存析取聚合。
+	// 目录超过阈值时跳过统计（增长阀），计数返回空、vendors 列表返回空，前端隐藏计数
+	facets := emptyMarketplaceFacets()
+	vendorOptions := []string{}
+	if total <= marketplaceFacetRowLimit {
+		var facetRows []marketplaceFacetRow
+		err = newQuery().
+			Fields("mdl_models.category, mdl_models.vendor, mdl_models.capabilities, (SELECT sp.billing_mode FROM mdl_pricing sp WHERE sp.model_id = mdl_models.id) AS billing_mode").
+			Scan(&facetRows)
+		if err != nil {
+			return nil, err
+		}
+		facets, vendorOptions = aggregateMarketplaceFacets(facetRows, marketplaceFacetFilters{
+			Categories:   boolKeySet(categories),
+			Vendors:      boolKeySet(vendors),
+			Capabilities: boolKeySet(capabilities),
+			BillingMode:  req.BillingMode,
+		})
 	}
 
-	// 4. 分页查询模型
+	// 分页查询模型
 	var models []*entity.MdlModels
 	err = m.Fields("mdl_models.*").
 		Page(req.Page, req.PageSize).
@@ -106,41 +209,21 @@ func (s *sTenant) GetModelList(ctx context.Context, req *v1.MarketplaceListReq) 
 		return nil, err
 	}
 
-	// 5. 批量查询价格（从 mdl_pricing 表）
 	if len(models) == 0 {
 		return &v1.MarketplaceListRes{
 			List:     []v1.MarketplaceModelItem{},
-			Total:    0,
+			Total:    total,
 			Page:     req.Page,
 			PageSize: req.PageSize,
-			Vendors:  vendors,
+			Vendors:  vendorOptions,
+			Facets:   facets,
 		}, nil
 	}
 
-	modelIds := make([]int64, len(models))
-	for i, model := range models {
-		modelIds[i] = model.Id
-	}
-
-	var pricings []marketplacePricingRow
-	err = dao.MdlPricing.Ctx(ctx).
-		WhereIn("model_id", modelIds).
-		Scan(&pricings)
+	// 批量查询价格并转换为响应格式
+	list, err := s.convertMarketplaceModels(ctx, models)
 	if err != nil {
 		return nil, err
-	}
-
-	// 构建价格映射（model_id -> pricing）
-	priceMap := make(map[int64]*marketplacePricingRow, len(pricings))
-	for i := range pricings {
-		priceMap[pricings[i].ModelID] = &pricings[i]
-	}
-
-	// 6. 转换为响应格式
-	list := make([]v1.MarketplaceModelItem, 0, len(models))
-	for _, model := range models {
-		item := s.convertToMarketplaceItem(ctx, model, priceMap[model.Id])
-		list = append(list, item)
 	}
 
 	return &v1.MarketplaceListRes{
@@ -148,18 +231,104 @@ func (s *sTenant) GetModelList(ctx context.Context, req *v1.MarketplaceListReq) 
 		Total:    total,
 		Page:     req.Page,
 		PageSize: req.PageSize,
-		Vendors:  vendors,
+		Vendors:  vendorOptions,
+		Facets:   facets,
 	}, nil
+}
+
+// GetMarketplaceShowcase 获取模型广场展示带：推荐位（运营精选，display_order 排序）
+// 与上新位（运营标记，created_at 倒序）。均为编辑推荐位，不参与用户筛选
+func (s *sTenant) GetMarketplaceShowcase(ctx context.Context, req *v1.MarketplaceShowcaseReq) (*v1.MarketplaceShowcaseRes, error) {
+	res := &v1.MarketplaceShowcaseRes{
+		Recommended: []v1.MarketplaceModelItem{},
+		Newest:      []v1.MarketplaceModelItem{},
+	}
+
+	defaultGroup, err := s.marketplaceDefaultGroup(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if defaultGroup == nil {
+		return res, nil
+	}
+
+	baseQuery := func() *gdb.Model {
+		return dao.MdlModels.Ctx(ctx).
+			LeftJoin("mdl_group_models", "mdl_group_models.model_id = mdl_models.id").
+			Where("mdl_group_models.group_id", defaultGroup.Id).
+			Where("mdl_models.status", "active")
+	}
+
+	var recommended []*entity.MdlModels
+	err = baseQuery().
+		Where("mdl_models.is_recommended", true).
+		OrderAsc("mdl_models.display_order").
+		OrderAsc("mdl_models.model_id").
+		Limit(8).
+		Fields("mdl_models.*").
+		Scan(&recommended)
+	if err != nil {
+		return nil, err
+	}
+
+	var newest []*entity.MdlModels
+	err = baseQuery().
+		Where("mdl_models.is_new", true).
+		OrderDesc("mdl_models.created_at").
+		OrderAsc("mdl_models.model_id").
+		Limit(8).
+		Fields("mdl_models.*").
+		Scan(&newest)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(recommended) > 0 {
+		items, err := s.convertMarketplaceModels(ctx, recommended)
+		if err != nil {
+			return nil, err
+		}
+		res.Recommended = items
+	}
+	if len(newest) > 0 {
+		items, err := s.convertMarketplaceModels(ctx, newest)
+		if err != nil {
+			return nil, err
+		}
+		res.Newest = items
+	}
+	return res, nil
+}
+
+// convertMarketplaceModels 批量查询定价并转换为响应格式（列表/展示带共用）
+func (s *sTenant) convertMarketplaceModels(ctx context.Context, models []*entity.MdlModels) ([]v1.MarketplaceModelItem, error) {
+	modelIds := make([]int64, len(models))
+	for i, model := range models {
+		modelIds[i] = model.Id
+	}
+
+	var pricings []marketplacePricingRow
+	err := dao.MdlPricing.Ctx(ctx).
+		WhereIn("model_id", modelIds).
+		Scan(&pricings)
+	if err != nil {
+		return nil, err
+	}
+	priceMap := make(map[int64]*marketplacePricingRow, len(pricings))
+	for i := range pricings {
+		priceMap[pricings[i].ModelID] = &pricings[i]
+	}
+
+	list := make([]v1.MarketplaceModelItem, 0, len(models))
+	for _, model := range models {
+		list = append(list, s.convertToMarketplaceItem(ctx, model, priceMap[model.Id]))
+	}
+	return list, nil
 }
 
 // GetModelDetail 获取模型详情
 func (s *sTenant) GetModelDetail(ctx context.Context, req *v1.MarketplaceDetailReq) (*v1.MarketplaceDetailRes, error) {
-	// 1. 检查模型是否在默认分组中
-	var defaultGroup *entity.MdlModelGroups
-	err := dao.MdlModelGroups.Ctx(ctx).
-		Where("is_default", true).
-		Where("status", "active").
-		Scan(&defaultGroup)
+	defaultGroup, err := s.marketplaceDefaultGroup(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +336,7 @@ func (s *sTenant) GetModelDetail(ctx context.Context, req *v1.MarketplaceDetailR
 		return nil, fmt.Errorf("默认模型分组不存在")
 	}
 
-	// 2. 查询模型（需在默认分组中）
+	// 查询模型（需在默认分组中）
 	var model *entity.MdlModels
 	err = dao.MdlModels.Ctx(ctx).
 		LeftJoin("mdl_group_models", "mdl_group_models.model_id = mdl_models.id").
@@ -183,7 +352,7 @@ func (s *sTenant) GetModelDetail(ctx context.Context, req *v1.MarketplaceDetailR
 		return nil, fmt.Errorf("模型不存在或未公开")
 	}
 
-	// 3. 查询价格（每模型一行：billing_mode + pricing JSONB + 展示字段）
+	// 查询价格（每模型一行：billing_mode + pricing JSONB + 展示字段）
 	var pricing *marketplacePricingRow
 	err = dao.MdlPricing.Ctx(ctx).
 		Where("model_id", model.Id).
@@ -192,11 +361,8 @@ func (s *sTenant) GetModelDetail(ctx context.Context, req *v1.MarketplaceDetailR
 		return nil, err
 	}
 
-	// 4. 转换为响应格式
-	item := s.convertToMarketplaceItem(ctx, model, pricing)
-
 	return &v1.MarketplaceDetailRes{
-		MarketplaceModelItem: item,
+		MarketplaceModelItem: s.convertToMarketplaceItem(ctx, model, pricing),
 	}, nil
 }
 
@@ -210,8 +376,15 @@ func (s *sTenant) convertToMarketplaceItem(ctx context.Context, model *entity.Md
 		Description:      model.Description,
 		MaxContextTokens: model.MaxContextTokens,
 		MaxOutputTokens:  model.MaxOutputTokens,
+		IsRecommended:    model.IsRecommended,
+		IsNew:            model.IsNew,
 		Tags:             []string{},
 		Capabilities:     g.Map{},
+	}
+
+	// 上架日期（展示与上新条排序参考）
+	if model.CreatedAt != nil {
+		item.CreatedAt = model.CreatedAt.Format("Y-m-d")
 	}
 
 	// 标签
@@ -270,4 +443,14 @@ func (s *sTenant) convertToMarketplaceItem(ctx context.Context, model *entity.Md
 	}
 
 	return item
+}
+
+// emptyMarketplaceFacets 空分面（各维度返回空 map，前端按「无计数」渲染）
+func emptyMarketplaceFacets() v1.MarketplaceFacets {
+	return v1.MarketplaceFacets{
+		Categories:   map[string]int{},
+		Vendors:      map[string]int{},
+		Capabilities: map[string]int{},
+		BillingModes: map[string]int{},
+	}
 }

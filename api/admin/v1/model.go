@@ -51,6 +51,10 @@ type ModelItem struct {
 	DeprecatedAt     *string         `json:"deprecated_at"`
 	SunsetDate       *string         `json:"sunset_date"`
 	ReplacementModel string          `json:"replacement_model"`
+	// 模型广场展示位（运营配置）
+	IsRecommended bool `json:"is_recommended"` // 推荐位（true=进入广场推荐条）
+	IsNew         bool `json:"is_new"`         // 上新位（true=进入广场新上线条）
+	DisplayOrder  int  `json:"display_order"`  // 推荐条内排序（越小越靠前）
 	// 定价摘要（来自 mdl_pricing 的 pricing JSONB）
 	PricingMode     string             `json:"pricing_mode"`                // "" | "token" | "per_request" | "tiered" | "per_second"
 	InputPrice      float64            `json:"input_price"`                 // $/1M tokens
@@ -73,6 +77,10 @@ type ModelCreateReq struct {
 	Capabilities map[string]bool `json:"capabilities" dc:"模型能力特性"`
 	Description  string          `json:"description" dc:"模型描述"`
 	Tags         []string        `json:"tags" dc:"标签列表"`
+	// 模型广场展示位（创建时即可配置，默认全关）
+	IsRecommended bool `json:"is_recommended" dc:"推荐位（true=进入广场推荐条）"`
+	IsNew         bool `json:"is_new" dc:"上新位（true=进入广场新上线条）"`
+	DisplayOrder  int  `json:"display_order" dc:"推荐条内排序（越小越靠前）"`
 }
 
 // ModelCreateRes 创建模型响应
@@ -87,15 +95,21 @@ type ModelUpdateReq struct {
 	ModelName string `json:"model_name" dc:"模型显示名称"`
 	Category  string `json:"category" v:"in:chat,embedding,image,audio,rerank,video" dc:"模型分类"`
 	// Vendor 研发厂商；指针语义：nil=不更新，空串=清空回未分类，非空=设置（枚举校验在 logic 层做）
-	Vendor           *string         `json:"vendor" dc:"研发厂商"`
-	MaxContext       int             `json:"max_context_tokens" dc:"最大上下文 token 数"`
-	MaxOutput        int             `json:"max_output_tokens" dc:"最大输出 token 数"`
+	Vendor *string `json:"vendor" dc:"研发厂商"`
+	// MaxContext/MaxOutput 指针语义：nil=不更新（支持广场展示位开关等局部更新
+	// 不连带清零规格），非 nil=更新（含 0）
+	MaxContext       *int            `json:"max_context_tokens" dc:"最大上下文 token 数"`
+	MaxOutput        *int            `json:"max_output_tokens" dc:"最大输出 token 数"`
 	Capabilities     map[string]bool `json:"capabilities" dc:"模型能力特性"`
 	Description      string          `json:"description" dc:"模型描述"`
 	Tags             []string        `json:"tags" dc:"标签列表"`
 	Status           string          `json:"status" v:"in:active,deprecated,offline" dc:"状态"`
 	SunsetDate       *string         `json:"sunset_date" dc:"下线日期（格式：YYYY-MM-DD，仅 deprecated 状态有效）"`
 	ReplacementModel string          `json:"replacement_model" dc:"推荐替代模型名"`
+	// 模型广场展示位；指针语义：nil=不更新（列表行内开关直调，只传单个字段）
+	IsRecommended *bool `json:"is_recommended" dc:"推荐位（true=进入广场推荐条）"`
+	IsNew         *bool `json:"is_new" dc:"上新位（true=进入广场新上线条）"`
+	DisplayOrder  *int  `json:"display_order" dc:"推荐条内排序（越小越靠前）"`
 }
 
 // ModelDeleteReq 删除模型请求

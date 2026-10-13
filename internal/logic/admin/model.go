@@ -141,9 +141,12 @@ func (s *sAdmin) ListModels(ctx context.Context, req *v1.ModelListReq) (*v1.Mode
 		DeprecatedAt     *gtime.Time `json:"deprecated_at"`
 		SunsetDate       *gtime.Time `json:"sunset_date"`
 		ReplacementModel string      `json:"replacement_model"`
+		IsRecommended    bool        `json:"is_recommended"`
+		IsNew            bool        `json:"is_new"`
+		DisplayOrder     int         `json:"display_order"`
 	}
 
-	err := query.Fields("id, model_id, model_name, category, vendor, status, max_context_tokens, max_output_tokens, capabilities, description, tags, created_at, updated_at, deprecated_at, sunset_date, replacement_model").
+	err := query.Fields("id, model_id, model_name, category, vendor, status, max_context_tokens, max_output_tokens, capabilities, description, tags, created_at, updated_at, deprecated_at, sunset_date, replacement_model, is_recommended, is_new, display_order").
 		OrderDesc("id").
 		Page(req.Page, req.PageSize).
 		ScanAndCount(&models, &total, false)
@@ -235,6 +238,9 @@ func (s *sAdmin) ListModels(ctx context.Context, req *v1.ModelListReq) (*v1.Mode
 			item.SunsetDate = &s
 		}
 		item.ReplacementModel = m.ReplacementModel
+		item.IsRecommended = m.IsRecommended
+		item.IsNew = m.IsNew
+		item.DisplayOrder = m.DisplayOrder
 		// 填充定价摘要（从 pricing JSONB 解析；tiered 取首档价，与旧列表口径一致）
 		if p, ok := pricingMap[m.ID]; ok {
 			item.PricingMode = p.BillingMode
@@ -293,6 +299,9 @@ func (s *sAdmin) CreateModel(ctx context.Context, req *v1.ModelCreateReq) (*v1.M
 		MaxContextTokens: req.MaxContext,
 		MaxOutputTokens:  req.MaxOutput,
 		Description:      req.Description,
+		IsRecommended:    req.IsRecommended,
+		IsNew:            req.IsNew,
+		DisplayOrder:     req.DisplayOrder,
 	}
 	if req.Tags != nil {
 		insertData.Tags = req.Tags
@@ -371,9 +380,28 @@ func (s *sAdmin) UpdateModel(ctx context.Context, req *v1.ModelUpdateReq) (*v1.M
 		data.Vendor = *req.Vendor
 		hasUpdate = true
 	}
-	data.MaxContextTokens = req.MaxContext
-	data.MaxOutputTokens = req.MaxOutput
-	hasUpdate = true
+	// 规格指针语义：nil=不更新（展示位开关等局部更新不连带清零规格），非 nil=更新（含 0）
+	if req.MaxContext != nil {
+		data.MaxContextTokens = *req.MaxContext
+		hasUpdate = true
+	}
+	if req.MaxOutput != nil {
+		data.MaxOutputTokens = *req.MaxOutput
+		hasUpdate = true
+	}
+	// 模型广场展示位：列表行内开关直调（只传单个字段），nil=不更新
+	if req.IsRecommended != nil {
+		data.IsRecommended = *req.IsRecommended
+		hasUpdate = true
+	}
+	if req.IsNew != nil {
+		data.IsNew = *req.IsNew
+		hasUpdate = true
+	}
+	if req.DisplayOrder != nil {
+		data.DisplayOrder = *req.DisplayOrder
+		hasUpdate = true
+	}
 	if req.Capabilities != nil {
 		capJson, _ := json.Marshal(req.Capabilities)
 		s := string(capJson)
@@ -789,25 +817,57 @@ func writePricingForModel(ctx context.Context, modelDBID int64, items []v1.Prici
 		mode = items[0].BillingMode
 	}
 
-	// 全量替换语义改为 upsert：ON CONFLICT (model_id) 命中时只覆盖 billing_mode / pricing，
+	// 全量替换语义改为 upsert：ON CONFLICT (model_id) 命中时只覆盖 billing_mode / pricing / sort_price，
 	// official_pricing 与展示字段列未涉及时保留原值——模型导入共用本函数，不得误清人工
 	// 核对落库的官方定价；展示字段随后仍由调用方按「空=清除」全量回写，行为与删行重插等价。
 	// 列名直写而非 do 字段，与 gf gen dao 生成物解耦（同 writePricingDisplayFieldsForModel）。
+	// sort_price 为模型广场价格排序基准价（JSONB 派生列，pricing 无法直接 ORDER BY）。
 	if _, err := dao.MdlPricing.Ctx(ctx).
 		Data(g.Map{
 			"model_id":     modelDBID,
 			"billing_mode": mode,
 			"pricing":      string(blobJSON),
+			"sort_price":   pricingSortPrice(blob),
 		}).
 		OnConflict("model_id").
 		OnDuplicate(g.Map{
 			"billing_mode": gdb.Raw("excluded.billing_mode"),
 			"pricing":      gdb.Raw("excluded.pricing"),
+			"sort_price":   gdb.Raw("excluded.sort_price"),
 		}).
 		Save(); err != nil {
 		return err
 	}
 	return nil
+}
+
+// pricingSortPrice 从 pricing JSONB 派生排序基准价：token=输入价，tiered=首档输入价，
+// per_request=按次单价，per_second/special=最低档每秒单价；无正价返回 nil（排序落尾部）。
+// 取值优先级与迁移 000025 的存量回填 COALESCE 口径一致
+func pricingSortPrice(blob *billing.PricingBlob) *float64 {
+	if blob == nil {
+		return nil
+	}
+	if blob.InputPrice != nil && *blob.InputPrice > 0 {
+		return blob.InputPrice
+	}
+	if len(blob.Tiers) > 0 && blob.Tiers[0].InputPrice > 0 {
+		price := blob.Tiers[0].InputPrice
+		return &price
+	}
+	if blob.Price != nil && *blob.Price > 0 {
+		return blob.Price
+	}
+	var minPrice float64
+	for _, value := range blob.Prices {
+		if value > 0 && (minPrice == 0 || value < minPrice) {
+			minPrice = value
+		}
+	}
+	if minPrice == 0 {
+		return nil
+	}
+	return &minPrice
 }
 
 // officialPricingBlob official_pricing JSONB 的内存形态：billing_mode 键 + PricingBlob 字段平铺

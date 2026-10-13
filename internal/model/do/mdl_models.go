@@ -28,4 +28,7 @@ type MdlModels struct {
 	SunsetDate       *gtime.Time // 计划下线日期（到达后返回410 Gone，NULL表示未设置）
 	ReplacementModel any         // 推荐替代模型名（NULL表示无替代）
 	Vendor           any         // 研发厂商枚举：openai/anthropic/google/xai/mistral/cohere/meta/alibaba/bytedance/deepseek/zhipu/moonshot/minimax/baidu/tencent/xunfei/kuaishou/midjourney/suno，空串=未分类
+	IsRecommended    any         // 模型广场推荐位（true=进入推荐条，运营手动勾选）
+	IsNew            any         // 模型广场上新位（true=进入新上线条，运营手动勾选，不按时间窗自动判定）
+	DisplayOrder     any         // 展示排序（推荐条内越小越靠前，同序按 model_id）
 }

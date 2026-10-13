@@ -27,6 +27,7 @@ var tenantPublicPaths = map[string]bool{
 	"/api/tenant/agreements/current":       true,
 	"/api/tenant/oauth/authorize":          true,
 	"/api/tenant/marketplace/models":       true,
+	"/api/tenant/marketplace/showcase":     true,
 	"/api/tenant/help/categories":          true,
 	"/api/tenant/help/search":              true,
 }

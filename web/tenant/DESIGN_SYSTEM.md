@@ -446,3 +446,41 @@ ease-out
   </div>
 </div>
 ```
+
+---
+
+## 16. 模型广场双主题（2026-10 重构）
+
+模型广场（`/marketplace`，公开页）自带独立于全局的双主题体系：**默认明亮**（与控制台浅色体系同族），用户可切换暗色（与落地页深空风同族），选择存 localStorage（`mp-theme`）。顶栏提供切换按钮。
+
+### 16.1 Token 边界
+
+全部颜色 token 以 `--mp-*` 前缀 scoped 在 `MarketplacePage.vue` 根元素（`.mp`），不进全局 `main.css`、不污染其他页面。默认值为明亮主题，`.mp[data-mp-theme='dark']` 覆盖为暗色：
+
+| Token | 明亮（默认） | 暗色 | 用途 |
+|---|---|---|---|
+| `--mp-bg` | `#f6f8fb` | `#060a14` | 页面底 |
+| `--mp-panel` | `#ffffff` | `#0c1526` | 卡片/面板 |
+| `--mp-line` | `rgba(13,32,76,.1)` | `rgba(148,163,199,.16)` | 1px 描边分层（卡片无阴影） |
+| `--mp-text` / `-dim` / `-mute` | `#0d1626` / `#4a5a76` / `#8593a8` | `#e9eefb` / `#93a0bf` / `#5f6c8c` | 主/次/装饰文字（mute 不承载信息） |
+| `--mp-brand` | `#0d9488`（teal-600，白底 4.5:1） | `#2dd4bf`（teal-400） | 交互/选中 |
+| `--mp-new` / `--mp-deal` / `--mp-rec` | `#4f46e5` / `#e11d48` / `#b45309`（600/700 档，浅底达标） | `#818cf8` / `#fb7185` / `#fbbf24` | 状态徽章三色 |
+| `--mp-brand-rgb` 等 | `13,148,136` … | `45,212,191` … | rgb 三元组，供徽章底/hover 光晕 rgba 拼接（**禁止再硬编码 rgba**） |
+| `--mp-on-brand` | `#ffffff` | `#032019` | 品牌色底上的文字 |
+| `--mp-code-bg` / `--mp-fill-faint` / `--mp-skeleton-*` / `--mp-glow-*` / `--mp-header-bg` 等 | 浅色值 | 深色值 | 代码块/弱填充/骨架/装饰/悬浮层 |
+
+### 16.2 视觉规则
+
+- **分类不配色**：类别只用图标+文字表达（旧 7 色体系已废除），厂商身份只由 logo 承担
+- 卡片状态徽章至多一枚，优先级 折扣 > NEW > 推荐（`getCardBadge`）
+- 价格是卡片唯一大号元素（20px/700 等宽 `tabular-nums`，输入亮/输出暗），按品类/计费模式自适应（`getCardView`）
+- 所有数字/ID/规格值用 `--mp-font-mono` 等宽字体
+- 卡片无阴影、1px 描边，hover `translateY(-2px)` + teal 描边发光；无逐卡 stagger 入场
+- naive-ui 组件在页面根套 `n-config-provider`（darkTheme + teal 主色）与外层浅色主题隔离
+
+### 16.3 布局与数据
+
+- 布局：左筛选面板 264px（sticky）+ 右结果区；网格 `repeat(auto-fill, minmax(min(100%, 300px), 1fr))`，骨架屏同 class
+- <1024px：左栏收进底部 sheet（`NDrawer placement="bottom"` 80dvh），品类 chips 横滑行 + 「筛选 · N」按钮常驻
+- 筛选为析取分面（disjunctive facets，后端 `marketplace_facets.go` 内存聚合）：计数为 0 的选项禁用置灰
+- 展示带（推荐/上新）为运营编辑位（`mdl_models.is_recommended / is_new / display_order`，管理后台勾选），不参与用户筛选；筛选激活时收起

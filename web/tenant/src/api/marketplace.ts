@@ -37,12 +37,31 @@ export interface MarketplaceModel {
   time_prices?: TimePriceItem[] | null
   tags: string[]
   capabilities: Record<string, any>
+  /** 推荐位（运营手动勾选） */
+  is_recommended?: boolean
+  /** 上新位（运营手动勾选） */
+  is_new?: boolean
+  /** 上架日期 YYYY-MM-DD（新上线条排序与详情展示用） */
+  created_at?: string
+}
+
+/** 析取分面计数：每个维度在「应用其余维度筛选后」的剩余集合内计数，0=该选项点不出结果 */
+export interface MarketplaceFacets {
+  categories: Record<string, number>
+  vendors: Record<string, number>
+  capabilities: Record<string, number>
+  billing_modes: Record<string, number>
 }
 
 export interface MarketplaceListParams {
   keyword?: string
   category?: string
+  categories?: string
   vendor?: string
+  vendors?: string
+  capabilities?: string
+  billing_mode?: string
+  sort?: string
   page: number
   page_size: number
 }
@@ -52,8 +71,15 @@ export interface MarketplaceListResponse {
   total: number
   page: number
   page_size: number
-  /** 当前条件下有模型的厂商去重列表（前端只渲染这些厂商筛选项） */
+  /** 当前条件下有模型的厂商去重列表（facets 不可用时的降级渲染数据源） */
   vendors?: string[] | null
+  /** 析取分面计数（目录超阈值时各维度为空对象，前端隐藏计数） */
+  facets?: MarketplaceFacets | null
+}
+
+export interface MarketplaceShowcaseResponse {
+  recommended: MarketplaceModel[]
+  newest: MarketplaceModel[]
 }
 
 export const getMarketplaceModels = (params: MarketplaceListParams) => {
@@ -62,4 +88,8 @@ export const getMarketplaceModels = (params: MarketplaceListParams) => {
 
 export const getMarketplaceModelDetail = (modelId: string) => {
   return request.get<{ data: MarketplaceModel }>(`/tenant/marketplace/models/${modelId}`).then(res => res.data.data)
+}
+
+export const getMarketplaceShowcase = () => {
+  return request.get<{ data: MarketplaceShowcaseResponse }>('/tenant/marketplace/showcase').then(res => res.data.data)
 }

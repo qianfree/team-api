@@ -3,11 +3,10 @@ import { computed } from 'vue'
 import Icon from '@/components/common/Icon.vue'
 import VendorLogo from '@/components/common/VendorLogo.vue'
 import type { MarketplaceModel } from '@/api/marketplace'
-import { formatPrice, formatTokens, getCategoryMeta, getCapabilityList } from '../marketplaceMeta'
+import { getCapabilityList, getCategoryMeta, getCardView, getCardBadge } from '../marketplaceMeta'
 
 const props = defineProps<{
 	model: MarketplaceModel
-	index: number
 }>()
 
 const emit = defineEmits<{
@@ -15,145 +14,297 @@ const emit = defineEmits<{
 	copy: [modelId: string]
 }>()
 
+const view = computed(() => getCardView(props.model))
+const badge = computed(() => getCardBadge(props.model))
 const meta = computed(() => getCategoryMeta(props.model.category))
-const capabilities = computed(() => getCapabilityList(props.model, 3))
 
-// 无简介时用类别说明兜底：十几张卡片重复同一句占位文案纯属噪音，
-// 类别说明既稳住两行高度，又顺带交代了这类模型能做什么
+// 简介兜底：无描述时用类别说明占位，稳住两行高度
 const description = computed(() => props.model.description?.trim() || meta.value.description)
 
-// 价格文案按计费模式派生，避免模板里堆叠条件
-const priceView = computed(() => {
-	const model = props.model
-	if (model.billing_mode === 'per_request') {
-		return { caption: '按次计费', main: formatPrice(model.per_request_price), secondary: '', unit: '/ 次' }
-	}
-	return {
-		caption: model.billing_mode === 'tiered' ? '输入 / 输出（首档起）' : '输入 / 输出',
-		main: formatPrice(model.input_price),
-		secondary: formatPrice(model.output_price),
-		unit: '/ 1M tokens',
-	}
-})
+// 能力压缩到 2 个 + 溢出计数（完整列表在详情抽屉）
+const capabilities = computed(() => getCapabilityList(props.model, 2))
+const capabilityOverflow = computed(() => Math.max(0, getCapabilityList(props.model, Number.MAX_SAFE_INTEGER).length - 2))
 
-// 类别徽章沿用详情抽屉的配色规则：类别色文字 + 同色 10% 底
-const categoryBadgeStyle = computed(() => ({
-	color: meta.value.to,
-	backgroundColor: `rgba(${meta.value.glow}, 0.1)`,
-}))
+const displayName = computed(() => props.model.model_name || props.model.model_id)
 
-// 类别渐变注入 CSS 变量（卡片顶部指示线）；入场延迟按序号递增形成 stagger（封顶 11 张）
-const cardStyle = computed(() => ({
-	'--cat-from': meta.value.from,
-	'--cat-to': meta.value.to,
-	animationDelay: `${Math.min(props.index, 11) * 45}ms`,
-}))
+function onKeydown(event: KeyboardEvent): void {
+	if (event.key === 'Enter' || event.key === ' ') {
+		event.preventDefault()
+		emit('open', props.model)
+	}
+}
 </script>
 
 <template>
 	<article
-		class="card-in card group relative flex cursor-pointer flex-col overflow-hidden p-4 transition-all duration-300 hover:-translate-y-1 hover:border-primary-200/70 hover:shadow-card-hover"
-		:style="cardStyle"
+		class="mp-card group"
+		role="button"
+		tabindex="0"
+		:aria-label="`查看 ${displayName} 详情`"
 		@click="emit('open', model)"
+		@keydown="onKeydown"
 	>
-		<!-- 顶部类别指示线：hover 时从左展开 -->
-		<span
-			aria-hidden="true"
-			class="absolute inset-x-0 top-0 h-[2px] origin-left scale-x-0 bg-gradient-to-r from-[var(--cat-from)] to-[var(--cat-to)] transition-transform duration-300 group-hover:scale-x-100"
-		></span>
-
-		<!-- 头部：厂商芯片 + 名称 / 模型 ID，右侧类别与折扣徽章 -->
-		<div class="flex items-start gap-3">
-			<VendorLogo :vendor="model.vendor" size="md" class="mt-px" />
+		<!-- 身份行：厂商 logo + 名称 + 单状态徽章 + mono ID -->
+		<div class="flex items-start gap-2.5">
+			<VendorLogo :vendor="model.vendor" size="md" class="mt-px shrink-0" />
 			<div class="min-w-0 flex-1">
-				<h3 class="truncate text-[15px] font-semibold leading-6 text-gray-900">{{ model.model_name || model.model_id }}</h3>
+				<div class="flex items-start justify-between gap-2">
+					<h3 class="mp-name">{{ displayName }}</h3>
+					<span v-if="badge" class="mp-badge" :class="`is-${badge.type}`">{{ badge.text }}</span>
+				</div>
 				<button
 					type="button"
+					class="mp-id group/id"
 					:aria-label="`复制模型 ID ${model.model_id}`"
 					title="复制模型 ID"
-					class="group/copy mt-0.5 flex max-w-full items-center gap-1 text-left"
 					@click.stop="emit('copy', model.model_id)"
 				>
-					<code class="truncate font-mono text-[11px] text-gray-400 transition-colors group-hover/copy:text-primary-600">{{ model.model_id }}</code>
-					<Icon name="copy" size="xs" class="shrink-0 text-gray-300 transition-colors group-hover/copy:text-primary-600" />
+					<code>{{ model.model_id }}</code>
+					<Icon name="copy" size="xs" class="shrink-0" />
 				</button>
 			</div>
-			<div class="flex shrink-0 flex-col items-end gap-1">
-				<span class="rounded-full px-2 py-0.5 text-[11px] font-medium" :style="categoryBadgeStyle">{{ meta.label }}</span>
-				<span v-if="model.discount_label" class="badge badge-warning !px-2 !py-0 !text-[11px]">{{ model.discount_label }}</span>
-			</div>
 		</div>
 
-		<!-- 简介：无描述时回退为类别说明，保证卡片高度稳定 -->
-		<p class="mt-3 line-clamp-2 min-h-[2.75rem] text-[13px] leading-[1.6] text-gray-500">{{ description }}</p>
-
-		<!-- 规格：上下文 / 最大输出，紧凑单行 -->
-		<div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-gray-400">
-			<span class="inline-flex items-center gap-1">
-				<Icon name="document" size="xs" class="text-gray-300" />
-				<span class="text-gray-500">{{ formatTokens(model.max_context_tokens) }}</span> 上下文
-			</span>
-			<span class="text-gray-200">·</span>
-			<span class="inline-flex items-center gap-1">
-				<Icon name="expand" size="xs" class="text-gray-300" />
-				<span class="text-gray-500">{{ formatTokens(model.max_output_tokens) }}</span> 输出
-			</span>
-		</div>
-
-		<!-- 能力：最多 3 个 -->
-		<div v-if="capabilities.length" class="mt-2.5 flex min-h-[1.375rem] flex-wrap gap-1.5">
-			<span
-				v-for="item in capabilities"
-				:key="item"
-				class="inline-flex items-center rounded-md border border-gray-200/80 bg-gray-50/80 px-1.5 py-0.5 text-[11px] font-medium text-gray-500"
-			>
-				{{ item }}
-			</span>
-		</div>
-
-		<!-- 底栏：价格 + 详情入口（mt-auto 保证同行卡片价格底线对齐） -->
-		<div class="mt-auto flex items-end justify-between gap-3 border-t border-gray-100 pt-3.5">
-			<div class="min-w-0">
-				<span class="text-[11px] text-gray-400">{{ priceView.caption }}</span>
-				<div class="mt-0.5 flex items-baseline gap-2">
-					<strong class="text-base font-bold tabular-nums text-gray-900">{{ priceView.main }}</strong>
-					<strong v-if="priceView.secondary" class="text-[13px] font-semibold tabular-nums text-gray-500">{{ priceView.secondary }}</strong>
-					<span class="whitespace-nowrap text-[11px] text-gray-400">{{ priceView.unit }}</span>
+		<!-- 价格锚：全卡唯一大号元素（输入亮、输出暗；按次/按秒单锚） -->
+		<div class="mt-3 flex items-end justify-between gap-3">
+			<div class="flex min-w-0 flex-wrap items-end gap-x-5 gap-y-1">
+				<div v-for="slot in view.price.slots" :key="slot.label" class="min-w-0">
+					<div class="flex items-baseline">
+						<span class="mp-price" :class="{ 'is-secondary': !slot.primary }">{{ slot.value }}</span>
+						<span v-if="view.price.fromNote && slot.primary" class="mp-from">起</span>
+					</div>
+					<span class="mp-unit">{{ slot.label }} {{ slot.unit }}</span>
 				</div>
 			</div>
-			<button
-				type="button"
-				:aria-label="`查看 ${model.model_name || model.model_id} 详情`"
-				class="inline-flex shrink-0 items-center gap-1 rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-primary-600 transition-all duration-200 group-hover:bg-primary-500 group-hover:text-white group-hover:shadow-glow"
-				@click.stop="emit('open', model)"
-			>
-				详情
-				<Icon name="arrowRight" size="sm" class="transition-transform duration-200 group-hover:translate-x-0.5" />
-			</button>
+			<span v-if="view.price.hasTimePrices" class="mp-time-flag" title="配置了分时段价格，详见详情">分时价</span>
+		</div>
+
+		<!-- 简介：clamp 2 行 + 固定 min-height 保证网格底对齐 -->
+		<p class="mp-desc">{{ description }}</p>
+
+		<!-- 规格 + 能力：合并为紧凑单行区 -->
+		<div class="mp-meta-row">
+			<template v-for="(seg, i) in view.specSegments" :key="i">
+				<span v-if="i > 0" class="mp-dot" aria-hidden="true">·</span>
+				<span v-if="seg.value" class="mp-spec"><span class="mp-spec-label">{{ seg.label }}</span><span class="mp-spec-value">{{ seg.value }}</span></span>
+				<span v-else class="mp-spec-value">{{ seg.label }}</span>
+			</template>
+			<template v-if="capabilities.length">
+				<span v-if="view.specSegments.length" class="mp-dot" aria-hidden="true">·</span>
+				<span v-for="cap in capabilities" :key="cap" class="mp-cap">{{ cap }}</span>
+				<span v-if="capabilityOverflow > 0" class="mp-cap is-more">+{{ capabilityOverflow }}</span>
+			</template>
 		</div>
 	</article>
 </template>
 
 <style scoped>
-/* 卡片入场：backwards 填充保证延迟期间隐藏、结束后不覆盖 hover 位移 */
-.card-in {
-	animation: card-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+/* 卡片：无阴影、1px 描边分层；hover 上浮 + teal 描边发光（颜色全部走页面级 --mp-* token） */
+.mp-card {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	padding: 14px;
+	background: var(--mp-panel);
+	border: 1px solid var(--mp-line);
+	border-radius: 12px;
+	cursor: pointer;
+	transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
 }
 
-@keyframes card-in {
-	from {
-		opacity: 0;
-		transform: translateY(12px);
-	}
-	to {
-		opacity: 1;
-		transform: translateY(0);
-	}
+.mp-card:hover,
+.mp-card:focus-visible {
+	transform: translateY(-2px);
+	border-color: rgba(var(--mp-brand-rgb), 0.45);
+	box-shadow: 0 0 0 1px rgba(var(--mp-brand-rgb), 0.28), 0 8px 32px rgba(var(--mp-brand-rgb), 0.1);
+	background: var(--mp-panel-hover);
+}
+
+.mp-card:focus-visible {
+	outline: 2px solid var(--mp-brand);
+	outline-offset: 2px;
+}
+
+.mp-name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 15px;
+	font-weight: 600;
+	line-height: 1.4;
+	color: var(--mp-text);
+}
+
+.mp-id {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	max-width: 100%;
+	margin-top: 1px;
+	padding: 0;
+	border: 0;
+	background: none;
+	cursor: copy;
+}
+
+.mp-id code {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-family: var(--mp-font-mono);
+	font-size: 11px;
+	color: var(--mp-text-mute);
+	transition: color 0.15s ease;
+}
+
+.mp-id:hover code,
+.mp-id:focus-visible code {
+	color: var(--mp-brand);
+}
+
+.mp-id:focus-visible {
+	outline: none;
+}
+
+.mp-id:focus-visible code {
+	outline: 1px dashed var(--mp-brand);
+	outline-offset: 2px;
+}
+
+/* 状态徽章：至多一枚（折扣玫红 / NEW 靛蓝 / 推荐琥珀） */
+.mp-badge {
+	flex-shrink: 0;
+	padding: 1px 7px;
+	border-radius: 999px;
+	font-size: 11px;
+	font-weight: 600;
+	line-height: 1.5;
+	white-space: nowrap;
+}
+
+.mp-badge.is-deal {
+	color: var(--mp-deal);
+	background: rgba(var(--mp-deal-rgb), 0.12);
+	border: 1px solid rgba(var(--mp-deal-rgb), 0.35);
+}
+
+.mp-badge.is-new {
+	color: var(--mp-new);
+	background: rgba(var(--mp-new-rgb), 0.12);
+	border: 1px solid rgba(var(--mp-new-rgb), 0.35);
+}
+
+.mp-badge.is-rec {
+	color: var(--mp-rec);
+	background: rgba(var(--mp-rec-rgb), 0.1);
+	border: 1px solid rgba(var(--mp-rec-rgb), 0.3);
+}
+
+/* 价格锚：20px/700 等宽 tabular */
+.mp-price {
+	font-family: var(--mp-font-mono);
+	font-variant-numeric: tabular-nums;
+	font-size: 20px;
+	font-weight: 700;
+	line-height: 1.2;
+	color: var(--mp-text);
+}
+
+.mp-price.is-secondary {
+	color: var(--mp-text-dim);
+}
+
+.mp-from {
+	margin-left: 2px;
+	font-size: 10px;
+	color: var(--mp-rec);
+}
+
+.mp-unit {
+	display: block;
+	margin-top: 1px;
+	font-size: 11px;
+	color: var(--mp-text-mute);
+	white-space: nowrap;
+}
+
+.mp-time-flag {
+	flex-shrink: 0;
+	margin-bottom: 14px;
+	padding: 1px 6px;
+	border-radius: 6px;
+	border: 1px solid var(--mp-line);
+	font-size: 10px;
+	color: var(--mp-text-dim);
+	cursor: help;
+}
+
+/* 简介：固定两行高度（13px × 1.6 × 2，em 单位随字号自适应） */
+.mp-desc {
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 2;
+	overflow: hidden;
+	margin-top: 10px;
+	min-height: 2.5em;
+	font-size: 13px;
+	line-height: 1.6;
+	color: var(--mp-text-dim);
+}
+
+/* 规格 + 能力行 */
+.mp-meta-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 6px;
+	margin-top: 8px;
+	min-height: 22px;
+	font-size: 11px;
+}
+
+.mp-dot {
+	color: var(--mp-text-mute);
+}
+
+.mp-spec {
+	display: inline-flex;
+	align-items: baseline;
+	gap: 3px;
+}
+
+.mp-spec-label {
+	color: var(--mp-text-mute);
+}
+
+.mp-spec-value {
+	font-family: var(--mp-font-mono);
+	font-variant-numeric: tabular-nums;
+	color: var(--mp-text-dim);
+}
+
+.mp-cap {
+	padding: 1px 6px;
+	border-radius: 6px;
+	border: 1px solid var(--mp-line);
+	background: var(--mp-fill-faint);
+	color: var(--mp-text-dim);
+	white-space: nowrap;
+}
+
+.mp-cap.is-more {
+	border-style: dashed;
+	color: var(--mp-text-mute);
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.card-in {
-		animation: none;
+	.mp-card {
+		transition: none;
+	}
+
+	.mp-card:hover,
+	.mp-card:focus-visible {
+		transform: none;
 	}
 }
 </style>

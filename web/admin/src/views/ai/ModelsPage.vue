@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, h } from 'vue'
 import {
-  Tag, Button, Space, Popconfirm, Message, Tooltip,
+  Tag, Button, Space, Popconfirm, Message, Tooltip, Switch,
 } from '@arco-design/web-vue'
 import type { TableColumnData, FormInstance } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
@@ -73,6 +73,10 @@ const form = reactive({
   status: 'active',
   sunset_date: '',
   replacement_model: '',
+  // 模型广场展示位（运营配置）
+  is_recommended: false,
+  is_new: false,
+  display_order: 0,
 })
 
 const fetchingInfo = ref(false)
@@ -271,6 +275,29 @@ const columns: TableColumnData[] = [
       return h('span', { style: 'display: inline-flex; gap: 4px; align-items: center;' }, tags)
     },
   },
+  {
+    title: '广场位',
+    dataIndex: 'showcase',
+    width: 120,
+    render({ record }) {
+      const flagRow = (label: string, field: 'is_recommended' | 'is_new') =>
+        h('div', { style: 'display:flex;align-items:center;gap:6px;height:22px' }, [
+          h(Switch, {
+            size: 'small',
+            modelValue: !!record[field],
+            'onUpdate:modelValue': (v: any) => toggleShowcaseFlag(record, field, !!v),
+          }),
+          h('span', { style: 'font-size:12px;color:var(--color-text-3)' }, label),
+        ])
+      const orderLabel = record.is_recommended && record.display_order
+        ? `排序 ${record.display_order}`
+        : ''
+      return h('div', { style: 'display:flex;flex-direction:column;padding:2px 0' }, [
+        flagRow(record.is_recommended && record.display_order ? `推荐 · ${orderLabel}` : '推荐', 'is_recommended'),
+        flagRow('上新', 'is_new'),
+      ])
+    },
+  },
 
   {
     title: '可用渠道',
@@ -357,6 +384,9 @@ function openCreate() {
   form.status = 'active'
   form.sunset_date = ''
   form.replacement_model = ''
+  form.is_recommended = false
+  form.is_new = false
+  form.display_order = 0
   showModal.value = true
 }
 
@@ -376,7 +406,21 @@ function openEdit(row: any) {
   form.status = row.status
   form.sunset_date = row.sunset_date || ''
   form.replacement_model = row.replacement_model || ''
+  form.is_recommended = !!row.is_recommended
+  form.is_new = !!row.is_new
+  form.display_order = row.display_order || 0
   showModal.value = true
+}
+
+// 广场展示位行内开关：只传单个字段（后端指针语义局部更新，不连带清零规格）
+async function toggleShowcaseFlag(row: any, field: 'is_recommended' | 'is_new', value: boolean) {
+  try {
+    await request.put(`/admin/models/${row.id}`, { [field]: value })
+    row[field] = value
+    Message.success(value ? '已开启' : '已关闭')
+  } catch {
+    // 拦截器已统一提示，本地行数据保持原值（开关自动回弹）
+  }
 }
 
 async function handleSubmit(done: () => void) {
@@ -872,6 +916,24 @@ function resetImport() {
           </AFormItem>
           <AFormItem label="标签">
             <AInputTag v-model="form.tags" placeholder="输入后回车添加标签" allow-clear />
+          </AFormItem>
+        </div>
+        <!-- 第五行：模型广场展示位（运营配置） -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-x-4">
+          <AFormItem label="广场推荐位">
+            <div class="flex items-center gap-2">
+              <ASwitch v-model="form.is_recommended" />
+              <span class="text-xs" style="color: var(--color-text-3);">进入广场「推荐模型」条</span>
+            </div>
+          </AFormItem>
+          <AFormItem label="广场上新位">
+            <div class="flex items-center gap-2">
+              <ASwitch v-model="form.is_new" />
+              <span class="text-xs" style="color: var(--color-text-3);">进入广场「新上线」条</span>
+            </div>
+          </AFormItem>
+          <AFormItem label="推荐排序">
+            <AInputNumber v-model="form.display_order" :min="0" :step="1" placeholder="越小越靠前" class="w-full" />
           </AFormItem>
         </div>
         <!-- 弃用时展示：下线日期 / 替代模型 -->
