@@ -135,28 +135,24 @@ func (s *sAdmin) ListChannels(ctx context.Context, req *v1.ChannelListReq) (*v1.
 
 	var total int
 	var channels []struct {
-		ID                       int64       `json:"id"`
-		Name                     string      `json:"name"`
-		Type                     int         `json:"type"`
-		BaseURL                  string      `json:"base_url"`
-		Status                   string      `json:"status"`
-		Priority                 int         `json:"priority"`
-		Weight                   int         `json:"weight"`
-		MaxConcurrency           int         `json:"max_concurrency"`
-		Tier                     string      `json:"tier"`
-		StrictCapacity           bool        `json:"strict_capacity"`
-		TestModel                string      `json:"test_model"`
-		Remark                   string      `json:"remark"`
-		IsVIP                    bool        `json:"is_vip"`
-		SharingThreshold         *float64    `json:"sharing_threshold"`
-		PreemptionThreshold      *float64    `json:"preemption_threshold"`
-		BorrowingCooldownSeconds *int        `json:"borrowing_cooldown_seconds"`
-		CreatedAt                *gtime.Time `json:"created_at"`
-		HealthScore              *float64    `json:"health_score"`
-		Settings                 string      `json:"settings"`
+		ID             int64       `json:"id"`
+		Name           string      `json:"name"`
+		Type           int         `json:"type"`
+		BaseURL        string      `json:"base_url"`
+		Status         string      `json:"status"`
+		Priority       int         `json:"priority"`
+		Weight         int         `json:"weight"`
+		MaxConcurrency int         `json:"max_concurrency"`
+		Tier           string      `json:"tier"`
+		StrictCapacity bool        `json:"strict_capacity"`
+		TestModel      string      `json:"test_model"`
+		Remark         string      `json:"remark"`
+		CreatedAt      *gtime.Time `json:"created_at"`
+		HealthScore    *float64    `json:"health_score"`
+		Settings       string      `json:"settings"`
 	}
 
-	err := query.Fields("chn_channels.id, chn_channels.name, chn_channels.type, chn_channels.base_url, chn_channels.status, chn_channels.priority, chn_channels.weight, chn_channels.max_concurrency, chn_channels.tier, chn_channels.strict_capacity, chn_channels.test_model, chn_channels.remark, chn_channels.is_vip, chn_channels.sharing_threshold, chn_channels.preemption_threshold, chn_channels.borrowing_cooldown_seconds, chn_channels.created_at, h.health_score, chn_channels.settings").
+	err := query.Fields("chn_channels.id, chn_channels.name, chn_channels.type, chn_channels.base_url, chn_channels.status, chn_channels.priority, chn_channels.weight, chn_channels.max_concurrency, chn_channels.tier, chn_channels.strict_capacity, chn_channels.test_model, chn_channels.remark, chn_channels.created_at, h.health_score, chn_channels.settings").
 		// 列表默认按 id 倒序：新建渠道排在最前，便于运营查看最新配置。
 		// 注意分页场景下排序必须在 DB 层完成，前端只在当前页排序会导致跨页错乱。
 		OrderDesc("chn_channels.id").
@@ -177,26 +173,22 @@ func (s *sAdmin) ListChannels(ctx context.Context, req *v1.ChannelListReq) (*v1.
 		settings := relay.ParseChannelSettings(ch.Settings)
 
 		item := v1.ChannelItem{
-			ID:                       ch.ID,
-			Name:                     ch.Name,
-			Type:                     ch.Type,
-			TypeName:                 typeName,
-			BaseURL:                  ch.BaseURL,
-			Status:                   ch.Status,
-			Priority:                 ch.Priority,
-			Weight:                   ch.Weight,
-			MaxConcurrency:           ch.MaxConcurrency,
-			Tier:                     ch.Tier,
-			StrictCapacity:           ch.StrictCapacity,
-			TestModel:                ch.TestModel,
-			Remark:                   ch.Remark,
-			IsVIP:                    ch.IsVIP,
-			UseProxy:                 settings.UseProxy,
-			SharingThreshold:         ch.SharingThreshold,
-			PreemptionThreshold:      ch.PreemptionThreshold,
-			BorrowingCooldownSeconds: ch.BorrowingCooldownSeconds,
-			CreatedAt:                ch.CreatedAt.String(),
-			HealthScore:              ch.HealthScore,
+			ID:             ch.ID,
+			Name:           ch.Name,
+			Type:           ch.Type,
+			TypeName:       typeName,
+			BaseURL:        ch.BaseURL,
+			Status:         ch.Status,
+			Priority:       ch.Priority,
+			Weight:         ch.Weight,
+			MaxConcurrency: ch.MaxConcurrency,
+			Tier:           ch.Tier,
+			StrictCapacity: ch.StrictCapacity,
+			TestModel:      ch.TestModel,
+			Remark:         ch.Remark,
+			UseProxy:       settings.UseProxy,
+			CreatedAt:      ch.CreatedAt.String(),
+			HealthScore:    ch.HealthScore,
 		}
 		if rs, ok := runtimeStates[ch.ID]; ok {
 			item.BreakerState = int(rs.Breaker)
@@ -219,23 +211,19 @@ func (s *sAdmin) ListChannels(ctx context.Context, req *v1.ChannelListReq) (*v1.
 func (s *sAdmin) CloneChannel(ctx context.Context, req *v1.ChannelCloneReq) (*v1.ChannelCloneRes, error) {
 	// 查询源渠道
 	var src *struct {
-		ID                       int64   `json:"id"`
-		Name                     string  `json:"name"`
-		Type                     int     `json:"type"`
-		BaseURL                  string  `json:"base_url"`
-		Priority                 int     `json:"priority"`
-		Weight                   int     `json:"weight"`
-		MaxConcurrency           int     `json:"max_concurrency"`
-		TestModel                string  `json:"test_model"`
-		Remark                   string  `json:"remark"`
-		Settings                 string  `json:"settings"`
-		IsVIP                    bool    `json:"is_vip"`
-		SharingThreshold         float64 `json:"sharing_threshold"`
-		PreemptionThreshold      float64 `json:"preemption_threshold"`
-		BorrowingCooldownSeconds int     `json:"borrowing_cooldown_seconds"`
+		ID             int64  `json:"id"`
+		Name           string `json:"name"`
+		Type           int    `json:"type"`
+		BaseURL        string `json:"base_url"`
+		Priority       int    `json:"priority"`
+		Weight         int    `json:"weight"`
+		MaxConcurrency int    `json:"max_concurrency"`
+		TestModel      string `json:"test_model"`
+		Remark         string `json:"remark"`
+		Settings       string `json:"settings"`
 	}
 	err := dao.ChnChannels.Ctx(ctx).
-		Fields("id, name, type, base_url, priority, weight, max_concurrency, test_model, remark, settings, is_vip, sharing_threshold, preemption_threshold, borrowing_cooldown_seconds").
+		Fields("id, name, type, base_url, priority, weight, max_concurrency, test_model, remark, settings").
 		Where("id", req.ID).
 		Scan(&src)
 	if err != nil {
@@ -263,20 +251,16 @@ func (s *sAdmin) CloneChannel(ctx context.Context, req *v1.ChannelCloneReq) (*v1
 	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		var e error
 		newID, e = dao.ChnChannels.Ctx(ctx).InsertAndGetId(do.ChnChannels{
-			Name:                     name,
-			Type:                     src.Type,
-			BaseUrl:                  src.BaseURL,
-			Status:                   "active",
-			Priority:                 src.Priority,
-			Weight:                   src.Weight,
-			MaxConcurrency:           src.MaxConcurrency,
-			TestModel:                src.TestModel,
-			Remark:                   src.Remark,
-			Settings:                 src.Settings,
-			IsVip:                    src.IsVIP,
-			SharingThreshold:         src.SharingThreshold,
-			PreemptionThreshold:      src.PreemptionThreshold,
-			BorrowingCooldownSeconds: src.BorrowingCooldownSeconds,
+			Name:           name,
+			Type:           src.Type,
+			BaseUrl:        src.BaseURL,
+			Status:         "active",
+			Priority:       src.Priority,
+			Weight:         src.Weight,
+			MaxConcurrency: src.MaxConcurrency,
+			TestModel:      src.TestModel,
+			Remark:         src.Remark,
+			Settings:       src.Settings,
 		})
 		if e != nil {
 			return e
@@ -362,22 +346,18 @@ func (s *sAdmin) CreateChannel(ctx context.Context, req *v1.ChannelCreateReq) (*
 		tier = "primary"
 	}
 	id, err := dao.ChnChannels.Ctx(ctx).InsertAndGetId(do.ChnChannels{
-		Name:                     req.Name,
-		Type:                     req.Type,
-		BaseUrl:                  baseURL,
-		Status:                   "active",
-		Priority:                 req.Priority,
-		Weight:                   req.Weight,
-		MaxConcurrency:           req.MaxConcurrency,
-		Tier:                     tier,
-		StrictCapacity:           req.StrictCapacity,
-		TestModel:                req.TestModel,
-		Remark:                   req.Remark,
-		Settings:                 settingsJSON,
-		IsVip:                    req.IsVIP,
-		SharingThreshold:         req.SharingThreshold,
-		PreemptionThreshold:      req.PreemptionThreshold,
-		BorrowingCooldownSeconds: req.BorrowingCooldownSeconds,
+		Name:           req.Name,
+		Type:           req.Type,
+		BaseUrl:        baseURL,
+		Status:         "active",
+		Priority:       req.Priority,
+		Weight:         req.Weight,
+		MaxConcurrency: req.MaxConcurrency,
+		Tier:           tier,
+		StrictCapacity: req.StrictCapacity,
+		TestModel:      req.TestModel,
+		Remark:         req.Remark,
+		Settings:       settingsJSON,
 	})
 	if err != nil {
 		return nil, err
@@ -459,18 +439,6 @@ func (s *sAdmin) UpdateChannel(ctx context.Context, req *v1.ChannelUpdateReq) (*
 	}
 	if req.StrictCapacity != nil {
 		data.StrictCapacity = *req.StrictCapacity
-	}
-	if req.IsVIP != nil {
-		data.IsVip = *req.IsVIP
-	}
-	if req.SharingThreshold != nil {
-		data.SharingThreshold = *req.SharingThreshold
-	}
-	if req.PreemptionThreshold != nil {
-		data.PreemptionThreshold = *req.PreemptionThreshold
-	}
-	if req.BorrowingCooldownSeconds != nil {
-		data.BorrowingCooldownSeconds = *req.BorrowingCooldownSeconds
 	}
 
 	// Update use_proxy / debug_log_* in settings JSONB。
@@ -584,31 +552,27 @@ func (s *sAdmin) DeleteChannel(ctx context.Context, req *v1.ChannelDeleteReq) (*
 // GetChannelDetail 获取渠道详情
 func (s *sAdmin) GetChannelDetail(ctx context.Context, req *v1.ChannelDetailReq) (*v1.ChannelDetailRes, error) {
 	var ch *struct {
-		ID                       int64       `json:"id"`
-		Name                     string      `json:"name"`
-		Type                     int         `json:"type"`
-		BaseURL                  string      `json:"base_url"`
-		Status                   string      `json:"status"`
-		Priority                 int         `json:"priority"`
-		Weight                   int         `json:"weight"`
-		MaxConcurrency           int         `json:"max_concurrency"`
-		Tier                     string      `json:"tier"`
-		StrictCapacity           bool        `json:"strict_capacity"`
-		TestModel                string      `json:"test_model"`
-		Remark                   string      `json:"remark"`
-		IsVIP                    bool        `json:"is_vip"`
-		Settings                 string      `json:"settings"`
-		SharingThreshold         *float64    `json:"sharing_threshold"`
-		PreemptionThreshold      *float64    `json:"preemption_threshold"`
-		BorrowingCooldownSeconds *int        `json:"borrowing_cooldown_seconds"`
-		CreatedAt                *gtime.Time `json:"created_at"`
-		UpdatedAt                *gtime.Time `json:"updated_at"`
-		HealthScore              *float64    `json:"health_score"`
+		ID             int64       `json:"id"`
+		Name           string      `json:"name"`
+		Type           int         `json:"type"`
+		BaseURL        string      `json:"base_url"`
+		Status         string      `json:"status"`
+		Priority       int         `json:"priority"`
+		Weight         int         `json:"weight"`
+		MaxConcurrency int         `json:"max_concurrency"`
+		Tier           string      `json:"tier"`
+		StrictCapacity bool        `json:"strict_capacity"`
+		TestModel      string      `json:"test_model"`
+		Remark         string      `json:"remark"`
+		Settings       string      `json:"settings"`
+		CreatedAt      *gtime.Time `json:"created_at"`
+		UpdatedAt      *gtime.Time `json:"updated_at"`
+		HealthScore    *float64    `json:"health_score"`
 	}
 
 	err := dao.ChnChannels.Ctx(ctx).
 		LeftJoin("chn_health_scores h ON chn_channels.id = h.channel_id").
-		Fields("chn_channels.id, chn_channels.name, chn_channels.type, chn_channels.base_url, chn_channels.status, chn_channels.priority, chn_channels.weight, chn_channels.max_concurrency, chn_channels.tier, chn_channels.strict_capacity, chn_channels.test_model, chn_channels.remark, chn_channels.is_vip, chn_channels.settings, chn_channels.sharing_threshold, chn_channels.preemption_threshold, chn_channels.borrowing_cooldown_seconds, chn_channels.created_at, chn_channels.updated_at, h.health_score").
+		Fields("chn_channels.id, chn_channels.name, chn_channels.type, chn_channels.base_url, chn_channels.status, chn_channels.priority, chn_channels.weight, chn_channels.max_concurrency, chn_channels.tier, chn_channels.strict_capacity, chn_channels.test_model, chn_channels.remark, chn_channels.settings, chn_channels.created_at, chn_channels.updated_at, h.health_score").
 		Where("chn_channels.id", req.ID).
 		Scan(&ch)
 	if err != nil {
@@ -645,36 +609,32 @@ func (s *sAdmin) GetChannelDetail(ctx context.Context, req *v1.ChannelDetailReq)
 	settings := relay.ParseChannelSettings(ch.Settings)
 
 	res := &v1.ChannelDetailRes{
-		ID:                       ch.ID,
-		Name:                     ch.Name,
-		Type:                     ch.Type,
-		TypeName:                 typeName,
-		BaseURL:                  ch.BaseURL,
-		Status:                   ch.Status,
-		Priority:                 ch.Priority,
-		Weight:                   ch.Weight,
-		MaxConcurrency:           ch.MaxConcurrency,
-		Tier:                     ch.Tier,
-		StrictCapacity:           ch.StrictCapacity,
-		TestModel:                ch.TestModel,
-		Remark:                   ch.Remark,
-		IsVIP:                    ch.IsVIP,
-		UseProxy:                 settings.UseProxy,
-		WebSearchToGoogleSearch:  settings.WebSearchToGoogleSearch,
-		DebugLogEnabled:          settings.DebugLogEnabled,
-		DebugLogTenantID:         settings.DebugLogTenantID,
-		DebugLogUserID:           settings.DebugLogUserID,
-		DebugLogApiKeyID:         settings.DebugLogApiKeyID,
-		SharingThreshold:         ch.SharingThreshold,
-		PreemptionThreshold:      ch.PreemptionThreshold,
-		BorrowingCooldownSeconds: ch.BorrowingCooldownSeconds,
-		CreatedAt:                ch.CreatedAt.String(),
-		UpdatedAt:                ch.UpdatedAt.String(),
-		HealthScore:              ch.HealthScore,
-		KeyType:                  keyInfo.KeyType,
-		KeyStatus:                keyInfo.Status,
-		KeyName:                  keyInfo.Name,
-		KeyCooldownRemaining:     dispatchadapter.CredentialCooldownRemaining(ctx, keyInfo.ID),
+		ID:                      ch.ID,
+		Name:                    ch.Name,
+		Type:                    ch.Type,
+		TypeName:                typeName,
+		BaseURL:                 ch.BaseURL,
+		Status:                  ch.Status,
+		Priority:                ch.Priority,
+		Weight:                  ch.Weight,
+		MaxConcurrency:          ch.MaxConcurrency,
+		Tier:                    ch.Tier,
+		StrictCapacity:          ch.StrictCapacity,
+		TestModel:               ch.TestModel,
+		Remark:                  ch.Remark,
+		UseProxy:                settings.UseProxy,
+		WebSearchToGoogleSearch: settings.WebSearchToGoogleSearch,
+		DebugLogEnabled:         settings.DebugLogEnabled,
+		DebugLogTenantID:        settings.DebugLogTenantID,
+		DebugLogUserID:          settings.DebugLogUserID,
+		DebugLogApiKeyID:        settings.DebugLogApiKeyID,
+		CreatedAt:               ch.CreatedAt.String(),
+		UpdatedAt:               ch.UpdatedAt.String(),
+		HealthScore:             ch.HealthScore,
+		KeyType:                 keyInfo.KeyType,
+		KeyStatus:               keyInfo.Status,
+		KeyName:                 keyInfo.Name,
+		KeyCooldownRemaining:    dispatchadapter.CredentialCooldownRemaining(ctx, keyInfo.ID),
 	}
 	if rs, ok := channelRuntimeStates()[req.ID]; ok {
 		res.BreakerState = int(rs.Breaker)

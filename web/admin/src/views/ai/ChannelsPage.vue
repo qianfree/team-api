@@ -77,7 +77,7 @@ const columns: TableColumnData[] = [
       return h(Tag, { color: providerTagColor[record.type], size: 'small' }, () => label)
     },
   },
-  { title: 'Base URL', dataIndex: 'base_url', width: 220, ellipsis: true },
+  { title: 'Base URL', dataIndex: 'base_url', width: 250, ellipsis: true },
   {
     title: '状态', dataIndex: 'status', width: 80,
     render({ record }) { return h(Tag, { color: statusTagColor[record.status], size: 'small' }, () => statusLabel[record.status] || record.status) },
@@ -121,7 +121,7 @@ const columns: TableColumnData[] = [
     },
   },
   {
-    title: '健康度', dataIndex: 'health_score', width: 140,
+    title: '健康度', dataIndex: 'health_score', width: 80,
     render({ record }) {
       if (record.health_score === null || record.health_score === undefined) return h('span', { style: 'color:#94a3b8' }, 'N/A')
       const score = h('span', { style: { color: healthColor(record.health_score), fontWeight: 600 } }, record.health_score.toFixed(0))
@@ -164,14 +164,7 @@ const columns: TableColumnData[] = [
       return h(Tooltip, null, { default: () => trigger, content })
     },
   },
-  {
-    title: 'VIP', dataIndex: 'is_vip', width: 70,
-    render({ record }) {
-      return h(Tag, { color: record.is_vip ? 'gold' : undefined, size: 'small' }, () => record.is_vip ? 'VIP' : '-')
-    },
-  },
-  { title: '创建时间', dataIndex: 'created_at', width: 170 },
-  {
+  { title: '创建时间', dataIndex: 'created_at', width: 170 },  {
     title: '操作', dataIndex: 'actions', width: 300, fixed: 'right',
     render({ record }) {
       const isActive = record.status === 'active'
@@ -268,10 +261,10 @@ const providerDefaultURLs: Record<number, string> = {
   35: 'https://chatgpt.com',
 }
 
-const form = reactive({ name: '', type: 1, base_url: '', api_key: '', priority: 0, weight: 100, max_concurrency: 100, tier: 'primary', strict_capacity: false, test_model: '', remark: '', status: 'active', is_vip: false, use_proxy: false, sharing_threshold: null as number | null, preemption_threshold: null as number | null, borrowing_cooldown_seconds: null as number | null })
+const form = reactive({ name: '', type: 1, base_url: '', api_key: '', priority: 0, weight: 100, max_concurrency: 100, tier: 'primary', strict_capacity: false, test_model: '', remark: '', status: 'active', use_proxy: false })
 
 function openCreate() {
-  Object.assign(form, { name: '', type: 1, base_url: '', api_key: '', priority: 0, weight: 100, max_concurrency: 100, tier: 'primary', strict_capacity: false, test_model: '', remark: '', status: 'active', is_vip: false, use_proxy: false, sharing_threshold: null, preemption_threshold: null, borrowing_cooldown_seconds: null })
+  Object.assign(form, { name: '', type: 1, base_url: '', api_key: '', priority: 0, weight: 100, max_concurrency: 100, tier: 'primary', strict_capacity: false, test_model: '', remark: '', status: 'active', use_proxy: false })
   showModal.value = true
 }
 
@@ -609,27 +602,6 @@ const { exporting, exportFile } = useExport({
           </ACol>
         </ARow>
         <AFormItem label="备注"><AInput v-model="form.remark" type="textarea" :auto-size="{ minRows: 2, maxRows: 4 }" placeholder="备注（选填）" /></AFormItem>
-        <!-- VIP 设置 -->
-        <ACollapse :bordered="false" :default-active-key="form.is_vip ? ['vip'] : []">
-          <ACollapseItem header="VIP 设置" key="vip" :header-style="{ fontSize: '13px' }">
-            <ARow :gutter="16">
-              <ACol :span="12">
-                <AFormItem label="VIP 渠道"><ASwitch v-model="form.is_vip" /></AFormItem>
-              </ACol>
-              <ACol v-if="form.is_vip" :span="12">
-                <AFormItem label="共享阈值"><AInputNumber v-model="form.sharing_threshold" :min="0" :max="100" placeholder="共享健康分阈值" class="w-full" /></AFormItem>
-              </ACol>
-            </ARow>
-            <ARow v-if="form.is_vip" :gutter="16">
-              <ACol :span="12">
-                <AFormItem label="抢占阈值"><AInputNumber v-model="form.preemption_threshold" :min="0" :max="100" placeholder="抢占优先级阈值" class="w-full" /></AFormItem>
-              </ACol>
-              <ACol :span="12">
-                <AFormItem label="借用冷却(秒)"><AInputNumber v-model="form.borrowing_cooldown_seconds" :min="0" placeholder="非VIP冷却时间" class="w-full" /></AFormItem>
-              </ACol>
-            </ARow>
-          </ACollapseItem>
-        </ACollapse>
       </AForm>
     </AModal>
 

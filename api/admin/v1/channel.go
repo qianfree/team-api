@@ -25,30 +25,26 @@ type ChannelListRes struct {
 
 // ChannelItem 渠道信息
 type ChannelItem struct {
-	ID                       int64    `json:"id"`
-	Name                     string   `json:"name"`
-	Type                     int      `json:"type"`
-	TypeName                 string   `json:"type_name"`
-	BaseURL                  string   `json:"base_url"`
-	Status                   string   `json:"status"`
-	Priority                 int      `json:"priority"`
-	Weight                   int      `json:"weight"`
-	MaxConcurrency           int      `json:"max_concurrency"`
-	Tier                     string   `json:"tier"`
-	StrictCapacity           bool     `json:"strict_capacity"`
-	TestModel                string   `json:"test_model"`
-	Remark                   string   `json:"remark"`
-	IsVIP                    bool     `json:"is_vip"`
-	UseProxy                 bool     `json:"use_proxy"`
-	SharingThreshold         *float64 `json:"sharing_threshold"`
-	PreemptionThreshold      *float64 `json:"preemption_threshold"`
-	BorrowingCooldownSeconds *int     `json:"borrowing_cooldown_seconds"`
-	CreatedAt                string   `json:"created_at"`
-	HealthScore              *float64 `json:"health_score"`
-	BreakerState             int      `json:"breaker_state"`  // 调度熔断状态：0=正常 1=熔断中 2=半开探活
-	BreakerModels            int      `json:"breaker_models"` // 处于熔断/半开的模型数量（渠道×模型级汇总）
-	WorstModel               string   `json:"worst_model"`    // 健康度最低的模型名（空=渠道不在调度目录）
-	WorstModelScore          float64  `json:"worst_model_score"`
+	ID              int64    `json:"id"`
+	Name            string   `json:"name"`
+	Type            int      `json:"type"`
+	TypeName        string   `json:"type_name"`
+	BaseURL         string   `json:"base_url"`
+	Status          string   `json:"status"`
+	Priority        int      `json:"priority"`
+	Weight          int      `json:"weight"`
+	MaxConcurrency  int      `json:"max_concurrency"`
+	Tier            string   `json:"tier"`
+	StrictCapacity  bool     `json:"strict_capacity"`
+	TestModel       string   `json:"test_model"`
+	Remark          string   `json:"remark"`
+	UseProxy        bool     `json:"use_proxy"`
+	CreatedAt       string   `json:"created_at"`
+	HealthScore     *float64 `json:"health_score"`
+	BreakerState    int      `json:"breaker_state"`  // 调度熔断状态：0=正常 1=熔断中 2=半开探活
+	BreakerModels   int      `json:"breaker_models"` // 处于熔断/半开的模型数量（渠道×模型级汇总）
+	WorstModel      string   `json:"worst_model"`    // 健康度最低的模型名（空=渠道不在调度目录）
+	WorstModelScore float64  `json:"worst_model_score"`
 }
 
 // ChannelOptionsReq 渠道选项列表请求（下拉选择专用，不分页）
@@ -71,24 +67,20 @@ type ChannelOptionItem struct {
 
 // ChannelCreateReq 创建渠道请求
 type ChannelCreateReq struct {
-	g.Meta                   `path:"/channels" method:"post" mime:"json" tags:"管理后台-渠道" summary:"创建渠道"`
-	Name                     string  `json:"name" v:"required|length:1,100#请输入渠道名|渠道名长度1-100" dc:"渠道名称"`
-	Type                     int     `json:"type" v:"required|min:1#请选择供应商类型" dc:"供应商类型"`
-	BaseURL                  string  `json:"base_url" dc:"API 基础地址（留空使用供应商默认地址）"`
-	ApiKey                   string  `json:"api_key" v:"required#请输入 API Key" dc:"API Key"`
-	Priority                 int     `json:"priority" d:"0" dc:"优先级"`
-	Weight                   int     `json:"weight" d:"100" v:"between:0,100" dc:"权重"`
-	MaxConcurrency           int     `json:"max_concurrency" d:"100" v:"min:0" dc:"最大并发请求数（0=按上游 429 水位自动估算）"`
-	Tier                     string  `json:"tier" d:"primary" v:"in:primary,secondary,reserve" dc:"调度层级：primary=首选 secondary=备用 reserve=保底"`
-	StrictCapacity           bool    `json:"strict_capacity" d:"false" dc:"严格容量：Redis 故障时实例级保守限额（fail-closed），用于高成本渠道"`
-	TestModel                string  `json:"test_model" dc:"测试模型名"`
-	Remark                   string  `json:"remark" dc:"备注"`
-	IsVIP                    bool    `json:"is_vip" d:"false" dc:"是否VIP专属渠道"`
-	UseProxy                 bool    `json:"use_proxy" d:"false" dc:"启用代理"`
-	WebSearchToGoogleSearch  bool    `json:"web_search_to_google_search" d:"false" dc:"web_search→googleSearch 映射（Gemini 渠道，搜索按次另行计价）"`
-	SharingThreshold         float64 `json:"sharing_threshold" d:"0.6" dc:"普通租户借用阈值"`
-	PreemptionThreshold      float64 `json:"preemption_threshold" d:"0.8" dc:"VIP抢占阈值"`
-	BorrowingCooldownSeconds int     `json:"borrowing_cooldown_seconds" d:"30" dc:"被抢占后冷却时间(秒)"`
+	g.Meta                  `path:"/channels" method:"post" mime:"json" tags:"管理后台-渠道" summary:"创建渠道"`
+	Name                    string `json:"name" v:"required|length:1,100#请输入渠道名|渠道名长度1-100" dc:"渠道名称"`
+	Type                    int    `json:"type" v:"required|min:1#请选择供应商类型" dc:"供应商类型"`
+	BaseURL                 string `json:"base_url" dc:"API 基础地址（留空使用供应商默认地址）"`
+	ApiKey                  string `json:"api_key" v:"required#请输入 API Key" dc:"API Key"`
+	Priority                int    `json:"priority" d:"0" dc:"优先级"`
+	Weight                  int    `json:"weight" d:"100" v:"between:0,100" dc:"权重"`
+	MaxConcurrency          int    `json:"max_concurrency" d:"100" v:"min:0" dc:"最大并发请求数（0=按上游 429 水位自动估算）"`
+	Tier                    string `json:"tier" d:"primary" v:"in:primary,secondary,reserve" dc:"调度层级：primary=首选 secondary=备用 reserve=保底"`
+	StrictCapacity          bool   `json:"strict_capacity" d:"false" dc:"严格容量：Redis 故障时实例级保守限额（fail-closed），用于高成本渠道"`
+	TestModel               string `json:"test_model" dc:"测试模型名"`
+	Remark                  string `json:"remark" dc:"备注"`
+	UseProxy                bool   `json:"use_proxy" d:"false" dc:"启用代理"`
+	WebSearchToGoogleSearch bool   `json:"web_search_to_google_search" d:"false" dc:"web_search→googleSearch 映射（Gemini 渠道，搜索按次另行计价）"`
 }
 
 // ChannelCreateRes 创建渠道响应
@@ -98,30 +90,26 @@ type ChannelCreateRes struct {
 
 // ChannelUpdateReq 更新渠道请求
 type ChannelUpdateReq struct {
-	g.Meta                   `path:"/channels/{id}" method:"put" mime:"json" tags:"管理后台-渠道" summary:"更新渠道"`
-	ID                       int64    `json:"id" in:"path" v:"required" dc:"渠道ID"`
-	Name                     string   `json:"name" dc:"渠道名称"`
-	Type                     *int     `json:"type" v:"min:1#请选择供应商类型" dc:"供应商类型（留空不修改）"`
-	BaseURL                  string   `json:"base_url" dc:"API 基础地址（留空不更新；切换类型且旧地址为该类型默认值时自动跟随新类型默认地址）"`
-	ApiKey                   *string  `json:"api_key" dc:"更新 API Key（留空不更新）"`
-	Priority                 *int     `json:"priority" dc:"优先级（留空不更新）"`
-	Weight                   *int     `json:"weight" dc:"权重（留空不更新）"`
-	MaxConcurrency           *int     `json:"max_concurrency" v:"min:0" dc:"最大并发请求数（0=按上游 429 水位自动估算，留空不更新）"`
-	TestModel                string   `json:"test_model" dc:"测试模型名"`
-	Remark                   string   `json:"remark" dc:"备注"`
-	Status                   string   `json:"status" v:"in:active,disabled,testing" dc:"状态"`
-	Tier                     string   `json:"tier" v:"in:primary,secondary,reserve" dc:"调度层级（留空不更新）"`
-	StrictCapacity           *bool    `json:"strict_capacity" dc:"严格容量（fail-closed）"`
-	IsVIP                    *bool    `json:"is_vip" dc:"是否VIP专属渠道"`
-	UseProxy                 *bool    `json:"use_proxy" dc:"启用代理"`
-	WebSearchToGoogleSearch  *bool    `json:"web_search_to_google_search" dc:"web_search→googleSearch 映射（Gemini 渠道，留空不更新）"`
-	DebugLogEnabled          *bool    `json:"debug_log_enabled" dc:"启用渠道调试日志（记录四段完整报文，排障用，用完及时关闭）"`
-	DebugLogTenantID         *int64   `json:"debug_log_tenant_id" dc:"调试目标租户ID过滤（0=不限）"`
-	DebugLogUserID           *int64   `json:"debug_log_user_id" dc:"调试目标成员ID过滤（0=不限）"`
-	DebugLogApiKeyID         *int64   `json:"debug_log_api_key_id" dc:"调试目标密钥ID过滤（0=不限）"`
-	SharingThreshold         *float64 `json:"sharing_threshold" dc:"普通租户借用阈值"`
-	PreemptionThreshold      *float64 `json:"preemption_threshold" dc:"VIP抢占阈值"`
-	BorrowingCooldownSeconds *int     `json:"borrowing_cooldown_seconds" dc:"被抢占后冷却时间(秒)"`
+	g.Meta                  `path:"/channels/{id}" method:"put" mime:"json" tags:"管理后台-渠道" summary:"更新渠道"`
+	ID                      int64   `json:"id" in:"path" v:"required" dc:"渠道ID"`
+	Name                    string  `json:"name" dc:"渠道名称"`
+	Type                    *int    `json:"type" v:"min:1#请选择供应商类型" dc:"供应商类型（留空不修改）"`
+	BaseURL                 string  `json:"base_url" dc:"API 基础地址（留空不更新；切换类型且旧地址为该类型默认值时自动跟随新类型默认地址）"`
+	ApiKey                  *string `json:"api_key" dc:"更新 API Key（留空不更新）"`
+	Priority                *int    `json:"priority" dc:"优先级（留空不更新）"`
+	Weight                  *int    `json:"weight" dc:"权重（留空不更新）"`
+	MaxConcurrency          *int    `json:"max_concurrency" v:"min:0" dc:"最大并发请求数（0=按上游 429 水位自动估算，留空不更新）"`
+	TestModel               string  `json:"test_model" dc:"测试模型名"`
+	Remark                  string  `json:"remark" dc:"备注"`
+	Status                  string  `json:"status" v:"in:active,disabled,testing" dc:"状态"`
+	Tier                    string  `json:"tier" v:"in:primary,secondary,reserve" dc:"调度层级（留空不更新）"`
+	StrictCapacity          *bool   `json:"strict_capacity" dc:"严格容量（fail-closed）"`
+	UseProxy                *bool   `json:"use_proxy" dc:"启用代理"`
+	WebSearchToGoogleSearch *bool   `json:"web_search_to_google_search" dc:"web_search→googleSearch 映射（Gemini 渠道，留空不更新）"`
+	DebugLogEnabled         *bool   `json:"debug_log_enabled" dc:"启用渠道调试日志（记录四段完整报文，排障用，用完及时关闭）"`
+	DebugLogTenantID        *int64  `json:"debug_log_tenant_id" dc:"调试目标租户ID过滤（0=不限）"`
+	DebugLogUserID          *int64  `json:"debug_log_user_id" dc:"调试目标成员ID过滤（0=不限）"`
+	DebugLogApiKeyID        *int64  `json:"debug_log_api_key_id" dc:"调试目标密钥ID过滤（0=不限）"`
 }
 
 // ChannelDeleteReq 删除渠道请求
@@ -138,39 +126,35 @@ type ChannelDetailReq struct {
 
 // ChannelDetailRes 渠道详情响应
 type ChannelDetailRes struct {
-	ID                       int64    `json:"id"`
-	Name                     string   `json:"name"`
-	Type                     int      `json:"type"`
-	TypeName                 string   `json:"type_name"`
-	BaseURL                  string   `json:"base_url"`
-	Status                   string   `json:"status"`
-	Priority                 int      `json:"priority"`
-	Weight                   int      `json:"weight"`
-	MaxConcurrency           int      `json:"max_concurrency"`
-	Tier                     string   `json:"tier"`
-	StrictCapacity           bool     `json:"strict_capacity"`
-	TestModel                string   `json:"test_model"`
-	Remark                   string   `json:"remark"`
-	IsVIP                    bool     `json:"is_vip"`
-	UseProxy                 bool     `json:"use_proxy"`
-	WebSearchToGoogleSearch  bool     `json:"web_search_to_google_search"`
-	DebugLogEnabled          bool     `json:"debug_log_enabled"`
-	DebugLogTenantID         int64    `json:"debug_log_tenant_id"`
-	DebugLogUserID           int64    `json:"debug_log_user_id"`
-	DebugLogApiKeyID         int64    `json:"debug_log_api_key_id"`
-	SharingThreshold         *float64 `json:"sharing_threshold"`
-	PreemptionThreshold      *float64 `json:"preemption_threshold"`
-	BorrowingCooldownSeconds *int     `json:"borrowing_cooldown_seconds"`
-	CreatedAt                string   `json:"created_at"`
-	UpdatedAt                string   `json:"updated_at"`
-	HealthScore              *float64 `json:"health_score"`
-	BreakerState             int      `json:"breaker_state"`  // 调度熔断状态：0=正常 1=熔断中 2=半开探活
-	BreakerModels            int      `json:"breaker_models"` // 处于熔断/半开的模型数量（渠道×模型级汇总）
-	WorstModel               string   `json:"worst_model"`    // 健康度最低的模型名（空=渠道不在调度目录）
-	WorstModelScore          float64  `json:"worst_model_score"`
-	KeyType                  string   `json:"key_type"`
-	KeyStatus                string   `json:"key_status"`
-	KeyName                  string   `json:"key_name"`
+	ID                      int64    `json:"id"`
+	Name                    string   `json:"name"`
+	Type                    int      `json:"type"`
+	TypeName                string   `json:"type_name"`
+	BaseURL                 string   `json:"base_url"`
+	Status                  string   `json:"status"`
+	Priority                int      `json:"priority"`
+	Weight                  int      `json:"weight"`
+	MaxConcurrency          int      `json:"max_concurrency"`
+	Tier                    string   `json:"tier"`
+	StrictCapacity          bool     `json:"strict_capacity"`
+	TestModel               string   `json:"test_model"`
+	Remark                  string   `json:"remark"`
+	UseProxy                bool     `json:"use_proxy"`
+	WebSearchToGoogleSearch bool     `json:"web_search_to_google_search"`
+	DebugLogEnabled         bool     `json:"debug_log_enabled"`
+	DebugLogTenantID        int64    `json:"debug_log_tenant_id"`
+	DebugLogUserID          int64    `json:"debug_log_user_id"`
+	DebugLogApiKeyID        int64    `json:"debug_log_api_key_id"`
+	CreatedAt               string   `json:"created_at"`
+	UpdatedAt               string   `json:"updated_at"`
+	HealthScore             *float64 `json:"health_score"`
+	BreakerState            int      `json:"breaker_state"`  // 调度熔断状态：0=正常 1=熔断中 2=半开探活
+	BreakerModels           int      `json:"breaker_models"` // 处于熔断/半开的模型数量（渠道×模型级汇总）
+	WorstModel              string   `json:"worst_model"`    // 健康度最低的模型名（空=渠道不在调度目录）
+	WorstModelScore         float64  `json:"worst_model_score"`
+	KeyType                 string   `json:"key_type"`
+	KeyStatus               string   `json:"key_status"`
+	KeyName                 string   `json:"key_name"`
 	// KeyCooldownRemaining 凭证冷却剩余秒数（0=未冷却）。冷却期内该 Key 会被调度器
 	// 整段跳过且不发起上游请求，渠道全部 Key 冷却即整体不可用——必须可见，否则
 	// 表现为"健康分正常、探测也正常，但就是无可用渠道"。

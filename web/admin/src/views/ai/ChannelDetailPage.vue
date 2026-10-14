@@ -73,12 +73,8 @@ const editForm = reactive({
   test_model: '',
   remark: '',
   status: 'active',
-  is_vip: false,
   use_proxy: false,
   web_search_to_google_search: false,
-  sharing_threshold: null as number | null,
-  preemption_threshold: null as number | null,
-  borrowing_cooldown_seconds: null as number | null,
 })
 
 function openEditModal() {
@@ -95,12 +91,8 @@ function openEditModal() {
     test_model: detail.value.test_model || '',
     remark: detail.value.remark || '',
     status: detail.value.status || 'active',
-    is_vip: detail.value.is_vip || false,
     use_proxy: detail.value.use_proxy || false,
     web_search_to_google_search: detail.value.web_search_to_google_search || false,
-    sharing_threshold: detail.value.sharing_threshold ?? null,
-    preemption_threshold: detail.value.preemption_threshold ?? null,
-    borrowing_cooldown_seconds: detail.value.borrowing_cooldown_seconds ?? null,
   })
   showEditModal.value = true
 }
@@ -1098,10 +1090,6 @@ function formatHeaders(headers: Record<string, string>): string {
                   </template>
                   <span v-else style="color: #94a3b8">—</span>
                 </ADescriptionsItem>
-                <ADescriptionsItem label="VIP">
-                  <ATag v-if="detail.is_vip" color="gold" size="small">VIP</ATag>
-                  <span v-else>-</span>
-                </ADescriptionsItem>
                 <ADescriptionsItem label="代理">
                   <ATag v-if="detail.use_proxy" color="arcoblue" size="small">已启用</ATag>
                   <span v-else>-</span>
@@ -1538,27 +1526,6 @@ function formatHeaders(headers: Record<string, string>): string {
         </ARow>
 
         <AFormItem label="备注"><AInput v-model="editForm.remark" type="textarea" :auto-size="{ minRows: 2, maxRows: 4 }" /></AFormItem>
-
-        <ACollapse :bordered="false">
-          <ACollapseItem header="VIP 设置" key="vip" :header-style="{ fontSize: '13px' }">
-            <ARow :gutter="16">
-              <ACol :span="12">
-                <AFormItem label="VIP 渠道"><ASwitch v-model="editForm.is_vip" /></AFormItem>
-              </ACol>
-              <ACol v-if="editForm.is_vip" :span="12">
-                <AFormItem label="共享阈值"><AInputNumber v-model="editForm.sharing_threshold" :min="0" :max="100" class="w-full" /></AFormItem>
-              </ACol>
-            </ARow>
-            <ARow v-if="editForm.is_vip" :gutter="16">
-              <ACol :span="12">
-                <AFormItem label="抢占阈值"><AInputNumber v-model="editForm.preemption_threshold" :min="0" :max="100" class="w-full" /></AFormItem>
-              </ACol>
-              <ACol :span="12">
-                <AFormItem label="借用冷却(秒)"><AInputNumber v-model="editForm.borrowing_cooldown_seconds" :min="0" class="w-full" /></AFormItem>
-              </ACol>
-            </ARow>
-          </ACollapseItem>
-        </ACollapse>
       </AForm>
     </AModal>
 
