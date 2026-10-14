@@ -1152,8 +1152,31 @@ watch(() => props.visible, (val) => {
 							<span class="section-hint">按 Token 用量分段设置不同价格</span>
 						</div>
 						<div v-for="(tier, index) in editorItems" :key="index" class="tier-card">
+							<!-- Token 区间内联在档位标题行：标题行管区间划分，下方网格只管本档价格 -->
 							<div class="tier-header">
-								<span class="tier-label">第 {{ index + 1 }} 梯</span>
+								<div class="tier-range">
+									<span class="tier-label">第 {{ index + 1 }} 梯</span>
+									<AInputNumber
+										v-model="tier.min_tokens"
+										:min="0"
+										:step="1000"
+										placeholder="起始"
+										size="small"
+										class="tier-range-input"
+									/>
+									<span class="tier-range-sep">~</span>
+									<AInputNumber
+										v-if="index < editorItems.length - 1"
+										v-model="tier.max_tokens"
+										:min="0"
+										:step="1000"
+										placeholder="上限"
+										size="small"
+										class="tier-range-input"
+									/>
+									<span v-else class="tier-range-unlimited" title="末档无上限">无上限</span>
+									<span class="tier-range-unit">tokens</span>
+								</div>
 								<AButton
 									v-if="editorItems.length > 1"
 									size="mini"
@@ -1162,26 +1185,6 @@ watch(() => props.visible, (val) => {
 								>删除</AButton>
 							</div>
 							<div class="grid grid-cols-2 md:grid-cols-4 gap-x-4">
-								<AFormItem label="起始 Token">
-									<AInputNumber
-										v-model="tier.min_tokens"
-										:min="0"
-										:step="1000"
-										placeholder="0"
-										class="w-full"
-									/>
-								</AFormItem>
-								<AFormItem label="结束 Token">
-									<AInputNumber
-										v-if="index < editorItems.length - 1"
-										v-model="tier.max_tokens"
-										:min="0"
-										:step="1000"
-										placeholder="上限"
-										class="w-full"
-									/>
-									<AInput v-else model-value="无上限" disabled class="w-full" />
-								</AFormItem>
 								<AFormItem label="输入价格">
 									<AInputNumber
 										v-model="tier.input_price"
@@ -1202,8 +1205,6 @@ watch(() => props.visible, (val) => {
 										<template #suffix>{{ currencySymbol }}/1M</template>
 									</AInputNumber>
 								</AFormItem>
-							</div>
-							<div class="grid grid-cols-2 gap-x-4 mt-1">
 								<AFormItem label="缓存读取价格">
 									<AInputNumber
 										v-model="tier.cache_read_price"
@@ -1398,7 +1399,14 @@ watch(() => props.visible, (val) => {
 			<template v-else-if="officialBillingMode === 'tiered'">
 				<div v-for="(tier, index) in officialItems" :key="index" class="tier-card">
 					<div class="tier-header">
-						<span class="tier-label">第 {{ index + 1 }} 档</span>
+						<div class="tier-range">
+							<span class="tier-label">第 {{ index + 1 }} 档</span>
+							<AInputNumber v-model="tier.min_tokens" :min="0" :precision="0" placeholder="起始" size="small" class="tier-range-input" />
+							<span class="tier-range-sep">~</span>
+							<AInputNumber v-if="index < officialItems.length - 1" v-model="tier.max_tokens" :min="0" :precision="0" placeholder="上限" size="small" class="tier-range-input" />
+							<span v-else class="tier-range-unlimited" title="末档无上限">无上限</span>
+							<span class="tier-range-unit">tokens</span>
+						</div>
 						<AButton
 							size="mini"
 							status="danger"
@@ -1407,13 +1415,6 @@ watch(() => props.visible, (val) => {
 						>删除</AButton>
 					</div>
 					<div class="grid grid-cols-2 md:grid-cols-4 gap-x-4">
-						<AFormItem label="起始 Token">
-							<AInputNumber v-model="tier.min_tokens" :min="0" :precision="0" class="w-full" />
-						</AFormItem>
-						<AFormItem :label="index === officialItems.length - 1 ? '结束（无上限）' : '结束 Token'">
-							<AInputNumber v-if="index < officialItems.length - 1" v-model="tier.max_tokens" :min="0" :precision="0" class="w-full" />
-							<AInput v-else value="∞" disabled />
-						</AFormItem>
 						<AFormItem label="输入价格">
 							<AInputNumber v-model="tier.input_price" :min="0" :precision="6" placeholder="0" class="w-full">
 								<template #suffix>{{ currencySymbol }} / 1M</template>
@@ -1424,8 +1425,6 @@ watch(() => props.visible, (val) => {
 								<template #suffix>{{ currencySymbol }} / 1M</template>
 							</AInputNumber>
 						</AFormItem>
-					</div>
-					<div class="grid grid-cols-2 md:grid-cols-3 gap-x-4 mt-1">
 						<AFormItem label="缓存读取价格">
 							<AInputNumber v-model="tier.cache_read_price" :min="0" :precision="6" class="w-full">
 								<template #suffix>{{ currencySymbol }}/1M</template>
@@ -1587,7 +1586,32 @@ watch(() => props.visible, (val) => {
 	display: flex;
 	justify-content: space-between;
 	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
 	margin-bottom: 8px;
+}
+
+/* 档位标题行内联 Token 区间：序号 + 起止输入，末档无上限为只读文案 */
+.tier-range {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.tier-range-input {
+	width: 140px;
+}
+
+.tier-range-sep,
+.tier-range-unit {
+	font-size: 12px;
+	color: var(--ta-text-tertiary);
+}
+
+.tier-range-unlimited {
+	font-size: 13px;
+	color: var(--ta-text-tertiary);
 }
 
 .tier-label {
