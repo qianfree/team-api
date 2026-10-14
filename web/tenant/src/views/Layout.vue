@@ -140,6 +140,11 @@ function closeMobile() {
 	mobileOpen.value = false
 }
 
+// skip-link 不能走 href 锚点跳转：本项目是 hash 路由，改 hash 会触发路由导航
+function skipToMain() {
+	document.getElementById('main-content')?.focus()
+}
+
 function toggleUserMenu() {
 	userMenuOpen.value = !userMenuOpen.value
 }
@@ -262,6 +267,8 @@ onBeforeUnmount(() => {
 
 <template>
 	<div class="tenant-layout min-h-screen overflow-x-clip">
+	<!-- Skip Link：读屏/键盘用户按 Tab 的第一站，跳过侧栏直达主内容 -->
+		<a href="#main-content" class="skip-link" @click.prevent="skipToMain">跳到主内容</a>
 	<!-- Maintenance Banner -->
 		<MaintenanceBanner />
 
@@ -291,7 +298,7 @@ onBeforeUnmount(() => {
 			</div>
 
 			<!-- Navigation -->
-			<nav class="sidebar-nav scrollbar-hide">
+			<nav class="sidebar-nav scrollbar-hide" aria-label="主导航">
 				<div class="sidebar-section">
 					<router-link
 						v-for="item in navItems"
@@ -330,6 +337,8 @@ onBeforeUnmount(() => {
 					class="sidebar-toggle"
 					:class="sidebarCollapsed ? 'justify-center px-0' : 'justify-start gap-3 px-3.5'"
 					:title="sidebarCollapsed ? '展开菜单' : '收起菜单'"
+					:aria-expanded="!sidebarCollapsed"
+					:aria-label="sidebarCollapsed ? '展开菜单' : '收起菜单'"
 				>
 					<Icon :name="sidebarCollapsed ? 'chevronDoubleRight' : 'chevronDoubleLeft'" size="md" class="flex-shrink-0" />
 					<transition name="fade">
@@ -364,6 +373,7 @@ onBeforeUnmount(() => {
 							@click="handleBack"
 							class="btn-ghost btn-icon lg:hidden"
 							:title="backButtonTitle"
+							:aria-label="backButtonTitle"
 						>
 							<Icon name="chevronLeft" size="md" />
 						</button>
@@ -371,6 +381,8 @@ onBeforeUnmount(() => {
 							v-else
 							@click="toggleMobile"
 							class="btn-ghost btn-icon lg:hidden"
+							:aria-expanded="mobileOpen"
+							:aria-label="mobileOpen ? '关闭菜单' : '打开菜单'"
 						>
 							<Icon name="menu" size="md" />
 						</button>
@@ -382,6 +394,7 @@ onBeforeUnmount(() => {
 								@click="handleBack"
 								class="btn-ghost btn-icon flex-shrink-0 text-gray-500 hover:text-gray-700"
 								:title="backButtonTitle"
+								:aria-label="backButtonTitle"
 							>
 								<Icon name="chevronLeft" size="md" />
 							</button>
@@ -407,8 +420,10 @@ onBeforeUnmount(() => {
 						<button
 							@click="toggleAnnouncePanel"
 							class="topbar-icon-button relative flex h-10 w-10 items-center justify-center rounded-full border border-white/80 bg-white/65 text-slate-400 shadow-sm transition-all hover:-translate-y-0.5 hover:bg-white hover:text-primary-600"
-								title="平台公告"
-							>
+							title="平台公告"
+							:aria-expanded="announcePanelOpen"
+							:aria-label="announceUnreadCount > 0 ? `平台公告，${announceUnreadCount} 条未读` : '平台公告'"
+						>
 								<Icon name="megaphone" size="md" :class="{ 'motion-safe:animate-swing': announceUnreadCount > 0 }" />
 								<!-- 存在未读公告时喇叭摇摆 + 红点标记 -->
 								<span
@@ -439,11 +454,12 @@ onBeforeUnmount(() => {
 										<div v-if="consoleAnnouncements.length === 0" class="px-4 py-8 text-center text-sm text-gray-400">
 											暂无公告
 										</div>
-										<div
+										<button
 											v-for="item in consoleAnnouncements"
 											:key="item.id"
+											type="button"
 											@click="openAnnouncementDetail(item)"
-											class="px-4 py-3 flex items-start gap-3 cursor-pointer transition-colors hover:bg-gray-50 border-b border-gray-50 last:border-b-0"
+											class="w-full px-4 py-3 flex items-start gap-3 text-left cursor-pointer transition-colors hover:bg-gray-50 border-b border-gray-50 last:border-b-0"
 										>
 											<!-- Unread dot -->
 											<div
@@ -461,7 +477,7 @@ onBeforeUnmount(() => {
 												</p>
 												<p class="text-xs text-gray-400 mt-0.5">{{ item.created_at }}</p>
 											</div>
-										</div>
+										</button>
 									</div>
 								</div>
 							</transition>
@@ -471,8 +487,9 @@ onBeforeUnmount(() => {
 					<router-link
 						to="/tenant/notifications"
 						class="topbar-icon-button relative flex h-10 w-10 items-center justify-center rounded-full border border-white/80 bg-white/65 text-slate-400 shadow-sm transition-all hover:-translate-y-0.5 hover:bg-white hover:text-primary-600"
-							title="通知中心"
-						>
+						title="通知中心"
+						:aria-label="unreadCount > 0 ? `通知中心，${unreadCount > 99 ? '99+' : unreadCount} 条未读` : '通知中心'"
+					>
 							<Icon name="bell" size="md" />
 							<span
 								v-if="unreadCount > 0"
@@ -507,6 +524,8 @@ onBeforeUnmount(() => {
 						<button
 							@click="toggleUserMenu"
 							class="topbar-user-button flex items-center gap-2 rounded-xl px-2 py-1.5 transition-colors hover:bg-gray-100"
+							aria-haspopup="menu"
+							:aria-expanded="userMenuOpen"
 						>
 							<div class="topbar-user-avatar flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-primary-500 to-primary-600 text-white text-sm font-medium">
 									{{ currentUser.username.charAt(0).toUpperCase() }}
@@ -561,8 +580,11 @@ onBeforeUnmount(() => {
 			</header>
 
 			<!-- Page Content -->
+			<!-- id/tabindex 是读屏与 skip-link 的锚点：路由切换后 router.afterEach 会把焦点移到这里 -->
 			<main
-				class="tenant-main px-3 pb-5 pt-4 md:px-5 md:pb-6 lg:pt-5"
+				id="main-content"
+				tabindex="-1"
+				class="tenant-main outline-none px-3 pb-5 pt-4 md:px-5 md:pb-6 lg:pt-5"
 				:class="{ 'tenant-table-main': route.meta.viewportTable }"
 			>
 				<router-view v-slot="{ Component, route: currentRoute }">
@@ -584,9 +606,9 @@ onBeforeUnmount(() => {
 							<h3 class="text-lg font-semibold text-gray-900">{{ announceDetailItem.title }}</h3>
 							<p class="text-xs text-gray-500 mt-0.5">{{ announceDetailItem.created_at }}</p>
 						</div>
-						<button @click="closeAnnouncementDetail" class="flex-shrink-0 rounded-lg p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors">
-							<Icon name="x" size="md" />
-						</button>
+						<button @click="closeAnnouncementDetail" class="flex-shrink-0 rounded-lg p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors" aria-label="关闭公告">
+								<Icon name="x" size="md" />
+							</button>
 					</div>
 					<!-- 内容区 flex-1 撑满弹窗最小高度，长内容超过 60vh 后内部滚动 -->
 					<div class="flex-1 min-h-0 px-6 py-5 max-h-[60vh] overflow-y-auto">

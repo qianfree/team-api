@@ -370,6 +370,7 @@ onMounted(() => {
 							<button
 								@click="editingName = true"
 								class="text-primary-600 hover:text-primary-500 transition-colors"
+								aria-label="编辑组织名称"
 							>
 								<Icon name="edit" size="sm" />
 							</button>

@@ -556,6 +556,7 @@ function closeZoom() {
 									<button
 										class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-gray-300 transition-colors duration-150 hover:bg-red-50 hover:text-red-500"
 										title="删除该参数"
+										aria-label="删除该参数"
 										@click="removeParam(param.id)"
 									>
 										<Icon name="x" size="sm" />
@@ -718,6 +719,7 @@ function closeZoom() {
 					<button
 						class="absolute -top-3 -right-3 flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-600 shadow-lg transition-colors hover:text-gray-900"
 						title="关闭"
+						aria-label="关闭预览"
 						@click="closeZoom"
 					>
 						<Icon name="x" size="sm" />

@@ -1106,3 +1106,45 @@ body.modal-open {
 .fade-leave-to {
 	opacity: 0;
 }
+
+/* ============ 无障碍：读屏与键盘 ============ */
+
+/* skip-link：默认移出视口，键盘聚焦时出现在左上角（Layout/AuthLayout 模板首元素） */
+.skip-link {
+	position: fixed;
+	top: 10px;
+	left: 10px;
+	z-index: 100;
+	padding: 8px 16px;
+	border-radius: 8px;
+	background: var(--color-primary-500);
+	color: #fff;
+	font-size: 14px;
+	font-weight: 500;
+	text-decoration: none;
+	box-shadow: var(--shadow-glow);
+	transform: translateY(-200%);
+	transition: transform 0.2s ease;
+}
+.skip-link:focus {
+	transform: none;
+}
+
+/* 键盘焦点统一兜底：品牌色描边（按钮等组件自带的 focus:ring 不受影响） */
+:focus-visible {
+	outline: 2px solid var(--color-primary-500);
+	outline-offset: 2px;
+	border-radius: 4px;
+}
+
+/* 减少动效：前庭障碍用户与读屏用户关闭装饰动画（shimmer/swing/glow 等持续动画） */
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+		scroll-behavior: auto !important;
+	}
+}

@@ -283,6 +283,7 @@ function delay(ms: number) {
 							type="button"
 							class="w-6 h-6 rounded flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-all duration-200 cursor-pointer hover:rotate-90"
 							title="换一张"
+							aria-label="换一张验证码"
 							@click="resetCaptcha"
 						>
 							<Icon name="refresh" size="xs" />
@@ -290,6 +291,7 @@ function delay(ms: number) {
 						<button
 							type="button"
 							class="w-6 h-6 rounded flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors cursor-pointer"
+							aria-label="关闭验证码"
 							@click="deactivate"
 						>
 							<Icon name="x" size="xs" />
@@ -312,8 +314,8 @@ function delay(ms: number) {
 				<!-- Captcha content -->
 				<template v-else-if="captchaData">
 					<div class="sc-image relative leading-none bg-gray-100">
-						<img ref="imageRef" :src="captchaData.master_image" class="w-full block" draggable="false" @load="onImageLoad" />
-						<img ref="tileImgRef" :src="captchaData.tile_image" class="sc-tile absolute left-0 pointer-events-none" :style="tileStyle" draggable="false" @load="onTileLoad" />
+						<img ref="imageRef" :src="captchaData.master_image" alt="验证码背景图" class="w-full block" draggable="false" @load="onImageLoad" />
+						<img ref="tileImgRef" :src="captchaData.tile_image" alt="验证码滑块拼图" class="sc-tile absolute left-0 pointer-events-none" :style="tileStyle" draggable="false" @load="onTileLoad" />
 						<div v-if="status === 'verifying'" class="absolute inset-0 flex items-center justify-center bg-white/75 backdrop-blur-[2px] z-10">
 							<div class="sc-spinner" />
 						</div>

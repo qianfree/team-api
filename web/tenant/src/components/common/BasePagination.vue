@@ -45,8 +45,8 @@ function handlePageSize(size: number) {
 </script>
 
 <template>
-	<div v-if="total > 0" class="flex w-full min-w-0 flex-col items-center justify-center gap-2 sm:flex-row">
-		<span v-if="isMobile" class="text-xs text-gray-500">共 {{ total }} 条</span>
+	<div v-if="total > 0" class="flex w-full min-w-0 flex-col items-center justify-center gap-2 sm:flex-row" role="navigation" aria-label="分页">
+		<span v-if="isMobile" class="text-xs text-gray-500" aria-live="polite">共 {{ total }} 条</span>
 		<n-pagination
 			class="max-w-full"
 			:page="modelValue"

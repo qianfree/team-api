@@ -432,7 +432,7 @@ function formatStatus(status: number) {
         <label class="input-label">Secret Key</label>
         <div class="flex items-center gap-2">
           <code class="code-block flex-1 text-sm break-all">{{ newSecretKey }}</code>
-          <button class="btn btn-ghost btn-sm" @click="copyToClipboard(newSecretKey)">
+          <button class="btn btn-ghost btn-sm" aria-label="复制 Secret Key" @click="copyToClipboard(newSecretKey)">
             <Icon name="copy" size="sm" />
           </button>
         </div>
