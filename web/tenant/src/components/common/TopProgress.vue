@@ -8,6 +8,7 @@ const { progress, visible, smooth } = useTopProgress()
   <div
     class="top-progress-container fixed top-0 left-0 z-[9999] h-[3px] w-full pointer-events-none"
     :class="{ 'is-visible': visible }"
+    aria-hidden="true"
   >
     <div
       class="top-progress-bar h-full bg-gradient-to-r from-primary-500 to-primary-600"

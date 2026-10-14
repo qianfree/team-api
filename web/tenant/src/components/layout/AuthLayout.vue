@@ -3,7 +3,7 @@
 		<div class="pointer-events-none fixed inset-0 bg-mesh-gradient"></div>
 
 		<div class="relative z-10 flex min-h-[100dvh] flex-col">
-			<main class="flex flex-1 items-center justify-center px-4 py-10 sm:py-14">
+			<main id="main-content" tabindex="-1" class="flex flex-1 items-center justify-center outline-none px-4 py-10 sm:py-14">
 				<div class="w-full max-w-md">
 					<!-- Logo/Brand -->
 					<div class="mb-8 text-center">

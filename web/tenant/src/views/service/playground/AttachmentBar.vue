@@ -98,6 +98,7 @@ defineExpose({ pick })
 			<button
 				class="absolute right-0.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-gray-300 transition-colors duration-150 hover:bg-white hover:text-red-500"
 				title="移除"
+				aria-label="移除附件"
 				@click="emit('remove', att.id)"
 			>
 				<Icon name="x" size="xs" />
@@ -152,6 +153,7 @@ defineExpose({ pick })
 				<button
 					class="absolute right-1 top-1 rounded p-0.5 text-gray-300 transition-colors duration-150 hover:bg-gray-100 hover:text-red-500"
 					title="移除"
+					aria-label="移除附件"
 					@click="emit('remove', att.id)"
 				>
 					<Icon name="x" size="xs" />

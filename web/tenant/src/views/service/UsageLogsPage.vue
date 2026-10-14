@@ -749,7 +749,7 @@ onMounted(() => {
 							<span class="text-gray-500">请求 ID</span>
 							<span class="font-mono text-xs flex items-center gap-1">
 								{{ detailLog.request_id }}
-								<button class="text-gray-400 hover:text-primary-500" @click.stop="copyText(detailLog.request_id)">
+								<button class="text-gray-400 hover:text-primary-500" aria-label="复制请求 ID" @click.stop="copyText(detailLog.request_id)">
 									<Icon name="copy" size="xs" />
 								</button>
 								<button class="text-xs text-primary-500 hover:text-primary-700 ml-1" @click.stop="viewAuditLog(detailLog.request_id, detailLog.task_id || undefined)">

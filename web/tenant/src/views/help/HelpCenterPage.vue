@@ -235,6 +235,7 @@ onMounted(fetchCategories)
 						<button
 							v-if="searchQuery"
 							class="text-gray-400 hover:text-gray-600 transition-colors"
+							aria-label="清空搜索"
 							@click="clearSearch"
 						>
 							<Icon name="x" size="xs" />

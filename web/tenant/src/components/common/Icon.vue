@@ -1,6 +1,9 @@
 <template>
+	<!-- 装饰性图标一律对读屏隐藏；语义由相邻文字或按钮 aria-label 承担 -->
 	<svg
 		:class="sizeClass"
+		aria-hidden="true"
+		focusable="false"
 		fill="none"
 		viewBox="0 0 24 24"
 		stroke="currentColor"

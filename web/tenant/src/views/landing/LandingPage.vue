@@ -126,7 +126,8 @@
       </section>
 
       <!-- ---------- 实时路由可视化 ---------- -->
-      <section class="stage" aria-label="实时路由演示">
+      <!-- 装饰性演示插图（mock 数据 + 动画），对读屏整体静音，避免逐条播报假数据 -->
+      <section class="stage" aria-hidden="true">
         <div class="stage__inner">
           <div class="panel">
             <div class="panel__scan"></div>
@@ -976,7 +977,7 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 }
 .brand__name { font-size: 17px; font-weight: 700; letter-spacing: -.02em; }
 .brand__tag {
-  font-family: var(--font-mono); font-size: 10px; letter-spacing: .12em; text-transform: uppercase;
+  font-family: var(--font-mono); font-size: 12px; letter-spacing: .12em; text-transform: uppercase;
   color: var(--text-mute); padding-left: 12px; margin-left: 2px;
   border-left: 1px solid var(--panel-line);
 }
@@ -1104,7 +1105,7 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
   animation: riseIn .9s var(--ease-out) .44s backwards;
 }
-.cta-row .hint { font-family: var(--font-mono); font-size: 11px; color: var(--text-mute); margin-left: 4px; }
+.cta-row .hint { font-family: var(--font-mono); font-size: 12px; color: var(--text-mute); margin-left: 4px; }
 
 /* 一行接入代码条 */
 .snippet {
@@ -1440,7 +1441,7 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 }
 .band__label {
   flex: none;
-  font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .12em;
+  font-family: var(--font-mono); font-size: 12px; letter-spacing: .12em;
   color: var(--text-mute); text-transform: uppercase;
 }
 /* 竖分隔线：跑马灯两端的静态文字（左 Capabilities 标签 / 右版权）与
@@ -1453,14 +1454,14 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
    悬停提亮一档给出可点的暗示（与跑马灯词条同一套 hover 语言）。 */
 .band__copy {
   flex: none; white-space: nowrap;
-  font-family: var(--font-mono); font-size: 11px;
+  font-family: var(--font-mono); font-size: 12px;
   color: var(--text-mute); letter-spacing: .01em;
   text-decoration: none; transition: color .25s;
 }
 .band__copy:hover { color: var(--text-dim); }
 .band__lic {
   flex: none; white-space: nowrap;
-  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .07em;
+  font-family: var(--font-mono); font-size: 12px; letter-spacing: .07em;
   color: var(--teal);
   padding: 3px 8px; border-radius: 999px;
   border: 1px solid rgba(var(--glow-a), .34);
@@ -1559,10 +1560,10 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   .stat:nth-child(3)::before { display: none; }
   .brand__tag { display: none; }
   .toast { right: 10px; left: 10px; bottom: 118px; justify-content: center; }
-  .snippet { font-size: 11.5px; }
+  .snippet { font-size: 12px; }
   /* 更窄时 Capabilities 标签也撤掉，版权 + 跑马灯并排 */
   .band__label { display: none; }
-  .band__copy { font-size: 10.5px; }
+  .band__copy { font-size: 12px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

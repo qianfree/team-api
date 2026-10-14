@@ -55,7 +55,7 @@ const emit = defineEmits<{ close: [] }>()
 				<!-- Header -->
 				<div class="modal-header">
 					<h3 class="modal-title">{{ title || '协议详情' }}</h3>
-					<button class="btn-icon rounded-lg p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors" @click="emit('close')">
+					<button class="btn-icon rounded-lg p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors" aria-label="关闭" @click="emit('close')">
 						<Icon name="x" size="sm" />
 					</button>
 				</div>

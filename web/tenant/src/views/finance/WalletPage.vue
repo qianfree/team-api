@@ -513,7 +513,7 @@ onBeforeUnmount(() => {
 					<p class="text-sm font-semibold">充值成功</p>
 					<p class="text-xs opacity-80 mt-0.5">余额已更新，请查看钱包余额</p>
 				</div>
-				<button class="opacity-60 hover:opacity-100 transition-opacity p-1" @click="payResult = ''">
+				<button class="opacity-60 hover:opacity-100 transition-opacity p-1" aria-label="关闭支付结果提示" @click="payResult = ''">
 					<Icon name="x" size="sm" />
 				</button>
 			</div>
@@ -525,7 +525,7 @@ onBeforeUnmount(() => {
 					<p class="text-sm font-semibold">支付未完成</p>
 					<p class="text-xs opacity-80 mt-0.5">如果已扣款请联系客服处理</p>
 				</div>
-				<button class="opacity-60 hover:opacity-100 transition-opacity p-1" @click="payResult = ''">
+				<button class="opacity-60 hover:opacity-100 transition-opacity p-1" aria-label="关闭支付结果提示" @click="payResult = ''">
 					<Icon name="x" size="sm" />
 				</button>
 			</div>
@@ -537,7 +537,7 @@ onBeforeUnmount(() => {
 					<p class="text-sm font-semibold">支付结果确认中</p>
 					<p class="text-xs opacity-80 mt-0.5">正在等待到账，余额会在确认后自动更新</p>
 				</div>
-				<button class="opacity-60 hover:opacity-100 transition-opacity p-1" @click="payResult = ''">
+				<button class="opacity-60 hover:opacity-100 transition-opacity p-1" aria-label="关闭支付结果提示" @click="payResult = ''">
 					<Icon name="x" size="sm" />
 				</button>
 			</div>

@@ -40,6 +40,7 @@ function dismiss() {
 		<button
 			@click="dismiss"
 			class="absolute right-3 top-1/2 -translate-y-1/2 flex h-6 w-6 items-center justify-center rounded-lg text-amber-100 hover:text-white hover:bg-amber-600/50 transition-colors"
+			aria-label="关闭维护提示"
 		>
 			<Icon name="x" size="sm" />
 		</button>

@@ -41,6 +41,15 @@ function formatCost(value: number): string {
 
 const totalCost = computed(() => props.data.reduce((sum, item) => sum + Number(item.total_cost || 0), 0))
 
+// canvas 对读屏不可见，右侧列表可读，环图本体用一句话概要补充
+const chartSummary = computed(() => {
+	if (props.data.length === 0) return '模型费用占比：暂无数据'
+	const sorted = [...props.data].sort((a, b) => Number(b.total_cost || 0) - Number(a.total_cost || 0))
+	const top = sorted[0]
+	const topPercent = totalCost.value > 0 ? ((Number(top.total_cost) / totalCost.value) * 100).toFixed(1) : '0'
+	return `模型费用占比：共 ${props.data.length} 个模型，合计 ${formatCost(totalCost.value)}，费用最高的是 ${top.model_name}（${topPercent}%）`
+})
+
 const chartData = computed<ChartData<'doughnut'>>(() => ({
 	labels: props.data.map((item) => item.model_name),
 	datasets: [{
@@ -96,10 +105,11 @@ const modelList = computed(() =>
 			<Icon name="more" size="md" class="text-slate-400" />
 		</div>
 
-		<div v-if="loading" class="flex h-[300px] items-center justify-center">
+		<div v-if="loading" class="flex h-[300px] items-center justify-center" role="status" aria-live="polite">
 			<div class="spinner h-8 w-8 text-primary-500"></div>
+			<span class="sr-only">加载中</span>
 		</div>
-		<div v-else-if="data.length === 0" class="flex h-[300px] flex-col items-center justify-center text-slate-400">
+		<div v-else-if="data.length === 0" class="flex h-[300px] flex-col items-center justify-center text-slate-400" role="status">
 			<div class="flex h-14 w-14 items-center justify-center rounded-2xl bg-violet-50 text-violet-400">
 				<Icon name="chart" size="lg" />
 			</div>
@@ -108,7 +118,7 @@ const modelList = computed(() =>
 		</div>
 		<!-- 左环右列：卡片高度由环图决定，列表超出部分在卡内滚动，不再撑长整张卡 -->
 		<div v-else class="flex flex-col items-center gap-4 sm:flex-row sm:items-start sm:gap-5">
-			<div class="relative h-44 w-44 flex-shrink-0 sm:h-40 sm:w-40 xl:h-44 xl:w-44">
+			<div class="relative h-44 w-44 flex-shrink-0 sm:h-40 sm:w-40 xl:h-44 xl:w-44" role="img" :aria-label="chartSummary">
 				<Doughnut :data="chartData" :options="chartOptions" />
 				<div class="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
 					<span class="text-[11px] text-slate-400">总费用</span>
