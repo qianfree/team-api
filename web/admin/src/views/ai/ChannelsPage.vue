@@ -2,13 +2,14 @@
 import { ref, reactive, onMounted, h } from 'vue'
 import { useRouter } from 'vue-router'
 import { Tag, Button, Space, Popconfirm, Message, Radio, InputNumber, Select, Tooltip } from '@arco-design/web-vue'
-import { IconInfoCircle } from '@arco-design/web-vue/es/icon'
+import { IconInfoCircle, IconPoweroff, IconPlayArrow, IconSync, IconThunderbolt, IconEye, IconDelete } from '@arco-design/web-vue/es/icon'
 import type { TableColumnData } from '@arco-design/web-vue'
 import type { FormInstance } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
+import ChannelModelTestModal from '@/components/ChannelModelTestModal.vue'
 import { useExport } from '@/composables/useExport'
 import { hasPermission } from '@/utils/permission'
 import { providerTypeOptions, providerTypeName, filterProviderOption } from '@/constants/channel'
@@ -65,6 +66,15 @@ function healthColor(score: number | null | undefined) {
 
 function openDetail(row: any) {
   router.push({ name: 'AdminChannelDetail', params: { id: row.id } })
+}
+
+// === 渠道模型快捷检测（不进详情页，弹窗内逐模型发起测试） ===
+const showChannelTest = ref(false)
+const testTarget = ref<any>(null)
+
+function openChannelTest(row: any) {
+  testTarget.value = row
+  showChannelTest.value = true
 }
 
 const columns: TableColumnData[] = [
@@ -165,7 +175,9 @@ const columns: TableColumnData[] = [
     },
   },
   { title: '创建时间', dataIndex: 'created_at', width: 170 },  {
-    title: '操作', dataIndex: 'actions', width: 300, fixed: 'right',
+    // 操作列图标化：文字按钮占宽过多，改为图标 + tooltip（悬浮显示语义）；
+    // 颜色语义保留——禁用橙 / 启用绿 / 删除红
+    title: '操作', dataIndex: 'actions', width: 200, fixed: 'right',
     render({ record }) {
       const isActive = record.status === 'active'
       const action = isActive ? '禁用' : '启用'
@@ -175,23 +187,39 @@ const columns: TableColumnData[] = [
           ? h(Popconfirm, {
               content: `确定${action}该渠道？`,
               onOk: () => toggleStatus(record),
-            }, () => h(Button, {
+            }, () => h(Tooltip, { content: action }, () => h(Button, {
               size: 'small',
-              status: isActive ? 'normal' : 'success',
-            }, () => action))
+              type: 'text',
+              status: isActive ? 'warning' : 'success',
+              icon: h(isActive ? IconPoweroff : IconPlayArrow),
+            })))
           : null,
         hasPermission('channel:edit')
           ? h(Popconfirm, {
               content: '确定重置该渠道健康度？',
               onOk: () => resetHealth(record),
-            }, () => h(Button, {
+            }, () => h(Tooltip, { content: '重置健康度' }, () => h(Button, {
               size: 'small',
-              status: 'warning',
-            }, () => '重置健康度'))
+              type: 'text',
+              icon: h(IconSync),
+            })))
           : null,
-        h(Button, { size: 'small', type: 'primary', onClick: () => openDetail(record) }, () => '详情'),
+        h(Tooltip, { content: '模型检测' }, () => h(Button, {
+          size: 'small',
+          type: 'text',
+          icon: h(IconThunderbolt),
+          onClick: () => openChannelTest(record),
+        })),
+        h(Tooltip, { content: '详情' }, () => h(Button, {
+          size: 'small',
+          type: 'text',
+          icon: h(IconEye),
+          onClick: () => openDetail(record),
+        })),
         hasPermission('channel:delete')
-          ? h(Popconfirm, { content: '确定删除该渠道？', onOk: () => deleteChannel(record) }, () => h(Button, { size: 'small', status: 'danger' }, () => '删除'))
+          ? h(Popconfirm, { content: '确定删除该渠道？', onOk: () => deleteChannel(record) }, () =>
+              h(Tooltip, { content: '删除' }, () => h(Button, { size: 'small', type: 'text', status: 'danger', icon: h(IconDelete) })),
+            )
           : null,
       ].filter(Boolean)
       return h(Space, { size: 4 }, () => nodes)
@@ -515,7 +543,7 @@ const { exporting, exportFile } = useExport({
         :columns="columns"
         :data="data"
         :loading="loading"
-        :scroll="{ x: 1400 }"
+        :scroll="{ x: 1300 }"
         :stripe="true"
         row-key="id"
         card-title-key="name"
@@ -604,6 +632,13 @@ const { exporting, exportFile } = useExport({
         <AFormItem label="备注"><AInput v-model="form.remark" type="textarea" :auto-size="{ minRows: 2, maxRows: 4 }" placeholder="备注（选填）" /></AFormItem>
       </AForm>
     </AModal>
+
+    <!-- 渠道模型检测弹窗（行「检测」按钮入口） -->
+    <ChannelModelTestModal
+      v-model:visible="showChannelTest"
+      :channel-id="testTarget?.id"
+      :channel-name="testTarget?.name"
+    />
 
     <!-- OAuth Dialog -->
     <AModal v-model:visible="showOAuthDialog" title="官方渠道 OAuth 授权" :width="560" :footer="false" :mask-closable="false">

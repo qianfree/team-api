@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, h, nextTick, onBeforeUnmount } from 'vue'
+import { ref, reactive, computed, onMounted, h, nextTick, onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Tag, Button, Popconfirm, Message, RadioGroup, Radio, InputNumber, Input, Switch, DatePicker } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import request from '@/utils/request'
+import ChannelModelTestModal from '@/components/ChannelModelTestModal.vue'
 import { providerTypeOptions, filterProviderOption } from '@/constants/channel'
 import * as echarts from 'echarts'
 
@@ -214,9 +215,14 @@ const abilityColumns: TableColumnData[] = [
 
   // 操作列（固定在最右侧）
   {
-    title: '操作', dataIndex: 'actions', width: 150, fixed: 'right',
+    title: '操作', dataIndex: 'actions', width: 210, fixed: 'right',
     render({ record }) {
       return h('div', { style: 'display: flex; gap: 8px' }, [
+        h(Button, {
+          size: 'mini',
+          type: 'outline',
+          onClick: () => openModelTest(record.model_name),
+        }, () => '测试'),
         h(Button, {
           size: 'mini',
           onClick: () => handleResetModelHealth(record),
@@ -229,6 +235,20 @@ const abilityColumns: TableColumnData[] = [
     },
   },
 ]
+
+// === 模型能力行快捷测试（共用 ChannelModelTestModal，打开即自动测试该模型） ===
+const showModelTestModal = ref(false)
+const autoTestModel = ref<string | null>(null)
+
+function openModelTest(modelName: string) {
+  autoTestModel.value = modelName
+  showModelTestModal.value = true
+}
+
+// 关闭弹窗时清除自动测试目标，避免下次打开误触发
+watch(showModelTestModal, (v) => {
+  if (!v) autoTestModel.value = null
+})
 
 async function fetchAbilities() {
   abilitiesLoading.value = true
@@ -1571,6 +1591,14 @@ function formatHeaders(headers: Record<string, string>): string {
         </AFormItem>
       </AForm>
     </AModal>
+
+    <!-- 模型能力行快捷测试弹窗（行「测试」按钮入口，打开即自动测试对应模型） -->
+    <ChannelModelTestModal
+      v-model:visible="showModelTestModal"
+      :channel-id="channelId"
+      :channel-name="detail?.name"
+      :auto-test-model="autoTestModel"
+    />
 
     <!-- Debug Log Detail Drawer -->
     <ADrawer v-model:visible="showDebugDetail" title="调试日志详情" :width="880" unmount-on-close>
