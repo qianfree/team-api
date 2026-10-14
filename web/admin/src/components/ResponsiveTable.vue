@@ -151,8 +151,13 @@ function renderCell(row: any, col: TableColumnData | null): VNodeChild {
 // 桌面端整行点击（避开按钮/链接等可交互元素）
 function onRowClick(record: any, ev: MouseEvent) {
   if (!props.rowClick) return
+  // 拖选/双击选中了文本（如复制 Base URL、渠道名）时不触发行点击导航；
+  // 普通单击的选区是折叠的（isCollapsed），不受影响
+  const selection = window.getSelection()
+  if (selection && !selection.isCollapsed && selection.toString()) return
   const target = ev.target as HTMLElement | null
-  if (target?.closest('button, a, input, select, textarea, [role="button"]')) return
+  // Arco Select 触发器 / InputNumber 步进按钮等非原生控件也要排除，避免行内编辑误触行点击
+  if (target?.closest('button, a, input, select, textarea, [role="button"], .arco-select-view, .arco-input-number')) return
   props.rowClick(record)
 }
 </script>
@@ -174,7 +179,7 @@ function onRowClick(record: any, ev: MouseEvent) {
     :selected-keys="selectedKeys"
     :row-class="rowClassHandler"
     @selection-change="(keys: any) => emit('selection-change', keys)"
-    @row-click="({ record, ev }: { record: any; ev: MouseEvent }) => onRowClick(record, ev)"
+    @row-click="(record: any, ev: MouseEvent) => onRowClick(record, ev)"
   >
     <template v-for="name in tableSlotNames" :key="name" #[name]="slotProps">
       <slot :name="name" v-bind="slotProps ?? {}" />

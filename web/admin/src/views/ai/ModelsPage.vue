@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, h } from 'vue'
 import {
-  Tag, Button, Space, Popconfirm, Message, Tooltip, Switch,
+  Tag, Button, Space, Popconfirm, Message, Tooltip,
 } from '@arco-design/web-vue'
 import type { TableColumnData, FormInstance } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
@@ -261,30 +261,6 @@ const columns: TableColumnData[] = [
     },
   },
   {
-    title: '广场位',
-    dataIndex: 'showcase',
-    width: 120,
-    render({ record }) {
-      const flagRow = (label: string, field: 'is_recommended' | 'is_new') =>
-        h('div', { style: 'display:flex;align-items:center;gap:6px;height:22px' }, [
-          h(Switch, {
-            size: 'small',
-            modelValue: !!record[field],
-            'onUpdate:modelValue': (v: any) => toggleShowcaseFlag(record, field, !!v),
-          }),
-          h('span', { style: 'font-size:12px;color:var(--color-text-3)' }, label),
-        ])
-      const orderLabel = record.is_recommended && record.display_order
-        ? `排序 ${record.display_order}`
-        : ''
-      return h('div', { style: 'display:flex;flex-direction:column;padding:2px 0' }, [
-        flagRow(record.is_recommended && record.display_order ? `推荐 · ${orderLabel}` : '推荐', 'is_recommended'),
-        flagRow('上新', 'is_new'),
-      ])
-    },
-  },
-
-  {
     title: '可用渠道',
     dataIndex: 'channels',
     width: 180,
@@ -395,17 +371,6 @@ function openEdit(row: any) {
   form.is_new = !!row.is_new
   form.display_order = row.display_order || 0
   showModal.value = true
-}
-
-// 广场展示位行内开关：只传单个字段（后端指针语义局部更新，不连带清零规格）
-async function toggleShowcaseFlag(row: any, field: 'is_recommended' | 'is_new', value: boolean) {
-  try {
-    await request.put(`/admin/models/${row.id}`, { [field]: value })
-    row[field] = value
-    Message.success(value ? '已开启' : '已关闭')
-  } catch {
-    // 拦截器已统一提示，本地行数据保持原值（开关自动回弹）
-  }
 }
 
 async function handleSubmit(done: () => void) {
@@ -769,7 +734,7 @@ function resetImport() {
         :columns="columns"
         :data="data"
         :loading="loading"
-        :scroll="{ x: 1600 }"
+        :scroll="{ x: 1500 }"
         :stripe="true"
         row-key="id"
         :row-selection="{ type: 'checkbox', showCheckedAll: true }"

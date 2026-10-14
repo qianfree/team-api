@@ -2,7 +2,7 @@
 import { ref, reactive, onMounted, h } from 'vue'
 import { useRouter } from 'vue-router'
 import { Tag, Button, Space, Popconfirm, Message, Radio, InputNumber, Select, Tooltip } from '@arco-design/web-vue'
-import { IconInfoCircle, IconPoweroff, IconPlayArrow, IconSync, IconThunderbolt, IconEye, IconDelete } from '@arco-design/web-vue/es/icon'
+import { IconInfoCircle } from '@arco-design/web-vue/es/icon'
 import type { TableColumnData } from '@arco-design/web-vue'
 import type { FormInstance } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
@@ -36,8 +36,6 @@ const statusOptions = [
   { label: '全部状态', value: '' },
   { label: '启用', value: 'active' }, { label: '禁用', value: 'disabled' }, { label: '测试中', value: 'testing' },
 ]
-const statusTagColor: Record<string, string> = { active: 'green', disabled: 'orangered', testing: 'arcoblue' }
-const statusLabel: Record<string, string> = { active: '启用', disabled: '禁用', testing: '测试中' }
 const breakerTagColor: Record<number, string> = { 0: 'green', 1: 'red', 2: 'orange' }
 const breakerLabel: Record<number, string> = { 0: '正常', 1: '熔断', 2: '半开' }
 
@@ -88,10 +86,6 @@ const columns: TableColumnData[] = [
     },
   },
   { title: 'Base URL', dataIndex: 'base_url', width: 250, ellipsis: true },
-  {
-    title: '状态', dataIndex: 'status', width: 80,
-    render({ record }) { return h(Tag, { color: statusTagColor[record.status], size: 'small' }, () => statusLabel[record.status] || record.status) },
-  },
   {
     title: '层级', dataIndex: 'tier', width: 120,
     render({ record }) {
@@ -175,9 +169,8 @@ const columns: TableColumnData[] = [
     },
   },
   { title: '创建时间', dataIndex: 'created_at', width: 170 },  {
-    // 操作列图标化：文字按钮占宽过多，改为图标 + tooltip（悬浮显示语义）；
-    // 颜色语义保留——禁用橙 / 启用绿 / 删除红
-    title: '操作', dataIndex: 'actions', width: 200, fixed: 'right',
+    // 启停按钮文字即状态：显示「禁用」= 当前启用，显示「启用」= 当前禁用/测试中
+    title: '操作', dataIndex: 'actions', width: 260, fixed: 'right',
     render({ record }) {
       const isActive = record.status === 'active'
       const action = isActive ? '禁用' : '启用'
@@ -187,39 +180,32 @@ const columns: TableColumnData[] = [
           ? h(Popconfirm, {
               content: `确定${action}该渠道？`,
               onOk: () => toggleStatus(record),
-            }, () => h(Tooltip, { content: action }, () => h(Button, {
+            }, () => h(Button, {
               size: 'small',
-              type: 'text',
-              status: isActive ? 'warning' : 'success',
-              icon: h(isActive ? IconPoweroff : IconPlayArrow),
-            })))
+              status: isActive ? 'normal' : 'success',
+            }, () => action))
           : null,
         hasPermission('channel:edit')
           ? h(Popconfirm, {
               content: '确定重置该渠道健康度？',
               onOk: () => resetHealth(record),
-            }, () => h(Tooltip, { content: '重置健康度' }, () => h(Button, {
+            }, () => h(Button, {
               size: 'small',
-              type: 'text',
-              icon: h(IconSync),
-            })))
+              status: 'warning',
+            }, () => '恢复'))
           : null,
-        h(Tooltip, { content: '模型检测' }, () => h(Button, {
+        h(Button, {
           size: 'small',
-          type: 'text',
-          icon: h(IconThunderbolt),
           onClick: () => openChannelTest(record),
-        })),
-        h(Tooltip, { content: '详情' }, () => h(Button, {
+        }, () => '检测'),
+        h(Button, {
           size: 'small',
-          type: 'text',
-          icon: h(IconEye),
+          type: 'primary',
           onClick: () => openDetail(record),
-        })),
+        }, () => '详情'),
         hasPermission('channel:delete')
           ? h(Popconfirm, { content: '确定删除该渠道？', onOk: () => deleteChannel(record) }, () =>
-              h(Tooltip, { content: '删除' }, () => h(Button, { size: 'small', type: 'text', status: 'danger', icon: h(IconDelete) })),
-            )
+              h(Button, { size: 'small', status: 'danger' }, () => '删除'))
           : null,
       ].filter(Boolean)
       return h(Space, { size: 4 }, () => nodes)
@@ -546,10 +532,11 @@ const { exporting, exportFile } = useExport({
         :scroll="{ x: 1300 }"
         :stripe="true"
         row-key="id"
+        :row-click="openDetail"
         card-title-key="name"
         card-subtitle-key="base_url"
-        card-badge-key="status"
-        :card-fields="['type', 'tier', 'health_score', 'breaker_state', 'weight']"
+        card-badge-key="tier"
+        :card-fields="['type', 'health_score', 'breaker_state', 'weight']"
       />
       <div class="table-footer">
         <TableStats :total="pagination.total" />
