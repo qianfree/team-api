@@ -104,7 +104,7 @@ function onKeydown(event: KeyboardEvent): void {
 	display: flex;
 	flex-direction: column;
 	height: 100%;
-	padding: 14px;
+	padding: 18px;
 	background: var(--mp-panel);
 	border: 1px solid var(--mp-line);
 	border-radius: 12px;
@@ -129,7 +129,7 @@ function onKeydown(event: KeyboardEvent): void {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	font-size: 15px;
+	font-size: 16px;
 	font-weight: 600;
 	line-height: 1.4;
 	color: var(--mp-text);
@@ -152,7 +152,7 @@ function onKeydown(event: KeyboardEvent): void {
 	text-overflow: ellipsis;
 	white-space: nowrap;
 	font-family: var(--mp-font-mono);
-	font-size: 11px;
+	font-size: 12px;
 	color: var(--mp-text-mute);
 	transition: color 0.15s ease;
 }
@@ -174,9 +174,9 @@ function onKeydown(event: KeyboardEvent): void {
 /* 状态徽章：至多一枚（折扣玫红 / NEW 靛蓝 / 推荐琥珀） */
 .mp-badge {
 	flex-shrink: 0;
-	padding: 1px 7px;
+	padding: 1px 8px;
 	border-radius: 999px;
-	font-size: 11px;
+	font-size: 12px;
 	font-weight: 600;
 	line-height: 1.5;
 	white-space: nowrap;
@@ -200,11 +200,11 @@ function onKeydown(event: KeyboardEvent): void {
 	border: 1px solid rgba(var(--mp-rec-rgb), 0.3);
 }
 
-/* 价格锚：20px/700 等宽 tabular */
+/* 价格锚：22px/700 等宽 tabular */
 .mp-price {
 	font-family: var(--mp-font-mono);
 	font-variant-numeric: tabular-nums;
-	font-size: 20px;
+	font-size: 22px;
 	font-weight: 700;
 	line-height: 1.2;
 	color: var(--mp-text);
@@ -223,14 +223,14 @@ function onKeydown(event: KeyboardEvent): void {
 .mp-unit {
 	display: block;
 	margin-top: 1px;
-	font-size: 11px;
+	font-size: 12px;
 	color: var(--mp-text-mute);
 	white-space: nowrap;
 }
 
 .mp-time-flag {
 	flex-shrink: 0;
-	margin-bottom: 14px;
+	margin-bottom: 16px;
 	padding: 1px 6px;
 	border-radius: 6px;
 	border: 1px solid var(--mp-line);
@@ -258,9 +258,9 @@ function onKeydown(event: KeyboardEvent): void {
 	flex-wrap: wrap;
 	align-items: center;
 	gap: 4px 6px;
-	margin-top: 8px;
-	min-height: 22px;
-	font-size: 11px;
+	margin-top: 10px;
+	min-height: 24px;
+	font-size: 12px;
 }
 
 .mp-dot {

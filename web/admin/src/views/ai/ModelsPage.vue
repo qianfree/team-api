@@ -221,8 +221,6 @@ const columns: TableColumnData[] = [
       return h(Tag, { color: vendorTagColor[record.vendor] || 'gray', size: 'small' }, () => vendorLabelMap[record.vendor] || record.vendor)
     },
   },
-  { title: '上下文', dataIndex: 'max_context_tokens', width: 100 },
-  { title: '输出上限', dataIndex: 'max_output_tokens', width: 100 },
   {
     title: '定价',
     dataIndex: 'pricing',
@@ -246,19 +244,6 @@ const columns: TableColumnData[] = [
           `${formatBilling(record.input_price ?? 0, 2)}/${formatBilling(record.output_price ?? 0, 2)}`))
       }
       return h('span', { style: 'display: inline-flex; gap: 4px; align-items: center;' }, tags)
-    },
-  },
-  {
-    title: '弃用信息',
-    dataIndex: 'deprecation',
-    width: 180,
-    ellipsis: true,
-    render({ record }) {
-      if (record.status !== 'deprecated') return null
-      const parts: string[] = []
-      if (record.deprecated_at) parts.push(`弃用于 ${record.deprecated_at}`)
-      if (record.replacement_model) parts.push(`替代: ${record.replacement_model}`)
-      return h('span', { style: 'font-size: 12px; color: var(--color-text-3); line-height: 1.4;' }, parts.join('\n'))
     },
   },
   {

@@ -994,8 +994,8 @@ useSeo({
 /* ── 网格：动态列数（auto-fill 保末页不拉长条） ── */
 .mp-grid {
 	display: grid;
-	gap: 14px;
-	grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+	gap: 16px;
+	grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
 }
 
 .mp-grid-in {
@@ -1015,7 +1015,7 @@ useSeo({
 
 /* ── 骨架 / 空态 ── */
 .mp-skeleton-card {
-	padding: 14px;
+	padding: 18px;
 	border: 1px solid var(--mp-line);
 	border-radius: 12px;
 	background: var(--mp-panel);
