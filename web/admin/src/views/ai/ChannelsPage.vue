@@ -185,15 +185,6 @@ const columns: TableColumnData[] = [
               status: isActive ? 'normal' : 'success',
             }, () => action))
           : null,
-        hasPermission('channel:edit')
-          ? h(Popconfirm, {
-              content: '确定重置该渠道健康度？',
-              onOk: () => resetHealth(record),
-            }, () => h(Button, {
-              size: 'small',
-              status: 'warning',
-            }, () => '恢复'))
-          : null,
         h(Button, {
           size: 'small',
           onClick: () => openChannelTest(record),
@@ -203,6 +194,15 @@ const columns: TableColumnData[] = [
           type: 'primary',
           onClick: () => openDetail(record),
         }, () => '详情'),
+        hasPermission('channel:edit')
+          ? h(Popconfirm, {
+              content: '确定重置该渠道健康度？',
+              onOk: () => resetHealth(record),
+            }, () => h(Button, {
+              size: 'small',
+              status: 'warning',
+            }, () => '恢复'))
+          : null,
         hasPermission('channel:delete')
           ? h(Popconfirm, { content: '确定删除该渠道？', onOk: () => deleteChannel(record) }, () =>
               h(Button, { size: 'small', status: 'danger' }, () => '删除'))
