@@ -5,8 +5,10 @@ import { Message } from '@arco-design/web-vue'
 import request from '@/utils/request'
 import axios from 'axios'
 import { markSystemInitialized } from '@/router'
+import { IconGithub, IconStar } from '@arco-design/web-vue/es/icon'
 
 const router = useRouter()
+const repoUrl = 'https://github.com/qianfree/team-api'
 const loading = ref(false)
 const checking = ref(true)
 
@@ -100,6 +102,27 @@ async function handleSetup() {
               <div class="login-brand__feature-desc">多租户隔离，细粒度权限管控</div>
             </div>
           </div>
+        </div>
+      </div>
+
+      <div class="login-brand__star">
+        <div class="setup-star">
+          <div class="setup-star__icon">
+            <IconGithub />
+          </div>
+          <div class="setup-star__text">
+            <div class="setup-star__title">开源不易，欢迎 Star 支持</div>
+            <div class="setup-star__desc">如果这个项目对你有帮助，欢迎在 GitHub 点赞</div>
+          </div>
+          <a
+            :href="repoUrl"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="setup-star__btn"
+          >
+            <IconStar />
+            前往点赞
+          </a>
         </div>
       </div>
 
@@ -312,8 +335,90 @@ async function handleSetup() {
 
 .login-brand__footer {
   position: relative; z-index: 1;
-  margin-top: auto; padding-top: 40px;
+  padding-top: 16px;
   font-size: 13px; color: rgba(255, 255, 255, 0.3);
+}
+
+.login-brand__star {
+  position: relative;
+  z-index: 1;
+  margin-top: auto;
+  padding-top: 40px;
+}
+
+.setup-star {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.setup-star__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.setup-star__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.setup-star__title {
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.9);
+  margin-bottom: 2px;
+}
+
+.setup-star__desc {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.setup-star__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #14b8a6, #0d9488);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  box-shadow: 0 4px 12px rgba(13, 148, 136, 0.35);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.setup-star__btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(13, 148, 136, 0.45);
+}
+
+@media (max-width: 768px) {
+  .setup-star {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .setup-star__btn {
+    width: 100%;
+    justify-content: center;
+  }
 }
 
 .login-form-wrapper {

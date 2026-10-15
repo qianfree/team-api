@@ -38,6 +38,7 @@ import {
   IconUser,
   IconBook,
   IconCheckCircleFill,
+  IconInfoCircle,
 } from '@arco-design/web-vue/es/icon'
 import { useAuthStore } from '@/stores/auth'
 import { ADMIN_ROLES } from '@/utils/permission'
@@ -405,6 +406,7 @@ const ALL_MENU_GROUPS = [
       { name: 'AdminSettings', label: '系统设置', icon: IconSettings, perm: 'system:view' },
       { name: 'AdminPaymentChannels', label: '支付渠道', icon: IconIdcard, perm: 'payment:view' },
       { name: 'AdminFiles', label: '文件管理', icon: IconStorage, perm: 'file:view' },
+      { name: 'AdminAbout', label: '关于', icon: IconInfoCircle },
     ],
   },
 ]
