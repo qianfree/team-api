@@ -9,6 +9,7 @@ export interface AdminUser {
   username: string
   display_name: string
   role: string
+  totp_enabled?: boolean
 }
 
 export interface AdminRoleBrief {
@@ -191,6 +192,7 @@ export const useAuthStore = defineStore('admin-auth', () => {
         username: me.username,
         display_name: me.display_name,
         role: me.role,
+        totp_enabled: !!me.totp_enabled,
       }
       permissions.value = me.permissions ?? []
       roles.value = me.roles ?? []

@@ -520,6 +520,7 @@ func (s *sAdmin) GetMe(ctx context.Context, _ *v1.AdminMeReq) (*v1.AdminMeRes, e
 		DisplayName string `json:"display_name"`
 		Email       string `json:"email"`
 		Role        string `json:"role"`
+		TotpEnabled bool   `json:"totp_enabled"`
 	}
 	err := dao.SysAdminUsers.Ctx(ctx).Where("id", userID).Scan(&user)
 	if err = common.IgnoreScanNoRows(err); err != nil {
@@ -536,6 +537,7 @@ func (s *sAdmin) GetMe(ctx context.Context, _ *v1.AdminMeReq) (*v1.AdminMeRes, e
 		DisplayName: user.DisplayName,
 		Email:       user.Email,
 		Role:        user.Role,
+		TotpEnabled: user.TotpEnabled,
 		Permissions: perms,
 		Roles:       roles,
 	}, nil

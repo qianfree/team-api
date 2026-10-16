@@ -46,6 +46,7 @@ type AdminMeRes struct {
 	DisplayName string           `json:"display_name"`
 	Email       string           `json:"email"`
 	Role        string           `json:"role"`
+	TotpEnabled bool             `json:"totp_enabled" dc:"是否已开启两步验证（TOTP）"`
 	Permissions []string         `json:"permissions"`
 	Roles       []AdminRoleBrief `json:"roles"`
 }

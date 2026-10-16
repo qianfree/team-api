@@ -5,6 +5,7 @@ import type { FormInstance } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import request from '@/utils/request'
 import { useAuthStore } from '@/stores/auth'
+import TwoFactorCard from './twofactor/TwoFactorCard.vue'
 
 const authStore = useAuthStore()
 
@@ -47,7 +48,7 @@ async function handleChangePassword() {
 
 <template>
 	<div>
-		<PageHeader title="个人信息" description="查看账号信息和修改密码" />
+		<PageHeader title="个人信息" description="查看账号信息、修改密码与安全设置" />
 
 		<div class="profile-grid">
 			<div class="profile-card">
@@ -91,6 +92,8 @@ async function handleChangePassword() {
 						</FormItem>
 					</Form>
 				</div>
+
+				<TwoFactorCard />
 			</div>
 		</div>
 	</div>

@@ -17,16 +17,25 @@ func randomSuffix() string {
 
 func CreateTestAdminUser(t *testing.T, client *APIClient) (id int64, cleanup func()) {
 	t.Helper()
-	username := fmt.Sprintf("testuser%s", randomSuffix())
+	id, _, _, cleanup = CreateTestAdminUserWithCreds(t, client)
+	return id, cleanup
+}
+
+// CreateTestAdminUserWithCreds 创建测试管理员并返回登录凭据，
+// 供需要以该账号身份走完整登录流程的用例使用（如 2FA 生命周期测试）。
+func CreateTestAdminUserWithCreds(t *testing.T, client *APIClient) (id int64, username, password string, cleanup func()) {
+	t.Helper()
+	username = fmt.Sprintf("testuser%s", randomSuffix())
+	password = DefaultPassword
 	resp := client.Post("/api/admin/users", map[string]any{
 		"username": username,
-		"password": DefaultPassword,
+		"password": password,
 		"email":    fmt.Sprintf("%s@test.com", username),
 		"role":     "admin",
 	})
 	resp.AssertSuccess(t)
 	id = resp.GetID(t)
-	return id, func() {
+	return id, username, password, func() {
 		client.Delete(fmt.Sprintf("/api/admin/users/%d", id))
 	}
 }

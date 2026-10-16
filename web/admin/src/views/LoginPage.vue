@@ -144,7 +144,7 @@ async function handle2FAVerify() {
   }
   totpLoading.value = true
   try {
-    const res = await request.post('/api/admin/auth/2fa/verify', {
+    const res = await request.post('/admin/auth/2fa/verify', {
       provisional_token: provisionalToken.value,
       code: totpCode.value,
       device_id: getDeviceId(),

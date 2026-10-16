@@ -198,8 +198,14 @@ func Setup2FA(ctx context.Context, userType string, userID int64) (secret, uri s
 // Enable2FA enables 2FA for a user after verifying the TOTP code and password.
 // Stores the encrypted secret and hashed backup codes.
 func Enable2FA(ctx context.Context, userType string, userID int64, secret, code, password string) ([]string, error) {
+	// 失败计数闸门：绑定确认的码错/密码错提示可区分，构成无密码探测 pending
+	// secret 的 oracle，必须与登录验证共用同一失败计数
+	if Is2FABlocked(ctx, userType, userID) {
+		return nil, NewBusinessError(consts.Code2FATooManyAttempts, consts.Msg2FATooManyAttempts)
+	}
 	// Verify TOTP code
 	if !validateTOTPOnce(ctx, userType, userID, code, secret) {
+		Register2FAFailure(ctx, userType, userID)
 		return nil, NewBusinessError(10048, "验证码错误")
 	}
 
@@ -272,11 +278,16 @@ func Enable2FA(ctx context.Context, userType string, userID int64, secret, code,
 		return nil, err
 	}
 
+	Clear2FAFailures(ctx, userType, userID)
 	return plainCodes, nil
 }
 
 // Disable2FA disables 2FA for a user after verifying the provided code.
 func Disable2FA(ctx context.Context, userType string, userID int64, code string) error {
+	// 失败计数闸门：防止持有效访问令牌的攻击者暴力试码关闭他人的 2FA
+	if Is2FABlocked(ctx, userType, userID) {
+		return NewBusinessError(consts.Code2FATooManyAttempts, consts.Msg2FATooManyAttempts)
+	}
 	secret, _, err := GetUserTOTPSecret(ctx, userType, userID)
 	if err != nil {
 		return err
@@ -286,9 +297,11 @@ func Disable2FA(ctx context.Context, userType string, userID int64, code string)
 	if !validateTOTPOnce(ctx, userType, userID, code, secret) {
 		matched, err := verifyAndConsumeBackupCode(ctx, userType, userID, code)
 		if err != nil || !matched {
+			Register2FAFailure(ctx, userType, userID)
 			return NewBusinessError(10048, "验证码或恢复码错误")
 		}
 	}
+	Clear2FAFailures(ctx, userType, userID)
 
 	if userType == "admin" {
 		_, err = dao.SysAdminUsers.Ctx(ctx).Where("id", userID).Data(do.SysAdminUsers{
@@ -309,6 +322,11 @@ func Disable2FA(ctx context.Context, userType string, userID int64, code string)
 // Verify2FACode verifies a TOTP code or backup code for a user.
 // Returns true if valid. If a backup code was used, it's consumed (removed).
 func Verify2FACode(ctx context.Context, userType string, userID int64, code string) (bool, error) {
+	// 失败次数达到阈值后直接拒绝：临时令牌 5 分钟有效期内不允许对 6 位码无限穷举
+	if Is2FABlocked(ctx, userType, userID) {
+		return false, NewBusinessError(consts.Code2FATooManyAttempts, consts.Msg2FATooManyAttempts)
+	}
+
 	secret, backupCodes, err := GetUserTOTPSecret(ctx, userType, userID)
 	if err != nil {
 		return false, err
@@ -321,6 +339,7 @@ func Verify2FACode(ctx context.Context, userType string, userID int64, code stri
 		if !consumeTotpCode(ctx, userType, userID, code) {
 			return false, nil
 		}
+		Clear2FAFailures(ctx, userType, userID)
 		return true, nil
 	}
 
@@ -330,11 +349,13 @@ func Verify2FACode(ctx context.Context, userType string, userID int64, code stri
 			if verifyBackupCode(code, hashedCode) {
 				// Consume this backup code
 				_ = consumeBackupCode(ctx, userType, userID, i, backupCodes)
+				Clear2FAFailures(ctx, userType, userID)
 				return true, nil
 			}
 		}
 	}
 
+	Register2FAFailure(ctx, userType, userID)
 	return false, nil
 }
 
@@ -405,14 +426,19 @@ func GetUserTOTPSecret(ctx context.Context, userType string, userID int64) (secr
 
 // RegenerateBackupCodes generates new backup codes for a user after verifying TOTP.
 func RegenerateBackupCodes(ctx context.Context, userType string, userID int64, code string) ([]string, error) {
+	if Is2FABlocked(ctx, userType, userID) {
+		return nil, NewBusinessError(consts.Code2FATooManyAttempts, consts.Msg2FATooManyAttempts)
+	}
 	secret, _, err := GetUserTOTPSecret(ctx, userType, userID)
 	if err != nil {
 		return nil, err
 	}
 
 	if !validateTOTPOnce(ctx, userType, userID, code, secret) {
+		Register2FAFailure(ctx, userType, userID)
 		return nil, NewBusinessError(10048, "验证码错误")
 	}
+	Clear2FAFailures(ctx, userType, userID)
 
 	plainCodes, err := totp.GenerateBackupCodes(8)
 	if err != nil {
@@ -456,6 +482,52 @@ func LoginLockoutPolicy(ctx context.Context) (maxAttempts, lockoutMinutes int) {
 		lockoutMinutes = 30
 	}
 	return maxAttempts, lockoutMinutes
+}
+
+// twoFAFailWindowSeconds 2FA 验证失败计数窗口：与登录临时令牌（provisional
+// token）的 5 分钟有效期对齐。窗口内累计失败达到阈值后，该用户所有 TOTP 验证
+// 入口（登录二段验证 / enable / disable / 重新生成恢复码 / 高风险确认）一律拒绝。
+const twoFAFailWindowSeconds = 300
+
+// twoFAFailKey 失败计数键按用户维度（而非按临时令牌）：重新走密码步拿到新
+// 临时令牌也绕不过计数，封死在令牌有效期内对 6 位验证码无限穷举的路径。
+func twoFAFailKey(userType string, userID int64) string {
+	return fmt.Sprintf("2fa:fail:%s:%d", userType, userID)
+}
+
+// Is2FABlocked 判断用户是否因 2FA 验证失败次数过多被临时拒绝。
+// Redis 故障时 fail-open（与 validateTOTPOnce 的可用性优先策略一致）。
+func Is2FABlocked(ctx context.Context, userType string, userID int64) bool {
+	count, err := g.Redis().Do(ctx, "GET", twoFAFailKey(userType, userID))
+	if err != nil {
+		g.Log().Warningf(ctx, "[2FA] 失败计数读取失败: %v", err)
+		return false
+	}
+	if count.IsNil() {
+		return false
+	}
+	maxAttempts, _ := LoginLockoutPolicy(ctx)
+	return count.Int64() >= int64(maxAttempts)
+}
+
+// Register2FAFailure 记录一次 2FA 验证失败并返回是否已达阈值（blocked）。
+// 复用注册限流的 Lua 原子 INCR+EXPIRE，窗口自首次失败起算。
+func Register2FAFailure(ctx context.Context, userType string, userID int64) (blocked bool) {
+	maxAttempts, _ := LoginLockoutPolicy(ctx)
+	count, err := incrementWithExpire(ctx, twoFAFailKey(userType, userID), twoFAFailWindowSeconds)
+	if err != nil {
+		g.Log().Warningf(ctx, "[2FA] 失败计数写入失败: %v", err)
+		return false
+	}
+	return count >= int64(maxAttempts)
+}
+
+// Clear2FAFailures 验证成功后清零失败计数：合法用户手误数次后成功登录，
+// 不应因残留计数在窗口剩余时间内只剩一次尝试机会。
+func Clear2FAFailures(ctx context.Context, userType string, userID int64) {
+	if _, err := g.Redis().Do(ctx, "DEL", twoFAFailKey(userType, userID)); err != nil {
+		g.Log().Warningf(ctx, "[2FA] 失败计数清除失败: %v", err)
+	}
 }
 
 // Is2FAEnabled checks if 2FA is enabled for a user.

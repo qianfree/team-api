@@ -159,6 +159,7 @@ const (
 	CodeIpRestricted        = 10053
 	CodeHighRisk2FARequired = 10054
 	CodeNoAvailableApiKey   = 10055
+	Code2FATooManyAttempts  = 10056
 	CodeCaptchaRequired     = 10057
 	CodeCaptchaFailed       = 10058
 
@@ -317,6 +318,7 @@ const (
 	MsgTotpAlreadyEnabled  = "双因素认证已启用"
 	MsgTotpNotEnabled      = "未启用双因素认证"
 	MsgBackupCodeInvalid   = "恢复码无效"
+	Msg2FATooManyAttempts  = "验证码错误次数过多，请重新登录"
 	MsgTurnstileFailed     = "人机验证失败"
 	MsgIpRestricted        = "IP 地址不在白名单中"
 	MsgHighRisk2FARequired = "高风险操作需要二次验证"
