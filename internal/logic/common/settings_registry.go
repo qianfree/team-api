@@ -185,6 +185,12 @@ var Registry = []SettingDef{
 	{Key: "pprof_port", Type: SettingTypeInt, Default: "0", Category: "performance",
 		Label: "pprof 端口", Validation: "min:0,max:65535",
 		Description: "性能分析端口，仅监听本机回环（127.0.0.1），0=关闭，重启后生效"},
+	{Key: "resource_memory_limit_percent", Type: SettingTypeInt, Default: "90", Category: "performance",
+		Label: "内存占用上限(%)", Validation: "min:0,max:100",
+		Description: "服务器内存占用超过该百分比时，新进大模型代理请求在计费前被拒绝（503 + Retry-After），防止服务器被拖垮；0=不启用，保存后即时生效"},
+	{Key: "resource_disk_limit_percent", Type: SettingTypeInt, Default: "95", Category: "performance",
+		Label: "磁盘占用上限(%)", Validation: "min:0,max:100",
+		Description: "服务器磁盘占用超过该百分比时行为同上（检测路径为根分区）；0=不启用，保存后即时生效"},
 
 	// ── Content Filter ──
 	{Key: "content_filter_mode", Type: SettingTypeString, Default: "off", Category: "content_filter",

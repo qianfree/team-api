@@ -72,6 +72,19 @@ function set(key: string, v: number | undefined): void {
 			</div>
 		</div>
 
+		<!-- 服务器资源保护 -->
+		<div class="group">
+			<div class="group-title">服务器资源保护</div>
+			<div class="compact-row">
+				<label>内存占用上限(%)</label>
+				<AInputNumber :model-value="num('resource_memory_limit_percent')" @change="(v: number | undefined) => set('resource_memory_limit_percent', v)" :min="0" :max="100" />
+			</div>
+			<div class="compact-row">
+				<label>磁盘占用上限(%)</label>
+				<AInputNumber :model-value="num('resource_disk_limit_percent')" @change="(v: number | undefined) => set('resource_disk_limit_percent', v)" :min="0" :max="100" />
+			</div>
+		</div>
+
 		<!-- 调试 -->
 		<div class="group">
 			<div class="group-title">调试</div>
