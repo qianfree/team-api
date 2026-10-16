@@ -52,6 +52,7 @@ type TenantProfileRes struct {
 	DisplayName string `json:"display_name"`
 	Role        string `json:"role"`
 	Status      string `json:"status"`
+	TotpEnabled bool   `json:"totp_enabled" dc:"是否已开启两步验证（TOTP）"`
 	CreatedAt   string `json:"created_at"`
 }
 

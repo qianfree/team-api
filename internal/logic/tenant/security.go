@@ -33,11 +33,20 @@ func (s *sTenant) Verify2FA(ctx context.Context, req *v1.Tenant2FAVerifyReq) (*v
 		return nil, common.NewBusinessError(consts.CodeUnauthorized, "令牌类型不匹配")
 	}
 
+	// 提前提取请求上下文信息：验证码错误的失败路径同样要写登录历史
+	httpReq := g.RequestFromCtx(ctx)
+	ipAddress := httpReq.GetClientIp()
+	ua := httpReq.Header.Get("User-Agent")
+	deviceFP := common.DeviceFingerprint(req.DeviceId, ua)
+
 	valid, err := common.Verify2FACode(ctx, "tenant", claims.UserID, req.Code)
 	if err != nil {
 		return nil, err
 	}
 	if !valid {
+		// 审计补全：2FA 步失败此前不入登录历史，造成租户登录审计空洞
+		// （失败计数已在 common.Verify2FACode 内完成，此处只补审计记录）
+		_ = common.RecordLoginHistory(ctx, "tenant", claims.UserID, claims.TenantID, "totp", ipAddress, ua, deviceFP, false, "验证码错误")
 		return nil, common.NewBusinessError(consts.CodeTotpInvalid, consts.MsgTotpInvalid)
 	}
 
@@ -59,7 +68,6 @@ func (s *sTenant) Verify2FA(ctx context.Context, req *v1.Tenant2FAVerifyReq) (*v
 	}
 	refreshTokenHash := common.HashRefreshToken(refreshToken)
 
-	ipAddress := g.RequestFromCtx(ctx).GetClientIp()
 	deviceInfo := common.ExtractDeviceInfo(ctx)
 
 	jti := common.GenerateJti()
@@ -79,8 +87,6 @@ func (s *sTenant) Verify2FA(ctx context.Context, req *v1.Tenant2FAVerifyReq) (*v
 		LastLoginIp: ipAddress,
 	}).Update()
 
-	ua := g.RequestFromCtx(ctx).Header.Get("User-Agent")
-	deviceFP := common.DeviceFingerprint(req.DeviceId, ua)
 	_ = common.RecordLoginHistory(ctx, "tenant", user.Id, user.TenantId, "totp", ipAddress, ua, deviceFP, true, "")
 
 	// Get tenant info

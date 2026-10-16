@@ -25,6 +25,7 @@
     "marked": "^18.0.3",
     "naive-ui": "^2.44.1",
     "pinia": "^3.0.4",
+    "qrcode-generator": "^2.0.4",
     "tailwindcss": "^4.2.2",
     "vue": "^3.5.32",
     "vue-chartjs": "^5.3.3",

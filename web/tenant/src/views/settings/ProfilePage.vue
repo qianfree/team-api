@@ -5,6 +5,7 @@ import Icon from '@/components/common/Icon.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
 import request from '@/utils/request'
 import { usePublicSettings } from '@/composables/usePublicSettings'
+import TwoFactorCard from './twofactor/TwoFactorCard.vue'
 
 const loading = ref(false)
 const userInfo = ref<any>(null)
@@ -446,6 +447,9 @@ async function handleOAuthUnlink(provider: string) {
 			</div>
 		</div>
 
+
+		<!-- Two-Factor Authentication Card -->
+		<TwoFactorCard v-if="userInfo" :enabled="!!userInfo.totp_enabled" @changed="fetchProfile" />
 
 		<!-- OAuth Linked Accounts Card -->
 		<div v-if="hasOAuthEnabled" class="card">

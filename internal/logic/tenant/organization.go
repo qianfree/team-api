@@ -257,6 +257,7 @@ func (s *sTenant) GetProfile(ctx context.Context, req *v1.TenantProfileReq) (*v1
 		DisplayName string `json:"display_name"`
 		Role        string `json:"role"`
 		Status      string `json:"status"`
+		TotpEnabled bool   `json:"totp_enabled"`
 		CreatedAt   string `json:"created_at"`
 	}
 	err := dao.TntUsers.Ctx(ctx).
@@ -275,6 +276,7 @@ func (s *sTenant) GetProfile(ctx context.Context, req *v1.TenantProfileReq) (*v1
 		DisplayName: user.DisplayName,
 		Role:        user.Role,
 		Status:      user.Status,
+		TotpEnabled: user.TotpEnabled,
 		CreatedAt:   user.CreatedAt,
 	}, nil
 }
