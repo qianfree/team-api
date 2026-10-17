@@ -110,6 +110,9 @@ func (s *sTenant) Verify2FA(ctx context.Context, req *v1.Tenant2FAVerifyReq) (*v
 	res.Tenant.ID = tenant.Id
 	res.Tenant.Name = tenant.Name
 	res.Tenant.Code = tenant.Code
+
+	// 会话签发成功，验证码至此才算消耗（校验阶段不消耗，见 common.Verify2FACode）
+	common.ConsumeTOTPCode(ctx, "tenant", claims.UserID, req.Code)
 	return res, nil
 }
 

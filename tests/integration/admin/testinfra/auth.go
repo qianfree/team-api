@@ -40,6 +40,17 @@ func Authenticate(t *testing.T) *LoginResult {
 
 func AuthenticateWithCreds(t *testing.T, username, password string) *LoginResult {
 	t.Helper()
+	result := LoginWithCreds(t, username, password)
+	if result.TotpRequired {
+		t.Fatal("admin user has 2FA enabled, cannot auto-login for tests")
+	}
+	return result
+}
+
+// LoginWithCreds 走完整登录流程并原样返回结果（含 totp_required 二段式分支），
+// 供 2FA 生命周期等需要拿 provisional_token 的用例使用。
+func LoginWithCreds(t *testing.T, username, password string) *LoginResult {
+	t.Helper()
 	client := NewAPIClient(DefaultBaseURL)
 
 	// Step 1: Get captcha
@@ -83,10 +94,6 @@ func AuthenticateWithCreds(t *testing.T, username, password string) *LoginResult
 
 	var loginResult LoginResult
 	loginResp.DecodeData(t, &loginResult)
-
-	if loginResult.TotpRequired {
-		t.Fatal("admin user has 2FA enabled, cannot auto-login for tests")
-	}
 
 	return &loginResult
 }

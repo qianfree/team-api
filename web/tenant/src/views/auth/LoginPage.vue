@@ -343,8 +343,10 @@ async function handleOAuthLogin(provider: string) {
 						@update:value="clearAdminError('email')"
 					>
 						<template #prefix><Icon name="mail" size="sm" class="text-gray-400" /></template>
-						<template #feedback v-if="adminErrors.email">{{ adminErrors.email }}</template>
 					</n-input>
+					<!-- NInput 无 feedback 插槽（只有 n-form-item 有），提示必须作为兄弟节点，
+					     否则校验失败时只有红框、不说明原因 -->
+					<p v-if="adminErrors.email" class="input-error-text">{{ adminErrors.email }}</p>
 				</div>
 
 				<!-- Password -->
@@ -361,8 +363,8 @@ async function handleOAuthLogin(provider: string) {
 						@update:value="clearAdminError('password')"
 					>
 						<template #prefix><Icon name="lock" size="sm" class="text-gray-400" /></template>
-						<template #feedback v-if="adminErrors.password">{{ adminErrors.password }}</template>
 					</n-input>
+					<p v-if="adminErrors.password" class="input-error-text">{{ adminErrors.password }}</p>
 				</div>
 
 				<!-- Captcha -->
@@ -418,9 +420,10 @@ async function handleOAuthLogin(provider: string) {
 						@update:value="clearRamError('account')"
 					>
 						<template #prefix><Icon name="user" size="sm" class="text-gray-400" /></template>
-						<template #feedback v-if="ramErrors.account">{{ ramErrors.account }}</template>
 					</n-input>
-					<p class="input-hint">格式：用户名@组织代码</p>
+					<!-- 错误时用错误文案顶替格式提示，避免两条提示叠加 -->
+					<p v-if="ramErrors.account" class="input-error-text">{{ ramErrors.account }}</p>
+					<p v-else class="input-hint">格式：用户名@组织代码</p>
 				</div>
 
 				<!-- Password -->
@@ -437,8 +440,8 @@ async function handleOAuthLogin(provider: string) {
 						@update:value="clearRamError('password')"
 					>
 						<template #prefix><Icon name="lock" size="sm" class="text-gray-400" /></template>
-						<template #feedback v-if="ramErrors.password">{{ ramErrors.password }}</template>
 					</n-input>
+					<p v-if="ramErrors.password" class="input-error-text">{{ ramErrors.password }}</p>
 				</div>
 
 				<!-- Captcha -->

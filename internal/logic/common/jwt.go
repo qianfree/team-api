@@ -2,6 +2,7 @@ package common
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -33,15 +34,31 @@ type TokenPair struct {
 	ExpiresAt    time.Time `json:"expires_at"`
 }
 
-var jwtSecret []byte
+var (
+	jwtSecret         []byte
+	stepUpTokenSecret []byte
+)
 
-// InitJWTSecret loads the JWT signing secret from config.
+// InitJWTSecret loads the JWT signing secret from config and derives the
+// step-up token signing key.
 func InitJWTSecret(ctx context.Context) {
 	secret := g.Cfg().MustGet(ctx, "jwt.secret").String()
 	if secret == "" {
 		panic("jwt.secret is not configured — refusing to start with weak key")
 	}
 	jwtSecret = []byte(secret)
+	stepUpTokenSecret = deriveStepUpSecret(jwtSecret)
+}
+
+// deriveStepUpSecret 从主签名密钥为 2FA 临时令牌/高风险确认令牌派生独立签名密钥。
+// 三类令牌曾共用 jwt.secret，且载荷字段名与 JWTClaims 兼容，临时令牌缺失字段
+// 解析为零值后被 ParseAccessToken 当作合法访问令牌放行——只持账号密码的攻击者
+// 拿登录第一步返回的临时令牌即可冒充会话绕过 2FA。密钥空间隔离后，类型混淆
+// 在签名验证层即失败，不再依赖载荷字段差异被发现。主密钥轮换时派生密钥自动跟随。
+func deriveStepUpSecret(secret []byte) []byte {
+	mac := hmac.New(sha256.New, secret)
+	mac.Write([]byte("team-api:step-up-token"))
+	return mac.Sum(nil)
 }
 
 // GetJWTSecret returns the cached JWT signing secret.
@@ -50,6 +67,14 @@ func GetJWTSecret() []byte {
 		panic("JWT secret not initialized — call InitJWTSecret first")
 	}
 	return jwtSecret
+}
+
+// GetStepUpTokenSecret returns the derived signing key for provisional/confirm tokens.
+func GetStepUpTokenSecret() []byte {
+	if stepUpTokenSecret == nil {
+		panic("step-up token secret not initialized — call InitJWTSecret first")
+	}
+	return stepUpTokenSecret
 }
 
 // getAccessExpire returns the access token expiration duration.
@@ -141,6 +166,14 @@ func ParseAccessToken(tokenStr string) (*JWTClaims, error) {
 	claims, ok := token.Claims.(*JWTClaims)
 	if !ok || !token.Valid {
 		return nil, gerror.New("invalid token claims")
+	}
+
+	// 访问令牌必须绑定会话（session_id + jti）。历史上步进令牌与访问令牌共用
+	// 签名密钥，仅凭字段缺失取零值放行曾使 2FA 可被完全绕过；现在除密钥隔离外，
+	// 此处再拒绝一切无会话绑定的令牌：签发侧（GenerateTokenPair）恒传入非零
+	// sessionID 与 jti，合法令牌不受影响。
+	if claims.SessionID <= 0 || claims.ID == "" {
+		return nil, gerror.New("token missing session binding")
 	}
 
 	return claims, nil

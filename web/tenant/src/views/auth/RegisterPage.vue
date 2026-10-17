@@ -277,8 +277,10 @@ async function handleRegister() {
 						@update:value="validateUsernameRealtime"
 					>
 						<template #prefix><Icon name="user" size="sm" class="text-gray-400" /></template>
-						<template #feedback v-if="userErrors.username">{{ userErrors.username }}</template>
 					</n-input>
+					<!-- NInput 没有 feedback 插槽（只有 n-form-item 有），写进去不会渲染。
+					     提示改挂兄弟节点，与本页邮箱字段（原第 307 行）的既有写法一致。 -->
+					<p v-if="userErrors.username" class="input-error-text">{{ userErrors.username }}</p>
 				</div>
 
 				<!-- Email -->
@@ -317,9 +319,8 @@ async function handleRegister() {
 							placeholder="请输入 6 位验证码"
 							maxlength="6"
 							:status="userErrors.code ? 'error' : undefined"
-						>
-							<template #feedback v-if="userErrors.code">{{ userErrors.code }}</template>
-						</n-input>
+						/>
+						<p v-if="userErrors.code" class="input-error-text">{{ userErrors.code }}</p>
 					</div>
 				</template>
 
@@ -338,9 +339,8 @@ async function handleRegister() {
 						show-password-on="click"
 						placeholder="至少 8 位字符"
 						:status="userErrors.password ? 'error' : undefined"
-					>
-						<template #feedback v-if="userErrors.password">{{ userErrors.password }}</template>
-					</n-input>
+					/>
+					<p v-if="userErrors.password" class="input-error-text">{{ userErrors.password }}</p>
 					<PasswordStrengthMeter :password="userForm.password" />
 				</div>
 
@@ -353,9 +353,8 @@ async function handleRegister() {
 						show-password-on="click"
 						placeholder="请再次输入密码"
 						:status="userErrors.confirmPassword ? 'error' : undefined"
-					>
-						<template #feedback v-if="userErrors.confirmPassword">{{ userErrors.confirmPassword }}</template>
-					</n-input>
+					/>
+					<p v-if="userErrors.confirmPassword" class="input-error-text">{{ userErrors.confirmPassword }}</p>
 				</div>
 
 				<!-- Agreement Checkbox -->

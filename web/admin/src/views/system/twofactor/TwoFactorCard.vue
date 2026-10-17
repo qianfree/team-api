@@ -92,109 +92,172 @@ async function handleRegen() {
 </script>
 
 <template>
-	<div class="profile-card twofactor-card">
-		<div class="profile-card__header">两步验证（TOTP）</div>
-		<div class="profile-card__body">
-			<!-- 未开启态 -->
-			<template v-if="!enabled">
-				<a-alert type="warning">
-					当前账号仅受密码保护。开启后登录需额外输入验证器 App（阿里云虚拟MFA、Google Authenticator 等）中的动态码，可显著降低密码泄露风险。
-				</a-alert>
-				<a-button type="primary" class="mt16" @click="showSetup = true">开启两步验证</a-button>
-			</template>
-
-			<!-- 已开启态 -->
-			<template v-else>
-				<div class="status-row">
-					<a-tag color="green">已开启</a-tag>
-					<span class="status-desc">登录时需输入验证器 App 中的 6 位动态码</span>
-				</div>
-				<p class="regen-hint">恢复码用于验证器不可用时登录，忘记或用尽时可在此重新生成（旧恢复码全部作废）。</p>
-				<div class="btn-row">
-					<a-button size="small" @click="showRegen = true">重新生成恢复码</a-button>
-					<a-button size="small" status="danger" @click="showDisable = true">关闭两步验证</a-button>
-				</div>
-			</template>
+	<!-- 本组件只渲染卡片「内容」，外壳（.profile-card / __header / __body）由 ProfilePage 渲染：
+	     父级 scoped 样式只作用于子组件的根元素，子组件内部节点拿不到这些规则 -->
+	<div class="tf-row">
+		<!-- 状态图标：开启=盾牌带勾（绿），未开启=盾牌带叹号（橙） -->
+		<div class="tf-icon" :class="enabled ? 'tf-icon--on' : 'tf-icon--off'">
+			<svg v-if="enabled" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+				<path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
+			</svg>
+			<!-- 与开启态同一套盾牌轮廓，把对勾换成叹号（保持两种状态外形一致） -->
+			<svg v-else fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+				<path stroke-linecap="round" stroke-linejoin="round" d="M12 8.75v4" />
+				<path stroke-linecap="round" stroke-linejoin="round" d="M12 15.75h.008v.008H12z" />
+				<path stroke-linecap="round" stroke-linejoin="round" d="M12 2.714A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
+			</svg>
 		</div>
 
-		<!-- 开启向导 -->
-		<Setup2FAModal v-model:visible="showSetup" @done="onSetupDone" />
+		<!-- 状态文案：标题行（状态标签 + 一句话结论）与说明 -->
+		<div class="tf-info">
+			<div class="tf-title">
+				<span class="tf-title__text">{{ enabled ? '登录时需输入验证器 6 位动态码' : '当前账号仅受密码保护' }}</span>
+				<a-tag :color="enabled ? 'green' : 'orange'">{{ enabled ? '已开启' : '未开启' }}</a-tag>
+			</div>
+			<p class="tf-desc">
+				<template v-if="enabled">支持阿里云虚拟MFA、Google Authenticator 等验证器 App；恢复码用于验证器不可用时登录，忘记或用尽时可在此重新生成（旧恢复码全部作废）。</template>
+				<template v-else>开启后登录需额外输入验证器 App（阿里云虚拟MFA、Google Authenticator 等）中的动态码，可显著降低密码泄露风险。</template>
+			</p>
+		</div>
 
-		<!-- 关闭确认 -->
-		<a-modal
-			v-model:visible="showDisable"
-			title="关闭两步验证"
-			:width="420"
-			:mask-closable="false"
-			:on-before-ok="handleDisable"
-			:ok-loading="disableLoading"
-			ok-text="确认关闭"
-		>
-			<a-alert type="warning" class="mb16">关闭后账号仅受密码保护，安全性降低。</a-alert>
-			<a-form layout="vertical">
-				<a-form-item label="动态验证码或恢复码">
-					<a-input v-model="disableCode" placeholder="验证器 6 位动态码，或任一未使用的恢复码" />
+		<!-- 操作区 -->
+		<div class="tf-actions">
+			<template v-if="enabled">
+				<a-button @click="showRegen = true">重新生成恢复码</a-button>
+				<a-button status="danger" @click="showDisable = true">关闭两步验证</a-button>
+			</template>
+			<a-button v-else type="primary" @click="showSetup = true">开启两步验证</a-button>
+		</div>
+	</div>
+
+	<!-- 开启向导 -->
+	<Setup2FAModal v-model:visible="showSetup" @done="onSetupDone" />
+
+	<!-- 关闭确认 -->
+	<a-modal
+		v-model:visible="showDisable"
+		title="关闭两步验证"
+		:width="420"
+		:mask-closable="false"
+		:on-before-ok="handleDisable"
+		:ok-loading="disableLoading"
+		ok-text="确认关闭"
+	>
+		<a-alert type="warning" class="mb16">关闭后账号仅受密码保护，安全性降低。</a-alert>
+		<a-form layout="vertical">
+			<a-form-item label="动态验证码或恢复码">
+				<a-input v-model="disableCode" placeholder="验证器 6 位动态码，或任一未使用的恢复码" />
+			</a-form-item>
+		</a-form>
+		<div v-if="disableError" class="field-error">{{ disableError }}</div>
+	</a-modal>
+
+	<!-- 重新生成恢复码 -->
+	<a-modal
+		v-model:visible="showRegen"
+		title="重新生成恢复码"
+		:width="560"
+		:mask-closable="false"
+		:footer="false"
+	>
+		<template v-if="regenCodes.length === 0">
+			<a-alert type="warning" class="mb16">重新生成后旧的恢复码将全部作废，请确认手头验证器可用。</a-alert>
+			<a-form layout="vertical" @submit="handleRegen">
+				<a-form-item label="动态验证码">
+					<a-input v-model="regenCode" placeholder="验证器当前显示的 6 位动态码" :max-length="6" />
 				</a-form-item>
 			</a-form>
-			<div v-if="disableError" class="field-error">{{ disableError }}</div>
-		</a-modal>
-
-		<!-- 重新生成恢复码 -->
-		<a-modal
-			v-model:visible="showRegen"
-			title="重新生成恢复码"
-			:width="560"
-			:mask-closable="false"
-			:footer="false"
-		>
-			<template v-if="regenCodes.length === 0">
-				<a-alert type="warning" class="mb16">重新生成后旧的恢复码将全部作废，请确认手头验证器可用。</a-alert>
-				<a-form layout="vertical" @submit="handleRegen">
-					<a-form-item label="动态验证码">
-						<a-input v-model="regenCode" placeholder="验证器当前显示的 6 位动态码" :max-length="6" />
-					</a-form-item>
-				</a-form>
-				<div v-if="regenError" class="field-error">{{ regenError }}</div>
-				<div class="regen-footer">
-					<a-button type="primary" :loading="regenLoading" @click="handleRegen">生成新恢复码</a-button>
-				</div>
-			</template>
-			<template v-else>
-				<BackupCodesPanel :codes="regenCodes" />
-			</template>
-		</a-modal>
-	</div>
+			<div v-if="regenError" class="field-error">{{ regenError }}</div>
+			<div class="regen-footer">
+				<a-button type="primary" :loading="regenLoading" @click="handleRegen">生成新恢复码</a-button>
+			</div>
+		</template>
+		<template v-else>
+			<BackupCodesPanel :codes="regenCodes" />
+		</template>
+	</a-modal>
 </template>
 
 <style scoped>
-.twofactor-card {
-	grid-column: 1 / -1;
-}
-.mt16 {
-	margin-top: 16px;
-}
-.mb16 {
-	margin-bottom: 16px;
-}
-.status-row {
+/* ── 安全设置行：图标 + 文案在左，操作在右 ── */
+.tf-row {
 	display: flex;
 	align-items: center;
-	gap: 10px;
-	margin-bottom: 10px;
+	gap: 16px;
 }
-.status-desc {
-	font-size: 13px;
-	color: var(--ta-text-secondary, #4e5969);
-}
-.regen-hint {
-	font-size: 12px;
-	line-height: 1.6;
-	color: var(--ta-text-tertiary);
-	margin: 0 0 12px;
-}
-.btn-row {
+
+.tf-icon {
+	width: 44px;
+	height: 44px;
+	flex-shrink: 0;
 	display: flex;
+	align-items: center;
+	justify-content: center;
+	border-radius: var(--ta-radius);
+}
+.tf-icon svg {
+	width: 24px;
+	height: 24px;
+}
+.tf-icon--on {
+	color: var(--ta-success);
+	background: var(--color-success-light-2);
+}
+.tf-icon--off {
+	color: var(--ta-warning);
+	background: var(--color-warning-light-2);
+}
+
+.tf-info {
+	flex: 1;
+	min-width: 0;
+}
+/* 标题行高度 + 间距 + 说明行高度 ≈ 图标高度，视觉上左右对齐 */
+.tf-title {
+	display: flex;
+	align-items: center;
 	gap: 8px;
+	margin-bottom: 4px;
+}
+.tf-title__text {
+	font-size: 14px;
+	line-height: 1.45;
+	font-weight: 600;
+	color: var(--ta-text-primary);
+}
+.tf-title :deep(.arco-tag) {
+	flex-shrink: 0;
+}
+.tf-desc {
+	margin: 0;
+	/* 限宽避免超宽卡片下说明被拉成一整行难以阅读 */
+	max-width: 880px;
+	font-size: 13px;
+	line-height: 1.6;
+	color: var(--ta-text-secondary);
+}
+
+.tf-actions {
+	display: flex;
+	flex-shrink: 0;
+	gap: 8px;
+}
+
+/* 窄屏：操作按钮换行铺满 */
+@media (max-width: 768px) {
+	.tf-row {
+		flex-wrap: wrap;
+	}
+	.tf-actions {
+		width: 100%;
+	}
+	.tf-actions :deep(.arco-btn) {
+		flex: 1;
+	}
+}
+
+.mb16 {
+	margin-bottom: 16px;
 }
 .field-error {
 	margin-top: 4px;

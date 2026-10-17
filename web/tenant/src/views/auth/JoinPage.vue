@@ -41,8 +41,9 @@
 						@update:value="validateUsername"
 					>
 						<template #prefix><Icon name="user" size="sm" class="text-gray-400" /></template>
-						<template #feedback v-if="usernameError">{{ usernameError }}</template>
 					</n-input>
+					<!-- NInput 无 feedback 插槽，提示改挂兄弟节点 -->
+					<p v-if="usernameError" class="input-error-text">{{ usernameError }}</p>
 				</div>
 
 				<div>

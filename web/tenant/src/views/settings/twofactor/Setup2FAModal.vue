@@ -13,7 +13,8 @@ const emit = defineEmits<{
 	(e: 'done'): void
 }>()
 
-// ── 步骤状态：1 扫码绑定 / 2 验证启用 / 3 保存恢复码 ──
+// ── 步骤状态：1 扫码绑定 / 2 安全确认(密码) / 3 验证启用 / 4 保存恢复码 ──
+// 顺序与后端 Enable2FA 的校验顺序一致：先密码后验证码，密码输错不消耗验证码
 const step = ref(1)
 const setupLoading = ref(false)
 const secret = ref('')
@@ -25,8 +26,9 @@ let timer: ReturnType<typeof setInterval> | null = null
 
 const steps = [
 	{ n: 1, label: '扫码绑定' },
-	{ n: 2, label: '验证启用' },
-	{ n: 3, label: '保存恢复码' },
+	{ n: 2, label: '安全确认' },
+	{ n: 3, label: '验证启用' },
+	{ n: 4, label: '保存恢复码' },
 ]
 
 const countdownText = computed(() => {
@@ -125,19 +127,29 @@ function goStep2() {
 	step.value = 2
 }
 
+function goStep3() {
+	if (!password.value) {
+		verifyError.value = '请输入当前密码'
+		return
+	}
+	verifyError.value = ''
+	step.value = 3
+}
+
 function goStep1() {
 	// 上一步：密钥仍在有效期，无需重新 setup
 	step.value = 1
 	verifyError.value = ''
 }
 
+function backToStep2() {
+	step.value = 2
+	verifyError.value = ''
+}
+
 async function onEnable() {
 	if (!/^\d{6}$/.test(code.value)) {
 		verifyError.value = '请输入 6 位数字验证码'
-		return
-	}
-	if (!password.value) {
-		verifyError.value = '请输入当前密码'
 		return
 	}
 	verifyLoading.value = true
@@ -149,7 +161,7 @@ async function onEnable() {
 			{ _suppressErrorMsg: true },
 		)
 		backupCodes.value = res.data?.data?.backup_codes ?? []
-		step.value = 3
+		step.value = 4
 	} catch (e) {
 		const msg = extractApiError(e)?.message || '启用失败'
 		// pending secret 已过期（后端 Redis 无暂存）→ 回步骤 1 重新生成密钥
@@ -159,6 +171,10 @@ async function onEnable() {
 			code.value = ''
 			password.value = ''
 			fetchSetup()
+		} else if (msg.includes('密码错误')) {
+			// 后端先验密码：密码不对回到密码步骤，验证码未被消耗可直接重试
+			verifyError.value = msg
+			step.value = 2
 		} else {
 			verifyError.value = msg
 		}
@@ -221,24 +237,44 @@ function finish() {
 				</div>
 			</div>
 
-			<!-- 步骤 2：验证启用 -->
+			<!-- 步骤 2：安全确认（密码） -->
 			<div v-if="step === 2" class="space-y-4">
 				<div class="p-3 rounded-xl bg-primary-50 border border-primary-100 text-sm text-primary-800">
-					输入验证器 App 当前显示的 6 位动态码，并输入当前密码完成安全确认。
-				</div>
-				<div>
-					<label class="input-label">动态验证码</label>
-					<n-input v-model:value="code" placeholder="6 位数字" :maxlength="6" :input-props="{ inputmode: 'numeric' }" />
+					为确认是你本人操作，请输入当前登录密码。
 				</div>
 				<div>
 					<label class="input-label">当前密码</label>
-					<n-input v-model:value="password" type="password" show-password-on="click" placeholder="请输入当前密码" />
+					<n-input
+						v-model:value="password"
+						type="password"
+						show-password-on="click"
+						placeholder="请输入当前密码"
+						@keydown.enter="goStep3"
+					/>
 				</div>
 				<p v-if="verifyError" class="input-error-text">{{ verifyError }}</p>
 			</div>
 
-			<!-- 步骤 3：保存恢复码 -->
+			<!-- 步骤 3：验证启用 -->
 			<div v-if="step === 3" class="space-y-4">
+				<div class="p-3 rounded-xl bg-primary-50 border border-primary-100 text-sm text-primary-800">
+					输入验证器 App 当前显示的 6 位动态码完成开启。
+				</div>
+				<div>
+					<label class="input-label">动态验证码</label>
+					<n-input
+						v-model:value="code"
+						placeholder="6 位数字"
+						:maxlength="6"
+						:input-props="{ inputmode: 'numeric' }"
+						@keydown.enter="onEnable"
+					/>
+				</div>
+				<p v-if="verifyError" class="input-error-text">{{ verifyError }}</p>
+			</div>
+
+			<!-- 步骤 4：保存恢复码 -->
+			<div v-if="step === 4" class="space-y-4">
 				<div class="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-sm text-emerald-700">
 					两步验证已开启。请立即保存以下恢复码。
 				</div>
@@ -256,6 +292,10 @@ function finish() {
 			</template>
 			<template v-else-if="step === 2">
 				<button class="btn btn-secondary" @click="goStep1">上一步</button>
+				<button class="btn btn-primary" @click="goStep3">下一步</button>
+			</template>
+			<template v-else-if="step === 3">
+				<button class="btn btn-secondary" @click="backToStep2">上一步</button>
 				<button class="btn btn-primary" :disabled="verifyLoading" @click="onEnable">
 					{{ verifyLoading ? '开启中...' : '确认开启' }}
 				</button>

@@ -267,6 +267,10 @@ request.interceptors.response.use(
         }
         const err = new Error(msg)
         ;(err as any).apiError = error.response.data as ApiError
+        // HTTP 4xx/5xx 携带的统一响应体同样是「业务错误」（如 422 + code:10048 验证码错误）。
+        // 漏标此标记会让 extractApiError 返回 null，调用页只能退化成「操作失败」，
+        // 真实原因被吞掉（tenant 端 request.ts 已标注，admin 端此前遗漏）。
+        ;(err as any).isBusinessError = true
         ;(err as any).isDemoModeError = error.response.data.code === DEMO_MODE_CODE
         return Promise.reject(err)
       }

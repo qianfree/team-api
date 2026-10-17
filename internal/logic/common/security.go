@@ -25,25 +25,34 @@ import (
 const provisionalTTL = 5 * time.Minute
 const confirmTokenTTL = 5 * time.Minute
 
-// totpReplayTTL 防重放键的存活时间，需覆盖 TOTP 的接受窗口（±1 周期，约 90 秒）。
-// 键过期时验证码本身也已失效，故 90 秒足以杜绝同码重复使用。
-const totpReplayTTL = 90
+// totpUsedTTL 已用 TOTP 验证码标记的存活时间，需覆盖 TOTP 的接受窗口（skew=1
+// 时约 90 秒）。键过期时验证码本身也已失效，故 90 秒足以杜绝同码重复使用。
+const totpUsedTTL = 90
 
-// validateTOTPOnce 在基础 TOTP 校验通过后，借助 Redis 做一次性防重放：
-// 同一用户的同一验证码在其有效窗口内只接受一次，杜绝 ±90 秒内的重复使用。
-// Redis 不可用时放行（fail-open），避免依赖故障导致无法登录/验证。
-func validateTOTPOnce(ctx context.Context, userType string, userID int64, code, secret string) bool {
-	if !totp.ValidateCode(code, secret) {
+// totpUsedKey 已用验证码标记键：同一用户的同一验证码全站只允许使用一次。
+// 登录验证、绑定/解绑、恢复码重新生成、高风险确认共用同一键空间。
+func totpUsedKey(userType string, userID int64, code string) string {
+	return fmt.Sprintf("totp:used:%s:%d:%s", userType, userID, code)
+}
+
+// IsTOTPCodeUsed 判断该验证码是否已被使用过（重放检测，只读、不消耗）。
+// Redis 不可用时返回 false（fail-open），避免依赖故障拦截正确的验证码。
+func IsTOTPCodeUsed(ctx context.Context, userType string, userID int64, code string) bool {
+	res, err := g.Redis().Do(ctx, "EXISTS", totpUsedKey(userType, userID, code))
+	if err != nil {
+		g.Log().Warningf(ctx, "[TOTP] 重放标记读取失败: %v", err)
 		return false
 	}
-	key := fmt.Sprintf("totp:used:%s:%d:%s", userType, userID, code)
-	res, err := g.Redis().Do(ctx, "SET", key, "1", "NX", "EX", totpReplayTTL)
-	if err != nil {
-		g.Log().Warningf(ctx, "totp replay guard redis error: %v", err)
-		return true
+	return res.Int64() > 0
+}
+
+// ConsumeTOTPCode 将验证码标记为已使用。必须在以该验证码放行的操作全部成功后调用，
+// 校验阶段绝不消耗——否则密码错误、落库失败等后续步骤失败后，用户用验证器上仍显示
+// 的同一码重试会被误报「验证码错误」。幂等：重复写入只刷新 TTL。
+func ConsumeTOTPCode(ctx context.Context, userType string, userID int64, code string) {
+	if _, err := g.Redis().Do(ctx, "SET", totpUsedKey(userType, userID, code), "1", "EX", totpUsedTTL); err != nil {
+		g.Log().Warningf(ctx, "[TOTP] 重放标记写入失败: %v", err)
 	}
-	// res 为 nil 表示键已存在 → 该验证码此前已被使用 → 判定为重放，拒绝
-	return !res.IsNil()
 }
 
 // ProvisionalClaims is a short-lived JWT for 2FA pending state.
@@ -81,7 +90,7 @@ func GenerateProvisionalToken(ctx context.Context, userID int64, userType, role 
 		},
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(GetJWTSecret())
+	return token.SignedString(GetStepUpTokenSecret())
 }
 
 // ParseProvisionalToken parses and validates a provisional 2FA token.
@@ -91,7 +100,7 @@ func ParseProvisionalToken(tokenStr string) (*ProvisionalClaims, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, gerror.Newf("unexpected signing method: %v", token.Header["alg"])
 		}
-		return GetJWTSecret(), nil
+		return GetStepUpTokenSecret(), nil
 	})
 	if err != nil {
 		return nil, err
@@ -118,7 +127,7 @@ func GenerateConfirmToken(ctx context.Context, userID int64, userType string) (s
 		},
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(GetJWTSecret())
+	return token.SignedString(GetStepUpTokenSecret())
 }
 
 // ParseConfirmToken parses and validates a high-risk confirm token.
@@ -128,7 +137,7 @@ func ParseConfirmToken(tokenStr string) (*ConfirmClaims, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, gerror.Newf("unexpected signing method: %v", token.Header["alg"])
 		}
-		return GetJWTSecret(), nil
+		return GetStepUpTokenSecret(), nil
 	})
 	if err != nil {
 		return nil, err
@@ -158,13 +167,20 @@ func ConfirmHighRisk(ctx context.Context, userType string, userID int64, code st
 		return "", NewBusinessError(consts.CodeTotpInvalid, consts.MsgTotpInvalid)
 	}
 
-	return GenerateConfirmToken(ctx, userID, userType)
+	token, err := GenerateConfirmToken(ctx, userID, userType)
+	if err != nil {
+		return "", err
+	}
+	ConsumeTOTPCode(ctx, userType, userID, code)
+	return token, nil
 }
 
 // Setup2FA generates a new TOTP secret for a user. Returns the secret and otpauth URI.
 // Callers must still persist the secret after the user confirms with a valid code.
+// 验证器条目名格式：Team-API:{站点名称}:{admin|user}:{用户名}；
+// 站点名称取 sys_options.site_name（支持中文，未配置时回落注册表默认值）。
 func Setup2FA(ctx context.Context, userType string, userID int64) (secret, uri string, err error) {
-	var accountName string
+	var username string
 	if userType == "admin" {
 		var user *entity.SysAdminUsers
 		err = dao.SysAdminUsers.Ctx(ctx).Where("id", userID).Scan(&user)
@@ -174,7 +190,7 @@ func Setup2FA(ctx context.Context, userType string, userID int64) (secret, uri s
 		if user == nil {
 			return "", "", NewBusinessError(10024, "用户不存在")
 		}
-		accountName = user.Username
+		username = user.Username
 	} else {
 		var user *entity.TntUsers
 		err = dao.TntUsers.Ctx(ctx).Where("id", userID).Scan(&user)
@@ -184,8 +200,15 @@ func Setup2FA(ctx context.Context, userType string, userID int64) (secret, uri s
 		if user == nil {
 			return "", "", NewBusinessError(10024, "用户不存在")
 		}
-		accountName = fmt.Sprintf("%s@%d", user.Username, user.TenantId)
+		username = user.Username
 	}
+
+	// 入参 userType 为 admin/tenant，验证器条目统一显示为 admin/user
+	marker := "user"
+	if userType == "admin" {
+		marker = "admin"
+	}
+	accountName := fmt.Sprintf("%s:%s:%s", Config().GetString(ctx, "site_name"), marker, username)
 
 	secret, uri, err = totp.GenerateSecret(accountName)
 	if err != nil {
@@ -195,21 +218,20 @@ func Setup2FA(ctx context.Context, userType string, userID int64) (secret, uri s
 	return secret, uri, nil
 }
 
-// Enable2FA enables 2FA for a user after verifying the TOTP code and password.
+// Enable2FA enables 2FA for a user after verifying the password and TOTP code.
 // Stores the encrypted secret and hashed backup codes.
+// 已启用 2FA 的账号拒绝重复绑定（须先 disable），防止持会话+密码者覆盖他人 2FA。
+// 校验顺序固定为「密码 → TOTP」：TOTP 码在确认启用成功前绝不消耗，密码输错后
+// 用验证器上仍显示的同一码重试不会被误报「验证码错误」。
 func Enable2FA(ctx context.Context, userType string, userID int64, secret, code, password string) ([]string, error) {
-	// 失败计数闸门：绑定确认的码错/密码错提示可区分，构成无密码探测 pending
-	// secret 的 oracle，必须与登录验证共用同一失败计数
+	// 失败计数闸门：码错与密码错均计入，且与登录验证共用同一失败计数——
+	// 绑定确认的错误提示可区分，构成探测 pending secret 的 oracle；enable
+	// 又是持被窃会话者在线试密码且不触发账号锁定的唯一入口，必须限速
 	if Is2FABlocked(ctx, userType, userID) {
 		return nil, NewBusinessError(consts.Code2FATooManyAttempts, consts.Msg2FATooManyAttempts)
 	}
-	// Verify TOTP code
-	if !validateTOTPOnce(ctx, userType, userID, code, secret) {
-		Register2FAFailure(ctx, userType, userID)
-		return nil, NewBusinessError(10048, "验证码错误")
-	}
 
-	// Verify current password
+	// 1. 先验当前密码（纯校验，不涉及验证码）
 	var passwordHash string
 	if userType == "admin" {
 		var user *entity.SysAdminUsers
@@ -219,6 +241,12 @@ func Enable2FA(ctx context.Context, userType string, userID int64, secret, code,
 		}
 		if user == nil {
 			return nil, NewBusinessError(10024, "用户不存在")
+		}
+		// 已启用状态下禁止重复绑定：enable 会整体覆盖 totp_secret 与 backup_codes，
+		// 若不拦截，持会话+密码的攻击者可 setup 拿新 secret 后自行算码完成覆盖，
+		// 把受害者的 2FA 换成自己的。换绑必须先 disable（需要有效验证码）。
+		if user.TotpEnabled {
+			return nil, NewBusinessError(consts.CodeTotpAlreadyEnabled, consts.MsgTotpAlreadyEnabled)
 		}
 		passwordHash = user.PasswordHash
 	} else {
@@ -230,11 +258,28 @@ func Enable2FA(ctx context.Context, userType string, userID int64, secret, code,
 		if user == nil {
 			return nil, NewBusinessError(10024, "用户不存在")
 		}
+		if user.TotpEnabled {
+			return nil, NewBusinessError(consts.CodeTotpAlreadyEnabled, consts.MsgTotpAlreadyEnabled)
+		}
 		passwordHash = user.PasswordHash
 	}
 
 	if !crypto.VerifyPassword(password, passwordHash) {
+		// 密码错同样计入失败闸门：enable 是持被窃会话者在线试密码且不触发
+		// 账号锁定（failed_attempts 只在 /auth/login 递增）的唯一入口，不限速
+		// 即可绕过登录锁定无限穷举
+		Register2FAFailure(ctx, userType, userID)
 		return nil, NewBusinessError(10023, "密码错误")
+	}
+
+	// 2. 再验 TOTP（纯校验，不消耗）
+	if !totp.ValidateCode(code, secret) {
+		Register2FAFailure(ctx, userType, userID)
+		return nil, NewBusinessError(10048, "验证码错误")
+	}
+	// 重放检测：码是对的但已被使用过，明确告知等下一个，不计入失败次数
+	if IsTOTPCodeUsed(ctx, userType, userID, code) {
+		return nil, NewBusinessError(consts.CodeTotpReused, consts.MsgTotpReused)
 	}
 
 	// Generate backup codes
@@ -278,6 +323,9 @@ func Enable2FA(ctx context.Context, userType string, userID int64, secret, code,
 		return nil, err
 	}
 
+	// 3. 启用成功，验证码至此才算消耗
+	ConsumeTOTPCode(ctx, userType, userID, code)
+
 	Clear2FAFailures(ctx, userType, userID)
 	return plainCodes, nil
 }
@@ -293,34 +341,56 @@ func Disable2FA(ctx context.Context, userType string, userID int64, code string)
 		return err
 	}
 
-	// Verify TOTP code or backup code
-	if !validateTOTPOnce(ctx, userType, userID, code, secret) {
+	// 验 TOTP 或恢复码：TOTP 纯校验不消耗，关闭成功后再消耗；恢复码命中即消耗
+	isTOTP := totp.ValidateCode(code, secret)
+	if isTOTP {
+		if IsTOTPCodeUsed(ctx, userType, userID, code) {
+			return NewBusinessError(consts.CodeTotpReused, consts.MsgTotpReused)
+		}
+	} else {
 		matched, err := verifyAndConsumeBackupCode(ctx, userType, userID, code)
-		if err != nil || !matched {
+		if err != nil {
+			return err
+		}
+		if !matched {
 			Register2FAFailure(ctx, userType, userID)
 			return NewBusinessError(10048, "验证码或恢复码错误")
 		}
 	}
-	Clear2FAFailures(ctx, userType, userID)
 
+	// 清空 2FA 凭据。backup_codes 在 sys_admin_users / tnt_users 上都是 JSONB 列：
+	// 写空串会被 PostgreSQL 以 `invalid input syntax for type json` 拒绝，整条 UPDATE
+	// 因而失败——表现为「验证码正确但 2FA 关不掉，前端只说操作失败」。必须写入合法空数组。
+	// totp_secret 是 VARCHAR 列，空串即「无密钥」（GetUserTOTPSecret 按 != "" 判断）。
 	if userType == "admin" {
 		_, err = dao.SysAdminUsers.Ctx(ctx).Where("id", userID).Data(do.SysAdminUsers{
 			TotpSecret:  "",
 			TotpEnabled: false,
-			BackupCodes: "",
+			BackupCodes: "[]",
 		}).Update()
 	} else {
 		_, err = dao.TntUsers.Ctx(ctx).Where("id", userID).Data(do.TntUsers{
 			TotpSecret:  "",
 			TotpEnabled: false,
-			BackupCodes: "",
+			BackupCodes: "[]",
 		}).Update()
 	}
-	return err
+	if err != nil {
+		return err
+	}
+
+	if isTOTP {
+		ConsumeTOTPCode(ctx, userType, userID, code)
+	}
+	Clear2FAFailures(ctx, userType, userID)
+	return nil
 }
 
 // Verify2FACode verifies a TOTP code or backup code for a user.
-// Returns true if valid. If a backup code was used, it's consumed (removed).
+// TOTP 只做纯校验 + 重放检测，不在此消耗——消耗由调用方在以该码放行的操作
+// （建会话、签发确认令牌等）全部成功后通过 ConsumeTOTPCode 完成，避免操作
+// 失败后用同一码重试被误报。恢复码命中时在内部消耗（一次性，命中即目的达成）。
+// Returns true if valid.
 func Verify2FACode(ctx context.Context, userType string, userID int64, code string) (bool, error) {
 	// 失败次数达到阈值后直接拒绝：临时令牌 5 分钟有效期内不允许对 6 位码无限穷举
 	if Is2FABlocked(ctx, userType, userID) {
@@ -332,12 +402,11 @@ func Verify2FACode(ctx context.Context, userType string, userID int64, code stri
 		return false, err
 	}
 
-	// Try TOTP code first
-	if validateTOTPOnce(ctx, userType, userID, code, secret) {
-		// 重放防护：TOTP 校验本身无状态，同一码在 30s 时间窗内可原样重复使用
-		// （拦截/窃取到的码即可重放）。以码值为键做一次性消耗标记。
-		if !consumeTotpCode(ctx, userType, userID, code) {
-			return false, nil
+	// TOTP：纯校验 + 重放检测（已用过的码返回可区分的错误，不计入失败——
+	// 码本身是对的，常见于网络超时后重试、或绑定/登录后 30 秒窗口内再次使用）
+	if totp.ValidateCode(code, secret) {
+		if IsTOTPCodeUsed(ctx, userType, userID, code) {
+			return false, NewBusinessError(consts.CodeTotpReused, consts.MsgTotpReused)
 		}
 		Clear2FAFailures(ctx, userType, userID)
 		return true, nil
@@ -357,27 +426,6 @@ func Verify2FACode(ctx context.Context, userType string, userID int64, code stri
 
 	Register2FAFailure(ctx, userType, userID)
 	return false, nil
-}
-
-// consumeTotpCode 以 SET NX 记录已使用的 TOTP 验证码，同一码在 TTL 内不可重复使用。
-// 返回 false 表示该码已被使用（重放）。TTL 取 120s 覆盖 ±2 个时间窗。
-// Redis 故障（含未配置 panic）时放行：可用性优先，且重放窗口本就只有数十秒。
-func consumeTotpCode(ctx context.Context, userType string, userID int64, code string) (usable bool) {
-	defer func() {
-		if recover() != nil {
-			usable = true
-		}
-	}()
-	key := fmt.Sprintf("totp_used:%s:%d:%s", userType, userID, code)
-	ok, err := g.Redis().Do(ctx, "SET", key, "1", "NX", "EX", 120)
-	if err != nil {
-		g.Log().Warningf(ctx, "[TOTP] 重放标记写入失败: %v", err)
-		return true
-	}
-	if ok.IsNil() {
-		return false // 已存在 → 该码已被使用，判定为重放
-	}
-	return true
 }
 
 // GetUserTOTPSecret decrypts and returns the TOTP secret and backup codes for a user.
@@ -425,6 +473,7 @@ func GetUserTOTPSecret(ctx context.Context, userType string, userID int64) (secr
 }
 
 // RegenerateBackupCodes generates new backup codes for a user after verifying TOTP.
+// TOTP 纯校验不消耗，新恢复码落库成功后才消耗。
 func RegenerateBackupCodes(ctx context.Context, userType string, userID int64, code string) ([]string, error) {
 	if Is2FABlocked(ctx, userType, userID) {
 		return nil, NewBusinessError(consts.Code2FATooManyAttempts, consts.Msg2FATooManyAttempts)
@@ -434,11 +483,13 @@ func RegenerateBackupCodes(ctx context.Context, userType string, userID int64, c
 		return nil, err
 	}
 
-	if !validateTOTPOnce(ctx, userType, userID, code, secret) {
+	if !totp.ValidateCode(code, secret) {
 		Register2FAFailure(ctx, userType, userID)
 		return nil, NewBusinessError(10048, "验证码错误")
 	}
-	Clear2FAFailures(ctx, userType, userID)
+	if IsTOTPCodeUsed(ctx, userType, userID, code) {
+		return nil, NewBusinessError(consts.CodeTotpReused, consts.MsgTotpReused)
+	}
 
 	plainCodes, err := totp.GenerateBackupCodes(8)
 	if err != nil {
@@ -467,6 +518,8 @@ func RegenerateBackupCodes(ctx context.Context, userType string, userID int64, c
 		return nil, err
 	}
 
+	ConsumeTOTPCode(ctx, userType, userID, code)
+	Clear2FAFailures(ctx, userType, userID)
 	return plainCodes, nil
 }
 
@@ -496,7 +549,7 @@ func twoFAFailKey(userType string, userID int64) string {
 }
 
 // Is2FABlocked 判断用户是否因 2FA 验证失败次数过多被临时拒绝。
-// Redis 故障时 fail-open（与 validateTOTPOnce 的可用性优先策略一致）。
+// Redis 故障时 fail-open（与 IsTOTPCodeUsed 的可用性优先策略一致）。
 func Is2FABlocked(ctx context.Context, userType string, userID int64) bool {
 	count, err := g.Redis().Do(ctx, "GET", twoFAFailKey(userType, userID))
 	if err != nil {

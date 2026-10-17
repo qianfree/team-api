@@ -106,6 +106,9 @@ func (s *sAdmin) Verify2FA(ctx context.Context, req *v1.Admin2FAVerifyReq) (*v1.
 	res.User.DisplayName = user.DisplayName
 	res.User.Role = user.Role
 	res.Permissions, res.Roles = loadSessionPermissions(ctx, user.Id, user.Role)
+
+	// 会话签发成功，验证码至此才算消耗（校验阶段不消耗，见 common.Verify2FACode）
+	common.ConsumeTOTPCode(ctx, "admin", claims.UserID, req.Code)
 	return res, nil
 }
 

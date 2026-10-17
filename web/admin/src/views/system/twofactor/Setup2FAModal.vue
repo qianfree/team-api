@@ -179,8 +179,8 @@ function finish() {
 				<a-step>保存恢复码</a-step>
 			</a-steps>
 
-			<!-- 步骤 1：扫码绑定 -->
-			<div v-if="step === 1" class="step-body">
+			<!-- 步骤 1：扫码绑定（左右分栏） -->
+			<div v-if="step === 1" class="step-body step-body--row">
 				<div class="qr-col">
 					<div class="qr-box" :class="{ 'is-expired': expired }">
 						<a-spin v-if="setupLoading" />
@@ -205,9 +205,9 @@ function finish() {
 				</div>
 			</div>
 
-			<!-- 步骤 2：验证启用 -->
+			<!-- 步骤 2：验证启用（单列表单） -->
 			<div v-if="step === 2" class="step-body">
-				<a-alert type="info" class="mb16">
+				<a-alert type="info">
 					输入验证器 App 当前显示的 6 位动态码，并输入当前密码完成安全确认。
 				</a-alert>
 				<a-form layout="vertical">
@@ -226,9 +226,11 @@ function finish() {
 				<div v-if="verifyError" class="field-error">{{ verifyError }}</div>
 			</div>
 
-			<!-- 步骤 3：保存恢复码 -->
+			<!-- 步骤 3：保存恢复码（单列） -->
 			<div v-if="step === 3" class="step-body">
-				<a-alert type="success" class="mb16">两步验证已开启。请立即保存以下恢复码。</a-alert>
+				<a-alert type="success" title="两步验证已开启">
+					请立即保存以下恢复码，验证器不可用时用它登录。
+				</a-alert>
 				<BackupCodesPanel :codes="backupCodes" />
 				<a-checkbox v-model="savedConfirmed" class="saved-check">我已妥善保存恢复码</a-checkbox>
 			</div>
@@ -256,11 +258,18 @@ function finish() {
 .wizard-steps {
 	margin-bottom: 20px;
 }
+/* 步骤内容容器：默认纵向单列 —— 步骤 2/3 都是「提示 + 单列表单/面板」。
+   若沿用横向 flex（步骤 1 的分栏写法），alert 会被压成左侧窄条、复选框被挤到
+   只剩十几像素宽，文字逐字换行。只有步骤 1 需要左右分栏，故拆出 --row 修饰符。 */
 .step-body {
 	display: flex;
-	gap: 20px;
+	flex-direction: column;
+	gap: 14px;
 	min-height: 240px;
+}
+.step-body--row {
 	flex-direction: row;
+	gap: 20px;
 }
 .qr-col {
 	display: flex;
@@ -337,10 +346,12 @@ function finish() {
 	color: rgb(var(--danger-6));
 }
 .saved-check {
-	margin-top: 4px;
-}
-.mb16 {
-	margin-bottom: 16px;
+	display: flex;
+	align-items: center;
+	padding: 10px 12px;
+	background: var(--ta-bg-secondary);
+	border-radius: 8px;
+	font-size: 13px;
 }
 .wizard-footer {
 	display: flex;
@@ -352,7 +363,7 @@ function finish() {
 }
 
 @media (max-width: 600px) {
-	.step-body {
+	.step-body--row {
 		flex-direction: column;
 		align-items: center;
 	}

@@ -40,7 +40,13 @@ const auditLevel = ref('masked')
 const auditLoading = ref(false)
 const auditSaving = ref(false)
 
+// 审计级别选项必须与后端可写值全集一致（internal/logic/tenant/audit_config.go 的
+// AuditLevelFull / FullText / Masked / QuestionOnly / None）。此前这里漏了 `full`，
+// 又在 fetchAuditConfig 里把 `full` 映射成 `full_text`，导致：① 本页展示的当前级别
+// 本身就是错的；② 在「审计设置」页选了「完整记录」后回到本页点一次「保存配置」，
+// 会把租户的审计级别静默降级为 full_text。选项与 AuditConfigPage.vue 保持一致。
 const auditLevelOptions = [
+	{ label: '完整记录', value: 'full', desc: '记录所有请求的完整内容（含请求体和响应体）' },
 	{ label: '全量文本', value: 'full_text', desc: '记录思考过程和回答内容，不含原始 SSE 数据' },
 	{ label: '脱敏记录', value: 'masked', desc: '记录请求和响应，但敏感字段会脱敏处理' },
 	{ label: '仅记录提问', value: 'question_only', desc: '仅记录用户提问内容，不记录模型回复' },
@@ -175,7 +181,8 @@ async function fetchAuditConfig() {
 	try {
 		const res: any = await request.get('/tenant/audit/config')
 		const data = res.data?.data
-		auditLevel.value = (data?.audit_level === 'full' ? 'full_text' : data?.audit_level) || 'masked'
+		// 原样回填，不做任何降级映射（见上方 auditLevelOptions 的说明）
+		auditLevel.value = data?.audit_level || 'masked'
 	} catch {
 	} finally {
 		auditLoading.value = false
@@ -308,10 +315,14 @@ onMounted(() => {
 								placeholder="例如：某某科技"
 								:status="teamNameError ? 'error' : undefined"
 								@update:value="teamNameError = ''"
-							>
-								<template #feedback v-if="teamNameError">{{ teamNameError }}</template>
-							</n-input>
-							<p class="input-hint">汉字最多 8 个，字母最多 16 个</p>
+							/>
+							<!-- naive-ui 的 NInput 没有 feedback 插槽（它只渲染 default/prefix/suffix/
+							     separator/count/clear-icon，feedback 只存在于 n-form-item），
+							     写在 n-input 里是静默 no-op：只有红框生效、原因一个字都不显示。
+							     故提示改为输入框的兄弟节点。有错误时用错误文案顶替常规提示，
+							     避免上下两条提示同时出现。 -->
+							<p v-if="teamNameError" class="input-error-text">{{ teamNameError }}</p>
+							<p v-else class="input-hint">汉字最多 8 个，字母最多 16 个</p>
 						</div>
 						<div>
 							<label class="input-label">组织代码</label>
@@ -321,10 +332,10 @@ onMounted(() => {
 								placeholder="例如：my-team"
 								:status="codeError ? 'error' : undefined"
 								@update:value="codeError = ''"
-							>
-								<template #feedback v-if="codeError">{{ codeError }}</template>
-							</n-input>
-							<p class="input-hint">3-30 位，小写字母、数字、连字符，字母数字开头结尾</p>
+							/>
+							<!-- 同组织名称：提示挂兄弟节点，错误时顶替常规提示 -->
+							<p v-if="codeError" class="input-error-text">{{ codeError }}</p>
+							<p v-else class="input-hint">3-30 位，小写字母、数字、连字符，字母数字开头结尾</p>
 						</div>
 					</div>
 

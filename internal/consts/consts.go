@@ -162,6 +162,7 @@ const (
 	Code2FATooManyAttempts  = 10056
 	CodeCaptchaRequired     = 10057
 	CodeCaptchaFailed       = 10058
+	CodeTotpReused          = 10070 // 取本段文档化空洞（10070-72），安全域 10059+ 已被 OAuth 段占用
 
 	// OAuth errors (10059+)
 	CodeOAuthDisabled      = 10059
@@ -319,6 +320,7 @@ const (
 	MsgTotpNotEnabled      = "未启用双因素认证"
 	MsgBackupCodeInvalid   = "恢复码无效"
 	Msg2FATooManyAttempts  = "验证码错误次数过多，请重新登录"
+	MsgTotpReused          = "该验证码已被使用，请等待验证器刷新后重试"
 	MsgTurnstileFailed     = "人机验证失败"
 	MsgIpRestricted        = "IP 地址不在白名单中"
 	MsgHighRisk2FARequired = "高风险操作需要二次验证"

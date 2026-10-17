@@ -9,10 +9,7 @@ import (
 	"github.com/pquerna/otp/totp"
 )
 
-const (
-	issuerName    = "Team-API"
-	accountPrefix = "team-api"
-)
+const issuerName = "Team-API"
 
 // GenerateSecret generates a new TOTP secret for a user.
 // Returns the secret string and the otpauth:// URI for QR code scanning.

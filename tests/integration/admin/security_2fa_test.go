@@ -73,8 +73,25 @@ func TestAdmin2FALifecycle(t *testing.T) {
 		t.Fatal("me should report totp_enabled=true after enable")
 	}
 
+	// ── 已启用守卫：setup+enable 重复绑定被拒绝（10049），封死覆盖已绑定
+	//    totp_secret/backup_codes 的持久接管链；换绑必须先 disable ──
+	setupResp2 := userClient.Post("/api/admin/security/2fa/setup", map[string]any{})
+	setupResp2.AssertSuccess(t)
+	var setupData2 struct {
+		Secret string `json:"secret"`
+	}
+	setupResp2.DecodeData(t, &setupData2)
+	rebindCode, err := totp.GenerateCode(setupData2.Secret, time.Now())
+	if err != nil {
+		t.Fatalf("generate totp rebind code error: %v", err)
+	}
+	userClient.Post("/api/admin/security/2fa/enable", map[string]any{
+		"code":     rebindCode,
+		"password": password,
+	}).AssertError(t, consts.CodeTotpAlreadyEnabled)
+
 	// ── 重新登录：totp_required + provisional_token ──
-	login2 := testinfra.AuthenticateWithCreds(t, username, password)
+	login2 := testinfra.LoginWithCreds(t, username, password)
 	if !login2.TotpRequired || login2.ProvisionalToken == "" {
 		t.Fatalf("expected totp_required with provisional_token, got %+v", login2)
 	}
@@ -104,7 +121,7 @@ func TestAdmin2FALifecycle(t *testing.T) {
 	}
 
 	// ── 失败计数按用户维度：换新临时令牌仍被拦截 ──
-	login3 := testinfra.AuthenticateWithCreds(t, username, password)
+	login3 := testinfra.LoginWithCreds(t, username, password)
 	if !login3.TotpRequired {
 		t.Fatal("expected totp_required on re-login")
 	}
@@ -115,7 +132,7 @@ func TestAdmin2FALifecycle(t *testing.T) {
 	testinfra.DelRedisKey(t, fmt.Sprintf("2fa:fail:admin:%d", userID))
 
 	// ── 恢复码登录成功，拿正式令牌 ──
-	login4 := testinfra.AuthenticateWithCreds(t, username, password)
+	login4 := testinfra.LoginWithCreds(t, username, password)
 	if !login4.TotpRequired {
 		t.Fatal("expected totp_required on re-login after window reset")
 	}
@@ -143,4 +160,44 @@ func TestAdmin2FALifecycle(t *testing.T) {
 	if meData.TotpEnabled {
 		t.Fatal("me should report totp_enabled=false after disable")
 	}
+
+	// ── enable 密码尝试计入失败闸门：错密码连发先 10023，达阈值后 10056，
+	//    且正确密码也被拦——enable 是绕过账号锁定在线试密码的唯一入口 ──
+	setupResp3 := userClient2.Post("/api/admin/security/2fa/setup", map[string]any{})
+	setupResp3.AssertSuccess(t)
+	var setupData3 struct {
+		Secret string `json:"secret"`
+	}
+	setupResp3.DecodeData(t, &setupData3)
+	sawPwdWrong, sawPwdBlocked := false, false
+	for i := 0; i < 15; i++ {
+		r := userClient2.Post("/api/admin/security/2fa/enable", map[string]any{
+			"code":     "123456",
+			"password": "definitely-wrong-password",
+		})
+		switch r.Code {
+		case consts.CodeOldPasswordWrong: // enable 复用 10023「密码错误」
+			sawPwdWrong = true
+		case consts.Code2FATooManyAttempts:
+			sawPwdBlocked = true
+		default:
+			t.Fatalf("unexpected enable code=%d message=%q", r.Code, r.Message)
+		}
+		if sawPwdBlocked {
+			break
+		}
+	}
+	if !sawPwdWrong || !sawPwdBlocked {
+		t.Fatalf("expected password-wrong (10023) then blocked (10056) on enable, got wrong=%v blocked=%v", sawPwdWrong, sawPwdBlocked)
+	}
+
+	// 正确密码 + 有效码也必须被闸门拦截（按用户维度计数，非按请求维度）
+	rightCode, err := totp.GenerateCode(setupData3.Secret, time.Now())
+	if err != nil {
+		t.Fatalf("generate totp code error: %v", err)
+	}
+	userClient2.Post("/api/admin/security/2fa/enable", map[string]any{
+		"code":     rightCode,
+		"password": password,
+	}).AssertError(t, consts.Code2FATooManyAttempts)
 }

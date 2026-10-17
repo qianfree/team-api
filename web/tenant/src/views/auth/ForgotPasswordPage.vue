@@ -220,8 +220,9 @@ function goBack() {
 					:status="errors.email ? 'error' : undefined"
 				>
 					<template #prefix><Icon name="mail" size="sm" class="text-gray-400" /></template>
-					<template #feedback v-if="errors.email">{{ errors.email }}</template>
 				</n-input>
+				<!-- NInput 无 feedback 插槽，提示改挂兄弟节点（同本页 captcha 提示的既有写法） -->
+				<p v-if="errors.email" class="input-error-text">{{ errors.email }}</p>
 			</div>
 
 			<SlideCaptcha ref="captchaRef" v-model="captcha" @verified="captchaVerified = $event" class="mb-4" />
@@ -276,9 +277,8 @@ function goBack() {
 					show-password-on="click"
 					placeholder="至少 8 位字符"
 					:status="errors.newPassword ? 'error' : undefined"
-				>
-					<template #feedback v-if="errors.newPassword">{{ errors.newPassword }}</template>
-				</n-input>
+				/>
+				<p v-if="errors.newPassword" class="input-error-text">{{ errors.newPassword }}</p>
 				<PasswordStrengthMeter :password="form.newPassword" />
 			</div>
 
@@ -290,9 +290,8 @@ function goBack() {
 					show-password-on="click"
 					placeholder="请再次输入新密码"
 					:status="errors.confirmPassword ? 'error' : undefined"
-				>
-					<template #feedback v-if="errors.confirmPassword">{{ errors.confirmPassword }}</template>
-				</n-input>
+				/>
+				<p v-if="errors.confirmPassword" class="input-error-text">{{ errors.confirmPassword }}</p>
 			</div>
 
 			<div class="flex gap-3">

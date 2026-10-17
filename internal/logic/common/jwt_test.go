@@ -10,6 +10,7 @@ import (
 
 func init() {
 	jwtSecret = []byte("test-secret-for-unit-tests-only!!")
+	stepUpTokenSecret = deriveStepUpSecret(jwtSecret)
 }
 
 // ─── HashRefreshToken ───────────────────────────────────────────────
@@ -252,6 +253,44 @@ func TestParseAccessToken_RejectsNoneAlgorithm(t *testing.T) {
 	}
 }
 
+// 会话绑定强校验：即使签名密钥正确，缺失 session_id 或 jti 的令牌也必须拒绝。
+// 该检查独立于密钥隔离防线存在——若未来有新令牌类型复用主密钥签名，
+// 无会话绑定的载荷也不能冒充访问令牌。
+func TestParseAccessToken_RejectsMissingSessionBinding(t *testing.T) {
+	now := time.Now()
+	base := JWTClaims{
+		UserID:    1,
+		UserType:  "admin",
+		Role:      "admin",
+		TenantID:  0,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    "team-api-test",
+			ExpiresAt: jwt.NewNumericDate(now.Add(30 * time.Minute)),
+			IssuedAt:  jwt.NewNumericDate(now),
+		},
+	}
+
+	noSession := base // 无 session_id 也无 jti
+	tokenStr, _ := jwt.NewWithClaims(jwt.SigningMethodHS256, noSession).SignedString(GetJWTSecret())
+	if _, err := ParseAccessToken(tokenStr); err == nil {
+		t.Fatal("expected error for token without session binding")
+	}
+
+	hasSessionNoJti := base
+	hasSessionNoJti.SessionID = 7
+	tokenStr, _ = jwt.NewWithClaims(jwt.SigningMethodHS256, hasSessionNoJti).SignedString(GetJWTSecret())
+	if _, err := ParseAccessToken(tokenStr); err == nil {
+		t.Fatal("expected error for token with session but no jti")
+	}
+
+	hasJtiNoSession := base
+	hasJtiNoSession.RegisteredClaims.ID = "jti-x"
+	tokenStr, _ = jwt.NewWithClaims(jwt.SigningMethodHS256, hasJtiNoSession).SignedString(GetJWTSecret())
+	if _, err := ParseAccessToken(tokenStr); err == nil {
+		t.Fatal("expected error for token with jti but no session")
+	}
+}
+
 // ─── RefreshToken hash consistency ──────────────────────────────────
 
 func TestRefreshTokenHashIsNotReversible(t *testing.T) {
@@ -273,6 +312,7 @@ func generateTestTokenPair(userID int64, userType, role string, tenantID, sessio
 		TenantID:  tenantID,
 		SessionID: sessionID,
 		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        "test-jti",
 			Issuer:    "team-api-test",
 			Subject:   "42",
 			ExpiresAt: jwt.NewNumericDate(now.Add(30 * time.Minute)),

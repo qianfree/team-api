@@ -57,7 +57,7 @@ function downloadCodes() {
 <style scoped>
 .codes-grid {
 	display: grid;
-	grid-template-columns: 1fr 1fr;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
 	gap: 8px;
 	margin-bottom: 12px;
 }
@@ -71,11 +71,15 @@ function downloadCodes() {
 	border: 1px solid var(--ta-border-light);
 	border-radius: 6px;
 	cursor: pointer;
-	transition: border-color 0.2s;
+	transition: border-color 0.2s, background-color 0.2s;
 	user-select: all;
 }
 .code-item:hover {
 	border-color: #14b8a6;
+	background: var(--ta-primary-light);
+}
+.code-item:active {
+	border-color: var(--ta-primary-hover);
 }
 .panel-actions {
 	display: flex;
@@ -86,8 +90,15 @@ function downloadCodes() {
 	padding: 8px 12px;
 	font-size: 12px;
 	line-height: 1.6;
-	color: var(--ta-text-tertiary);
+	color: var(--ta-text-secondary);
 	background: var(--color-fill-1);
 	border-radius: 6px;
+}
+
+/* 窄屏（弹窗内宽 < 420px 左右）两列会挤到换行，退化为单列 */
+@media (max-width: 520px) {
+	.codes-grid {
+		grid-template-columns: 1fr;
+	}
 }
 </style>

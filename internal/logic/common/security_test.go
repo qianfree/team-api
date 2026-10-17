@@ -65,7 +65,7 @@ func TestProvisionalToken_Expired(t *testing.T) {
 		},
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenStr, _ := token.SignedString(GetJWTSecret())
+	tokenStr, _ := token.SignedString(GetStepUpTokenSecret())
 
 	_, err := ParseProvisionalToken(tokenStr)
 	if err == nil {
@@ -86,7 +86,7 @@ func TestProvisionalToken_WrongPurpose(t *testing.T) {
 		},
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenStr, _ := token.SignedString(GetJWTSecret())
+	tokenStr, _ := token.SignedString(GetStepUpTokenSecret())
 
 	_, err := ParseProvisionalToken(tokenStr)
 	if err == nil {
@@ -136,7 +136,7 @@ func TestConfirmToken_Expired(t *testing.T) {
 		},
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenStr, _ := token.SignedString(GetJWTSecret())
+	tokenStr, _ := token.SignedString(GetStepUpTokenSecret())
 
 	_, err := ParseConfirmToken(tokenStr)
 	if err == nil {
@@ -156,7 +156,7 @@ func TestConfirmToken_WrongPurpose(t *testing.T) {
 		},
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenStr, _ := token.SignedString(GetJWTSecret())
+	tokenStr, _ := token.SignedString(GetStepUpTokenSecret())
 
 	_, err := ParseConfirmToken(tokenStr)
 	if err == nil {
@@ -186,6 +186,28 @@ func TestConfirmTokenCannotParseAsProvisional(t *testing.T) {
 	_, err := ParseProvisionalToken(confToken)
 	if err == nil {
 		t.Fatal("confirm token should not parse as provisional token")
+	}
+}
+
+// 临时/确认令牌不得被当作访问令牌接受：步进令牌曾与访问令牌共用签名密钥且
+// 字段兼容，只持账号密码的攻击者可用登录第一步返回的临时令牌冒充会话绕过
+// 2FA。防线有两层——密钥隔离（签名验证即失败）与 ParseAccessToken 的会话
+// 绑定强校验——本测试同时覆盖两层。
+func TestTempTokensCannotParseAsAccessToken(t *testing.T) {
+	provToken, err := GenerateProvisionalToken(context.Background(), 42, "admin", "super_admin", 0)
+	if err != nil {
+		t.Fatalf("generate provisional: %v", err)
+	}
+	if _, err := ParseAccessToken(provToken); err == nil {
+		t.Fatal("provisional token should not parse as access token")
+	}
+
+	confToken, err := GenerateConfirmToken(context.Background(), 42, "admin")
+	if err != nil {
+		t.Fatalf("generate confirm: %v", err)
+	}
+	if _, err := ParseAccessToken(confToken); err == nil {
+		t.Fatal("confirm token should not parse as access token")
 	}
 }
 
@@ -335,7 +357,7 @@ func generateTestProvisionalToken(userID int64, userType, role string, tenantID 
 		},
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(GetJWTSecret())
+	return token.SignedString(GetStepUpTokenSecret())
 }
 
 func generateTestConfirmToken(userID int64, userType string) (string, error) {
@@ -351,5 +373,5 @@ func generateTestConfirmToken(userID int64, userType string) (string, error) {
 		},
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(GetJWTSecret())
+	return token.SignedString(GetStepUpTokenSecret())
 }

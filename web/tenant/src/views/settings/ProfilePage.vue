@@ -557,9 +557,11 @@ async function handleOAuthUnlink(provider: string) {
 						show-password-on="click"
 						placeholder="请输入当前密码"
 						:status="passwordErrors.old_password ? 'error' : undefined"
-					>
-						<template #feedback v-if="passwordErrors.old_password">{{ passwordErrors.old_password }}</template>
-					</n-input>
+					/>
+					<!-- NInput 无 feedback 插槽，提示必须是兄弟节点，否则只剩下红框 -->
+					<p v-if="passwordErrors.old_password" class="input-error-text">
+						{{ passwordErrors.old_password }}
+					</p>
 				</div>
 
 				<div>
@@ -570,9 +572,10 @@ async function handleOAuthUnlink(provider: string) {
 						show-password-on="click"
 						placeholder="至少 8 位字符，且至少包含数字和字符"
 						:status="passwordErrors.new_password ? 'error' : undefined"
-					>
-						<template #feedback v-if="passwordErrors.new_password">{{ passwordErrors.new_password }}</template>
-					</n-input>
+					/>
+					<p v-if="passwordErrors.new_password" class="input-error-text">
+						{{ passwordErrors.new_password }}
+					</p>
 				</div>
 			</form>
 
