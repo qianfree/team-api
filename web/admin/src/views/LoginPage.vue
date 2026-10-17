@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { Message } from '@arco-design/web-vue'
 import type { FormInstance } from '@arco-design/web-vue'
@@ -11,6 +11,7 @@ import { extractApiError } from '@/utils/request'
 import request from '@/utils/request'
 import { getDeviceId } from '@/utils/deviceId'
 import SlideCaptcha from '@/components/SlideCaptcha.vue'
+import OtpInput from '@/components/OtpInput.vue'
 import { useSiteName } from '@/composables/useSiteName'
 
 const router = useRouter()
@@ -31,6 +32,8 @@ const show2FA = ref(false)
 const provisionalToken = ref('')
 const totpCode = ref('')
 const totpLoading = ref(false)
+const totpError = ref('')
+const otpRef = ref<InstanceType<typeof OtpInput> | null>(null)
 
 // Captcha state — always required
 const captcha = reactive({ captchaKey: '', captchaX: 0 })
@@ -122,7 +125,9 @@ async function handleLogin() {
     // Check if 2FA is required
     if (res?.totp_required) {
       provisionalToken.value = res.provisional_token
+      totpError.value = ''
       show2FA.value = true
+      nextTick(() => otpRef.value?.focusFirst())
       return
     }
     proceedAfterLogin()
@@ -138,24 +143,49 @@ async function handleLogin() {
 }
 
 async function handle2FAVerify() {
-  if (!totpCode.value) {
-    Message.warning('请输入验证码')
+  if (totpLoading.value) return
+  if (totpCode.value.length !== 6) {
+    totpError.value = '请输入完整的 6 位验证码'
     return
   }
+  totpError.value = ''
   totpLoading.value = true
   try {
-    const res = await request.post('/admin/auth/2fa/verify', {
-      provisional_token: provisionalToken.value,
-      code: totpCode.value,
-      device_id: getDeviceId(),
-    })
+    // 行内提示错误原因，故抑制全局 toast，避免重复信息
+    const res = await request.post(
+      '/admin/auth/2fa/verify',
+      {
+        provisional_token: provisionalToken.value,
+        code: totpCode.value,
+        device_id: getDeviceId(),
+      },
+      { _suppressErrorMsg: true } as any,
+    )
     authStore.applyTokensFrom2FA(res.data.data)
     proceedAfterLogin()
-  } catch {
-    // error toast already shown by interceptor
+  } catch (err: any) {
+    const apiErr = extractApiError(err)
+    totpError.value = apiErr?.message || '验证码不正确，请重新输入'
+    totpCode.value = ''
+    nextTick(() => otpRef.value?.focusFirst())
   } finally {
     totpLoading.value = false
   }
+}
+
+// 输入即清除错误态（错误由 handle2FAVerify 显式写入，避免清空验证码时被误清）
+function onTotpInput(v: string) {
+  totpCode.value = v.replace(/\D/g, '')
+  if (totpError.value) totpError.value = ''
+}
+
+// 返回登录：清临时凭据并重置滑块——密码步成功时滑块已被消耗，直接再点登录必然报过期
+function backToLogin() {
+  show2FA.value = false
+  totpCode.value = ''
+  totpError.value = ''
+  provisionalToken.value = ''
+  captchaRef.value?.resetCaptcha()
 }
 </script>
 
@@ -212,97 +242,120 @@ async function handle2FAVerify() {
       </div>
 
       <div class="login-form glass animate-slideUp">
-        <div class="login-form__header">
-          <h2 class="login-form__title">欢迎回来</h2>
-          <p class="login-form__subtitle">请登录管理后台</p>
-        </div>
+        <!-- 2FA Verification：整卡切换为验证码表单（与租户端一致），而非在登录表单下方追加 -->
+        <template v-if="show2FA">
+          <div class="twofa">
+            <div class="twofa__badge">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 3l7 3v5.4c0 4.3-2.9 7.8-7 9.1-4.1-1.3-7-4.8-7-9.1V6l7-3z" />
+                <path d="M9.4 12.1l1.9 1.9 3.4-3.7" />
+              </svg>
+            </div>
 
-        <AForm
-          ref="formRef"
-          :model="form"
-          layout="vertical"
-          size="large"
-        >
-          <AFormItem
-            field="username"
-            label="用户名"
-            :rules="[{ required: true, message: '请输入用户名' }]"
-          >
-            <AInput
-              v-model="form.username"
-              placeholder="请输入用户名"
-              @keydown.enter="handleLogin"
+            <h2 class="twofa__title">双因素认证</h2>
+            <p class="twofa__subtitle">打开身份验证器 App，输入当前 6 位动态验证码</p>
+
+            <OtpInput
+              ref="otpRef"
+              class="twofa__otp"
+              :model-value="totpCode"
+              :invalid="!!totpError"
+              :disabled="totpLoading"
+              autofocus
+              @update:model-value="onTotpInput"
+              @complete="handle2FAVerify"
             />
-          </AFormItem>
-          <AFormItem
-            field="password"
-            label="密码"
-            :rules="[{ required: true, message: '请输入密码' }]"
-          >
-            <AInput
-              v-model="form.password"
-              type="password"
-              placeholder="请输入密码"
-              @keydown.enter="handleLogin"
-            />
-          </AFormItem>
-          <!-- Captcha -->
-          <div style="margin-bottom: 20px;">
-            <SlideCaptcha ref="captchaRef" v-model="captcha" />
-          </div>
-          <!-- Remember Me -->
-          <AFormItem>
-            <ACheckbox v-model="form.remember">
-              记住登录状态（7天免登录）
-            </ACheckbox>
-          </AFormItem>
-          <AFormItem>
+
+            <div class="twofa__message">
+              <transition name="twofa-msg">
+                <p v-if="totpError" class="twofa__message-text">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M12 8v4.5M12 16h.01" />
+                  </svg>
+                  <span>{{ totpError }}</span>
+                </p>
+              </transition>
+            </div>
+
             <AButton
+              class="twofa__submit"
               type="primary"
               long
               size="large"
-              :loading="loading"
-              @click="handleLogin"
+              :loading="totpLoading"
+              @click="handle2FAVerify"
             >
-              登 录
+              验证并登录
             </AButton>
-          </AFormItem>
-        </AForm>
 
-        <!-- 2FA Verification -->
-        <div v-if="show2FA" class="totp-form">
-          <div class="login-form__header">
-            <h2 class="login-form__title">双因素认证</h2>
-            <p class="login-form__subtitle">请输入身份验证器中的 6 位数字码</p>
+            <button type="button" class="twofa__back" @click="backToLogin">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M15 18l-6-6 6-6" />
+              </svg>
+              返回登录
+            </button>
           </div>
-          <AFormItem>
-            <AInput
-              v-model="totpCode"
-              placeholder="6 位数字验证码"
-              maxlength="6"
-              size="large"
-              @keydown.enter="handle2FAVerify"
-            />
-          </AFormItem>
-          <AButton
-            type="primary"
-            long
+        </template>
+
+        <template v-else>
+          <div class="login-form__header">
+            <h2 class="login-form__title">欢迎回来</h2>
+            <p class="login-form__subtitle">请登录管理后台</p>
+          </div>
+
+          <AForm
+            ref="formRef"
+            :model="form"
+            layout="vertical"
             size="large"
-            :loading="totpLoading"
-            @click="handle2FAVerify"
           >
-            验证并登录
-          </AButton>
-          <AButton
-            type="text"
-            long
-            size="small"
-            class="mt-2"
-            @click="show2FA = false; totpCode = ''"
-          >
-            返回登录
-          </AButton>
-        </div>
+            <AFormItem
+              field="username"
+              label="用户名"
+              :rules="[{ required: true, message: '请输入用户名' }]"
+            >
+              <AInput
+                v-model="form.username"
+                placeholder="请输入用户名"
+                @keydown.enter="handleLogin"
+              />
+            </AFormItem>
+            <AFormItem
+              field="password"
+              label="密码"
+              :rules="[{ required: true, message: '请输入密码' }]"
+            >
+              <AInput
+                v-model="form.password"
+                type="password"
+                placeholder="请输入密码"
+                @keydown.enter="handleLogin"
+              />
+            </AFormItem>
+            <!-- Captcha -->
+            <div style="margin-bottom: 20px;">
+              <SlideCaptcha ref="captchaRef" v-model="captcha" />
+            </div>
+            <!-- Remember Me -->
+            <AFormItem>
+              <ACheckbox v-model="form.remember">
+                记住登录状态（7天免登录）
+              </ACheckbox>
+            </AFormItem>
+            <AFormItem>
+              <AButton
+                type="primary"
+                long
+                size="large"
+                :loading="loading"
+                @click="handleLogin"
+              >
+                登 录
+              </AButton>
+            </AFormItem>
+          </AForm>
+        </template>
       </div>
 
       <!-- Mobile Footer (hidden on desktop) -->
@@ -602,12 +655,115 @@ async function handle2FAVerify() {
   }
 }
 
-.totp-form {
-  margin-top: 16px;
+/* ===== 2FA 验证码 ===== */
+.twofa {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
 }
 
-.mt-2 {
+.twofa__badge {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  margin-bottom: 18px;
+  border-radius: 18px;
+  color: var(--ta-primary);
+  background: linear-gradient(135deg, rgba(20, 184, 166, 0.14), rgba(13, 148, 136, 0.05));
+  box-shadow: inset 0 0 0 1px rgba(13, 148, 136, 0.14);
+}
+
+.twofa__badge svg {
+  width: 26px;
+  height: 26px;
+}
+
+.twofa__title {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: #0f172a;
+  margin: 0 0 8px;
+}
+
+.twofa__subtitle {
+  max-width: 300px;
+  margin: 0 0 28px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #94a3b8;
+}
+
+.twofa__otp {
+  width: 100%;
+}
+
+/* 预留固定高度，避免错误提示出现时按钮跳动 */
+.twofa__message {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 18px;
   margin-top: 8px;
+}
+
+.twofa__message-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ta-danger);
+}
+
+.twofa__message-text svg {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+}
+
+.twofa-msg-enter-active,
+.twofa-msg-leave-active {
+  transition: opacity 0.18s var(--ta-ease), transform 0.18s var(--ta-ease);
+}
+
+.twofa-msg-enter-from,
+.twofa-msg-leave-to {
+  opacity: 0;
+  transform: translateY(-3px);
+}
+
+.twofa__submit {
+  margin-top: 2px;
+}
+
+.twofa__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 16px;
+  padding: 6px 12px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #64748b;
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+
+.twofa__back svg {
+  width: 14px;
+  height: 14px;
+}
+
+.twofa__back:hover {
+  color: var(--ta-primary);
+  background: var(--ta-primary-light);
 }
 
 /* ===== Agreements Modal ===== */
