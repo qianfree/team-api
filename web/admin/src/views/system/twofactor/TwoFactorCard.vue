@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import request, { extractApiError } from '@/utils/request'
+import { announce } from '@/utils/announce'
 import { useAuthStore } from '@/stores/auth'
 import Setup2FAModal from './Setup2FAModal.vue'
 import BackupCodesPanel from './BackupCodesPanel.vue'
@@ -15,6 +16,7 @@ const showSetup = ref(false)
 function onSetupDone() {
 	showSetup.value = false
 	Message.success('两步验证已开启')
+	announce('两步验证已开启')
 	// 路由守卫每会话只拉一次 me，必须显式刷新（同时同步 localStorage 镜像）
 	authStore.fetchMe()
 }
@@ -45,6 +47,7 @@ async function handleDisable(): Promise<boolean> {
 			{ _suppressErrorMsg: true },
 		)
 		Message.success('两步验证已关闭')
+		announce('两步验证已关闭')
 		authStore.fetchMe()
 		return true
 	} catch (e) {
@@ -89,6 +92,12 @@ async function handleRegen() {
 		regenLoading.value = false
 	}
 }
+
+// 生成成功后表单整块换成恢复码列表，焦点必须跟着送进去，否则读屏用户不知道页面变了
+const regenCodesEl = ref<HTMLElement | null>(null)
+watch(regenCodes, (v) => {
+	if (v.length > 0) nextTick(() => regenCodesEl.value?.focus())
+})
 </script>
 
 <template>
@@ -146,10 +155,10 @@ async function handleRegen() {
 		<a-alert type="warning" class="mb16">关闭后账号仅受密码保护，安全性降低。</a-alert>
 		<a-form layout="vertical">
 			<a-form-item label="动态验证码或恢复码">
-				<a-input v-model="disableCode" placeholder="验证器 6 位动态码，或任一未使用的恢复码" />
+				<a-input v-model="disableCode" placeholder="验证器 6 位动态码，或任一未使用的恢复码" allow-clear />
 			</a-form-item>
 		</a-form>
-		<div v-if="disableError" class="field-error">{{ disableError }}</div>
+		<div v-if="disableError" role="alert" class="field-error">{{ disableError }}</div>
 	</a-modal>
 
 	<!-- 重新生成恢复码 -->
@@ -164,16 +173,23 @@ async function handleRegen() {
 			<a-alert type="warning" class="mb16">重新生成后旧的恢复码将全部作废，请确认手头验证器可用。</a-alert>
 			<a-form layout="vertical" @submit="handleRegen">
 				<a-form-item label="动态验证码">
-					<a-input v-model="regenCode" placeholder="验证器当前显示的 6 位动态码" :max-length="6" />
+					<a-input
+						v-model="regenCode"
+						placeholder="验证器当前显示的 6 位动态码"
+						:max-length="6"
+						:input-attrs="{ inputmode: 'numeric', autocomplete: 'one-time-code' }"
+					/>
 				</a-form-item>
 			</a-form>
-			<div v-if="regenError" class="field-error">{{ regenError }}</div>
+			<div v-if="regenError" role="alert" class="field-error">{{ regenError }}</div>
 			<div class="regen-footer">
 				<a-button type="primary" :loading="regenLoading" @click="handleRegen">生成新恢复码</a-button>
 			</div>
 		</template>
 		<template v-else>
-			<BackupCodesPanel :codes="regenCodes" />
+			<div ref="regenCodesEl" tabindex="-1" role="group" aria-label="新恢复码" class="regen-codes-focus">
+				<BackupCodesPanel :codes="regenCodes" />
+			</div>
 		</template>
 	</a-modal>
 </template>
@@ -268,5 +284,9 @@ async function handleRegen() {
 	display: flex;
 	justify-content: flex-end;
 	margin-top: 12px;
+}
+.regen-codes-focus:focus {
+	/* tabindex=-1 仅接受程序化聚焦（切换到恢复码列表时移动焦点），不参与 Tab 序，去掉焦点环不影响键盘用户 */
+	outline: none;
 }
 </style>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, nextTick, computed } from 'vue'
+import { ref, reactive, onMounted, nextTick, computed, watch } from 'vue'
 import { NInput, NCheckbox } from 'naive-ui'
 import { useRouter, useRoute } from 'vue-router'
 import { useTenantAuthStore } from '@/stores/tenant-auth'
@@ -37,6 +37,14 @@ const show2FA = ref(false)
 const provisionalToken = ref('')
 const totpCode = ref('')
 const totpLoading = ref(false)
+const totpInputRef = ref<HTMLInputElement | null>(null)
+const loginHeadingRef = ref<HTMLHeadingElement | null>(null)
+// 登录表单 ↔ 2FA 表单是 v-if 整块替换，焦点会掉到 body；切换后必须手动送焦点，否则读屏用户会"突然失明"
+watch(show2FA, async (v) => {
+	await nextTick()
+	if (v) totpInputRef.value?.focus()
+	else loginHeadingRef.value?.focus()
+})
 
 // Captcha state
 const captcha = reactive({ captchaKey: '', captchaX: 0 })
@@ -277,12 +285,23 @@ async function handleOAuthLogin(provider: string) {
 				<h2 class="text-xl font-bold text-gray-900">双因素认证</h2>
 				<p class="mt-1.5 text-sm text-gray-500">请输入身份验证器中的 6 位数字码</p>
 			</div>
-			<div v-if="errorMsg" class="mb-4 px-3 py-2 rounded-lg bg-red-50 text-red-600 text-sm">
+			<div v-if="errorMsg" role="alert" class="mb-4 px-3 py-2 rounded-lg bg-red-50 text-red-600 text-sm">
 				{{ errorMsg }}
 			</div>
 			<div class="space-y-4">
 				<div>
-					<input v-model="totpCode" type="text" class="input text-center text-lg tracking-widest" placeholder="000000" maxlength="6" @keydown.enter="handle2FAVerify" />
+					<input
+						ref="totpInputRef"
+						v-model="totpCode"
+						type="text"
+						class="input text-center text-lg tracking-widest"
+						placeholder="000000"
+						maxlength="6"
+						inputmode="numeric"
+						autocomplete="one-time-code"
+						aria-label="动态验证码"
+						@keydown.enter="handle2FAVerify"
+					/>
 				</div>
 				<button class="btn btn-primary w-full" :disabled="totpLoading" @click="handle2FAVerify">
 					{{ totpLoading ? '验证中...' : '验证并登录' }}
@@ -296,7 +315,7 @@ async function handleOAuthLogin(provider: string) {
 		<div v-else class="animate-slide-up">
 			<!-- Header -->
 			<div class="mb-6 text-center">
-				<h2 class="text-xl font-bold text-gray-900">欢迎回来</h2>
+				<h2 ref="loginHeadingRef" tabindex="-1" class="text-xl font-bold text-gray-900">欢迎回来</h2>
 				<p class="mt-1.5 text-sm text-gray-500">登录您的组织账户以继续</p>
 			</div>
 
@@ -389,7 +408,7 @@ async function handleOAuthLogin(provider: string) {
 				</button>
 				<!-- Error Message -->
 				<transition name="slide-fade">
-					<div v-if="errorMsg" class="rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+					<div v-if="errorMsg" role="alert" class="rounded-xl border border-red-200 bg-red-50 px-4 py-3">
 						<div class="flex items-start gap-2">
 							<Icon name="exclamationCircle" size="sm" class="mt-0.5 text-red-500 flex-shrink-0" />
 							<p class="text-sm text-red-600">{{ errorMsg }}</p>
@@ -466,7 +485,7 @@ async function handleOAuthLogin(provider: string) {
 				</button>
 				<!-- Error Message -->
 				<transition name="slide-fade">
-					<div v-if="errorMsg" class="rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+					<div v-if="errorMsg" role="alert" class="rounded-xl border border-red-200 bg-red-50 px-4 py-3">
 						<div class="flex items-start gap-2">
 							<Icon name="exclamationCircle" size="sm" class="mt-0.5 text-red-500 flex-shrink-0" />
 							<p class="text-sm text-red-600">{{ errorMsg }}</p>

@@ -261,6 +261,7 @@ function backToLogin() {
               :model-value="totpCode"
               :invalid="!!totpError"
               :disabled="totpLoading"
+              described-by="twofa-error"
               autofocus
               @update:model-value="onTotpInput"
               @complete="handle2FAVerify"
@@ -268,7 +269,7 @@ function backToLogin() {
 
             <div class="twofa__message">
               <transition name="twofa-msg">
-                <p v-if="totpError" class="twofa__message-text">
+                <p v-if="totpError" id="twofa-error" role="alert" class="twofa__message-text">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
                     <circle cx="12" cy="12" r="9" />
                     <path d="M12 8v4.5M12 16h.01" />
