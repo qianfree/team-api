@@ -92,9 +92,12 @@ func GlobalStreamIdleTimeoutSeconds() int {
 }
 
 // GetTimeoutSeconds 返回请求超时秒数。
-// 优先级：渠道自定义 > 全局配置（系统设置）> 内置默认。图片生成模式强制最低 600s（即使渠道配置了更短的自定义超时）。
+// 优先级：渠道自定义 > 全局配置（系统设置）> 内置默认。图片生成/编辑模式强制最低 600s
+// （即使渠道配置了更短的自定义超时）——生图普遍 30-60s+ 且 b64 响应体 MB 级下载慢，
+// 短超时会在读响应体阶段误杀（edits 曾被全局 30s 配置打到 Client.Timeout 取消）。
 func (s ChannelSettings) GetTimeoutSeconds(relayMode int) int {
-	if constant.RelayMode(relayMode) == constant.RelayModeImagesGenerations {
+	switch constant.RelayMode(relayMode) {
+	case constant.RelayModeImagesGenerations, constant.RelayModeImagesEdits:
 		if s.TimeoutSeconds > ImagesGenerationTimeoutSecs {
 			return s.TimeoutSeconds
 		}

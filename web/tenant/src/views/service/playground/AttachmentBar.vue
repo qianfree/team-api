@@ -17,6 +17,12 @@ const props = withDefaults(defineProps<{
 	/** 禁用原因，作为上传按钮的 title 与旁注展示 */
 	disabledReason?: string
 	/**
+	 * 缩略片点击行为的 title 提示文案（{name} 会替换成附件名）。
+	 * 缺省按 @ 插入场景展示「点击插入 [@xxx]」；无 @ 机制的场景（如图片 Tab
+	 * 把点击用作放大预览）传入自己的描述，避免提示与实际行为不符。
+	 */
+	clickHint?: string
+	/**
 	 * 视觉变体：
 	 * - boxed（默认）：带虚线框的独立附件带，含上传按钮与提示文案
 	 * - bare：只渲染附件缩略片，无边框无上传按钮，供父组件把输入区整合成一体时使用
@@ -26,6 +32,7 @@ const props = withDefaults(defineProps<{
 }>(), {
 	disabled: false,
 	disabledReason: '',
+	clickHint: '',
 	variant: 'boxed',
 })
 
@@ -40,6 +47,10 @@ const dragging = ref(false)
 
 const full = computed(() => props.attachments.length >= props.max)
 const uploadDisabled = computed(() => props.disabled || full.value)
+
+function thumbTitle(att: Attachment): string {
+	return `${att.fileName} · ${props.clickHint ? props.clickHint.replace('{name}', att.name) : `点击插入 [@${att.name}]`}`
+}
 
 function pick() {
 	if (uploadDisabled.value) return
@@ -78,7 +89,7 @@ defineExpose({ pick })
 		>
 			<button
 				class="flex items-center gap-1.5 cursor-pointer"
-				:title="`${att.fileName} · 点击插入 [@${att.name}]`"
+				:title="thumbTitle(att)"
 				@click="emit('insert', att.name)"
 			>
 				<img
@@ -133,7 +144,7 @@ defineExpose({ pick })
 			>
 				<button
 					class="flex items-center gap-2 cursor-pointer"
-					:title="`${att.fileName} · 点击插入 [@${att.name}]`"
+					:title="thumbTitle(att)"
 					@click="emit('insert', att.name)"
 				>
 					<img

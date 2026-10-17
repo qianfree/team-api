@@ -63,6 +63,30 @@ type multimodalImageResponse struct {
 
 // ==================== 转换实现 ====================
 
+// referenceImages 从 OpenAI Images 请求体提取参考图（图生图/编辑素材）。
+// 字段形态与网关 dto.ImageRequest 约定一致：image 接受单张字符串或多张数组，images 为数组；
+// 取值可以是 URL 或 base64 data URL（DashScope multimodal 的 image 内容项两种都收）。
+func referenceImages(req map[string]any) []string {
+	var out []string
+	collect := func(v any) {
+		switch t := v.(type) {
+		case string:
+			if t != "" {
+				out = append(out, t)
+			}
+		case []any:
+			for _, item := range t {
+				if s, ok := item.(string); ok && s != "" {
+					out = append(out, s)
+				}
+			}
+		}
+	}
+	collect(req["image"])
+	collect(req["images"])
+	return out
+}
+
 // convertMultimodalImageRequest 将 OpenAI Images 请求转换为 DashScope multimodal 请求体。
 func convertMultimodalImageRequest(requestBody []byte, info *common.RelayInfo) (io.Reader, error) {
 	var req map[string]any
@@ -71,11 +95,18 @@ func convertMultimodalImageRequest(requestBody []byte, info *common.RelayInfo) (
 	}
 
 	prompt, _ := req["prompt"].(string)
+	content := make([]multimodalImageContent, 0, 2)
+	// 参考图（如有）排在文本前：DashScope multimodal 里图片素材与文本同为 content 项，
+	// 垫图/编辑模型按内容顺序理解「先给图、再给指令」
+	for _, img := range referenceImages(req) {
+		content = append(content, multimodalImageContent{Image: img})
+	}
+	content = append(content, multimodalImageContent{Text: prompt})
 	mm := multimodalImageRequest{
 		Model: info.ChannelMeta.UpstreamModelName,
 		Input: multimodalImageInput{
 			Messages: []multimodalImageMessage{
-				{Role: "user", Content: []multimodalImageContent{{Text: prompt}}},
+				{Role: "user", Content: content},
 			},
 		},
 		Parameters: map[string]any{},

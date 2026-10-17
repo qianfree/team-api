@@ -88,6 +88,7 @@ func validateRelayRequest(
 	ctx context.Context,
 	body []byte,
 	path string,
+	headers http.Header,
 	rc *RelayContext,
 	provider common.DataProvider,
 	billing common.BillingProvider,
@@ -132,9 +133,11 @@ func validateRelayRequest(
 		}
 	}
 
-	// 2. 解析请求体获取模型名
+	// 2. 解析请求体获取模型名（JSON 与 multipart 双形态：官方 SDK 对 images/edits、
+	// audio/transcriptions 等端点发 multipart 表单，文件 part 透传上游、此处只取标量字段）
 	var rawRequest map[string]json.RawMessage
-	if err := json.Unmarshal(body, &rawRequest); err != nil {
+	rawRequest, err := parseRequestBodyFields(body, headers)
+	if err != nil {
 		return nil, constant.NewRequestError("invalid request body", err)
 	}
 
@@ -412,7 +415,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 	}
 
 	// 校验请求（relay mode、模型、权限、限流）
-	v, err := validateRelayRequest(ctx, body, path, rc, provider, billing)
+	v, err := validateRelayRequest(ctx, body, path, headers, rc, provider, billing)
 	if err != nil {
 		return nil, nil, err
 	}
