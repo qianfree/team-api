@@ -137,11 +137,20 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 	// responses 入站 + 上游原生支持 Responses 协议：保持 Responses 格式直连，不做 chat 转换
 	responsesUpstream := info.ChannelMeta.UpstreamSpeaksResponses() && info.InboundFormat == constant.RelayFormatResponses
 
-	// Audio/Rerank: OpenAI 原生格式直接透传（不做 replaceModelIfNeeded 和 injectStreamOptions）
+	// Audio：speech 为 JSON 体（含 model 字段，正常做模型映射）；STT/翻译为
+	// multipart 表单（模型映射须在表单字段层改写，文件 part 原样复制）。
+	// 均不注入 chat 专属的 stream_options。
 	switch mode {
-	case constant.RelayModeAudioSpeech, constant.RelayModeAudioTranscription,
-		constant.RelayModeAudioTranslation, constant.RelayModeRerank:
-		return bytes.NewReader(requestBody), nil
+	case constant.RelayModeAudioSpeech:
+		return replaceModelIfNeeded(bytes.NewReader(requestBody), info), nil
+	case constant.RelayModeAudioTranscription, constant.RelayModeAudioTranslation:
+		return bytes.NewReader(helper.RewriteAudioMultipartModel(requestBody, info)), nil
+	}
+
+	// Rerank: JSON 体透传但需做模型名映射，与响应侧 handleRerankResponse 的
+	// ReplaceModelName 回写对称；chat 专属后处理（stream_options 等）不适用
+	if mode == constant.RelayModeRerank {
+		return replaceModelIfNeeded(bytes.NewReader(requestBody), info), nil
 	}
 
 	// 以下方向已由 relaykit 转换矩阵接管（convertRequestBody 在 adaptor 之前完成）：

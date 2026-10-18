@@ -40,7 +40,16 @@ func (a *DispatchAdaptor) GetChannelName() string {
 // setupHeader 火山统一鉴权头（Bearer）。两链路共用。
 func setupHeader(header http.Header, info *common.RelayInfo) {
 	header.Set("Authorization", "Bearer "+info.ChannelMeta.ApiKey)
-	header.Set("Content-Type", "application/json")
+	contentType := "application/json"
+	// 音频转写（transcriptions）为 multipart 表单：必须携带客户端原始
+	// Content-Type（含 boundary），无条件写 JSON 会破坏表单结构导致上游解析失败。
+	// speech 为 JSON 请求体，维持默认 JSON 头。
+	if constant.RelayMode(info.RelayMode) == constant.RelayModeAudioTranscription && info.RequestHeaders != nil {
+		if ct := info.RequestHeaders.Get("Content-Type"); ct != "" {
+			contentType = ct
+		}
+	}
+	header.Set("Content-Type", contentType)
 	header.Set("Accept", "application/json")
 }
 

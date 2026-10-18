@@ -280,6 +280,12 @@ func settleSuccessfulRequest(
 	postCtx, postCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer postCancel()
 
+	// 上游未返回 usage 时回退请求侧估算（仅 embeddings/rerank），避免漏计费
+	if applyMissingUsageFallback(usage, v) {
+		g.Log().Warningf(postCtx, "[RelayHandler] upstream returned no usage, billing falls back to request-side estimate: request=%s mode=%s estimate_tokens=%d",
+			rc.RequestID, v.relayModeStr, v.estimatedTokens)
+	}
+
 	var settleResult *common.SettlementResult
 	if billing != nil && preDeductAmount > 0 {
 		settleResult = billing.SettleWithUsage(postCtx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
@@ -963,7 +969,13 @@ func convertRequestBody(ctx context.Context, info *common.RelayInfo, body []byte
 
 	// 字段清理
 	sanitized, _ := io.ReadAll(convertedBody)
-	sanitized = helper.SanitizeFields(sanitized, info.ChannelMeta.Settings)
+	sanitizeSettings := info.ChannelMeta.Settings
+	// speech 的 speed 是 TTS 语速参数（0.25~4.0），与 SanitizeFields 默认移除的
+	// Claude 推理速度模式同名参数含义不同：按模式放行，避免语速控制被误删
+	if constant.RelayMode(info.RelayMode) == constant.RelayModeAudioSpeech {
+		sanitizeSettings.AllowSpeed = true
+	}
+	sanitized = helper.SanitizeFields(sanitized, sanitizeSettings)
 	return bytes.NewReader(sanitized), nil
 }
 
@@ -1232,6 +1244,31 @@ func recordChannelError(rc *RelayContext, selection *common.ChannelSelection, mo
 // 视觉输入的真实 token 数与分辨率/切片策略强相关（OpenAI 1024px 约 765~1105，Gemini 约 258），
 // 这里取保守上界即可——预扣只是闸门，最终以上游 usage 结算，多退少补。
 const inlineMediaTokenCost = 1500
+
+// applyMissingUsageFallback 上游未返回 usage 时的计费兜底，返回是否生效。
+//
+// 部分 OpenAI 兼容网关的 embeddings/rerank 响应不带 usage 字段，按 0 token 结算
+// （预扣全额退还）会造成漏计费。这两个模式的成本几乎全部在输入侧，回退到请求侧
+// 估算（与预扣同源的 estimateInputTokens）比按 0 结算更接近真实成本；上游正常
+// 返回 usage 时本函数不改变任何数值。
+// chat 族不启用：流式已注入 stream_options 保证 usage，异常 0 usage 场景交由
+// 对账处理，避免粗估口径影响主路径计费。
+func applyMissingUsageFallback(usage *common.Usage, v *relayValidation) bool {
+	if usage == nil || v == nil || v.estimatedTokens <= 0 {
+		return false
+	}
+	switch v.relayMode {
+	case constant.RelayModeEmbeddings, constant.RelayModeRerank:
+	default:
+		return false
+	}
+	if usage.TotalInputTokens() > 0 || usage.CompletionTokens > 0 || usage.TotalTokens > 0 {
+		return false
+	}
+	usage.PromptTokens = v.estimatedTokens
+	usage.TotalTokens = v.estimatedTokens
+	return true
+}
 
 // estimateInputTokens 粗略估算输入 token 数（仅用于预扣，结算以上游 usage 为准）。
 //
