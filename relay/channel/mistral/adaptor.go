@@ -29,16 +29,22 @@ func (a *Adaptor) GetRequestURL(info *common.RelayInfo) (string, error) {
 	baseURL := strings.TrimSuffix(info.ChannelMeta.BaseURL, "/")
 
 	switch constant.RelayMode(info.RelayMode) {
-	case constant.RelayModeChatCompletions, constant.RelayModeClaudeMessages:
+	// Gemini/Responses 入站：矩阵已把请求体转成 OpenAI chat 格式，走 chat 端点
+	case constant.RelayModeChatCompletions, constant.RelayModeClaudeMessages,
+		constant.RelayModeGeminiChat,
+		constant.RelayModeResponses, constant.RelayModeResponsesCompact:
 		return baseURL + "/v1/chat/completions", nil
 	case constant.RelayModeCompletions:
 		return baseURL + "/v1/completions", nil
 	case constant.RelayModeEmbeddings:
 		return baseURL + "/v1/embeddings", nil
+	case constant.RelayModeRerank:
+		return baseURL + "/v1/rerank", nil
 	case constant.RelayModeImagesGenerations:
 		return baseURL + "/v1/images/generations", nil
 	default:
-		return baseURL + "/v1/chat/completions", nil
+		// 此前 default 静默回落 chat 端点，rerank/audio 等模式会带原体打错端点
+		return "", fmt.Errorf("mistral: unsupported relay mode: %d", info.RelayMode)
 	}
 }
 

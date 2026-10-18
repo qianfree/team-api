@@ -74,6 +74,13 @@ func RequestConverterIDForRoute(inbound, upstream constant.RelayFormat, relayMod
 	if inbound == upstream {
 		return "" // 同格式无需转换（这类请求走 passthrough）
 	}
+	// 转换器只实现 chat 族文本协议。embeddings/rerank/audio 等模式的请求体没有
+	// chat 语义，方向命中也不能按 chat 转换（否则畸形体发上游、客户端收到误导性
+	// 解析错误）；返回空串走 adaptor 原生透传路径，不支持该模式的渠道由
+	// GetRequestURL/ConvertRequest 显式报错。
+	if !isConvertibleRelayMode(relayMode) {
+		return ""
+	}
 	switch {
 	// OpenAI 入站 → 原生上游
 	case inbound == constant.RelayFormatOpenAI && upstream == constant.RelayFormatClaude:
@@ -116,4 +123,18 @@ func RequestConverterIDForRoute(inbound, upstream constant.RelayFormat, relayMod
 // 因此直接以 (client, upstream) 委托请求侧矩阵；RelayMode 传 chat（响应侧无模式歧义）。
 func ResponseConverterIDForRoute(upstream, client constant.RelayFormat) string {
 	return RequestConverterIDForRoute(client, upstream, int(constant.RelayModeChatCompletions))
+}
+
+// isConvertibleRelayMode 跨格式转换仅覆盖 chat 族文本模式——已注册的转换器
+// 全部按 chat 协议语义解析请求体，其余模式（embeddings/rerank/audio/images 等）
+// 即便格式方向命中也不具备转换语义。
+func isConvertibleRelayMode(relayMode int) bool {
+	switch constant.RelayMode(relayMode) {
+	case constant.RelayModeChatCompletions, constant.RelayModeCompletions,
+		constant.RelayModeClaudeMessages, constant.RelayModeGeminiChat,
+		constant.RelayModeResponses, constant.RelayModeResponsesCompact:
+		return true
+	default:
+		return false
+	}
 }

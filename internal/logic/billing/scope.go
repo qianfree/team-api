@@ -10,6 +10,7 @@ const (
 	ScopeFull           = "full"
 	ScopeChatOnly       = "chat_only"
 	ScopeEmbeddingsOnly = "embeddings_only"
+	ScopeRerankOnly     = "rerank_only"
 	ScopeImagesOnly     = "images_only"
 	ScopeAudioOnly      = "audio_only"
 	ScopeReadOnly       = "read_only"
@@ -34,6 +35,8 @@ func CheckScope(scope string, relayMode string) bool {
 			relayMode == "realtime"
 	case ScopeEmbeddingsOnly, "embedding":
 		return relayMode == "embeddings"
+	case ScopeRerankOnly, "rerank":
+		return relayMode == "rerank"
 	case ScopeImagesOnly, "image":
 		return relayMode == "images_generations" || relayMode == "images_edits"
 	case ScopeAudioOnly, "audio":

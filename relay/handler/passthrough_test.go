@@ -293,6 +293,12 @@ func TestRequestConverterIDForRoute(t *testing.T) {
 		{"OpenAI→Ollama chat", constant.RelayFormatOpenAI, constant.RelayFormatOllama, int(constant.RelayModeChatCompletions), relayconvert.ConverterOpenAIChatToOllama},
 		{"OpenAI→Ollama generate 不迁移", constant.RelayFormatOpenAI, constant.RelayFormatOllama, int(constant.RelayModeCompletions), ""},
 		{"OpenAI→Ollama embedding 不迁移", constant.RelayFormatOpenAI, constant.RelayFormatOllama, int(constant.RelayModeEmbeddings), ""},
+		// 非 chat 族模式不参与跨格式转换（embeddings/rerank 体没有 chat 语义，
+		// 方向命中也不能按 chat 转换；不支持该模式的渠道由 adaptor 显式报错）
+		{"OpenAI→Claude embeddings 不转换", constant.RelayFormatOpenAI, constant.RelayFormatClaude, int(constant.RelayModeEmbeddings), ""},
+		{"OpenAI→Claude rerank 不转换", constant.RelayFormatOpenAI, constant.RelayFormatClaude, int(constant.RelayModeRerank), ""},
+		{"OpenAI→Gemini embeddings 不转换", constant.RelayFormatOpenAI, constant.RelayFormatGemini, int(constant.RelayModeEmbeddings), ""},
+		{"Claude→OpenAI rerank 不转换", constant.RelayFormatClaude, constant.RelayFormatOpenAI, int(constant.RelayModeRerank), ""},
 		{"同格式不转换", constant.RelayFormatOpenAI, constant.RelayFormatOpenAI, int(constant.RelayModeChatCompletions), ""},
 		{"Claude→OpenAI 反向", constant.RelayFormatClaude, constant.RelayFormatOpenAI, int(constant.RelayModeClaudeMessages), relayconvert.ConverterClaudeMessagesToOpenAIChat},
 		{"Gemini→OpenAI 反向", constant.RelayFormatGemini, constant.RelayFormatOpenAI, int(constant.RelayModeGeminiChat), relayconvert.ConverterGeminiContentToOpenAIChat},

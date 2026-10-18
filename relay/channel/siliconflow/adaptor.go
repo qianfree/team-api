@@ -43,6 +43,8 @@ func (a *Adaptor) GetRequestURL(info *common.RelayInfo) (string, error) {
 		return baseURL + "/v1/completions", nil
 	case constant.RelayModeEmbeddings:
 		return baseURL + "/v1/embeddings", nil
+	case constant.RelayModeRerank:
+		return baseURL + "/v1/rerank", nil
 	case constant.RelayModeImagesGenerations:
 		return baseURL + "/v1/images/generations", nil
 	default:

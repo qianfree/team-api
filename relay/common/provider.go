@@ -102,7 +102,7 @@ type ApiKeyInfo struct {
 	TenantID             int64
 	UserID               int64
 	ProjectID            int64   // 项目密钥关联的项目 ID，个人密钥为 0
-	Scope                string  // full / chat_only / embeddings_only / images_only / read_only / custom
+	Scope                string  // full / chat_only / embeddings_only / rerank_only / images_only / audio_only / read_only / custom
 	Status               string  // active / disabled / expired
 	RateLimitQps         int     // 0 表示使用全局默认
 	RateLimitConcurrency int     // 0 表示不限制

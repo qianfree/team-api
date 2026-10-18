@@ -32,10 +32,14 @@ func (a *Adaptor) GetRequestURL(info *common.RelayInfo) (string, error) {
 	baseURL := strings.TrimSuffix(info.ChannelMeta.BaseURL, "/")
 
 	switch constant.RelayMode(info.RelayMode) {
-	case constant.RelayModeChatCompletions, constant.RelayModeClaudeMessages:
+	// Claude/Gemini/Responses 入站：矩阵已把请求体转成 OpenAI chat 格式，走 chat 端点
+	case constant.RelayModeChatCompletions, constant.RelayModeClaudeMessages,
+		constant.RelayModeGeminiChat,
+		constant.RelayModeResponses, constant.RelayModeResponsesCompact:
 		return baseURL + "/v1/chat/completions", nil
 	default:
-		return baseURL + "/v1/chat/completions", nil
+		// 此前 default 静默回落 chat 端点，embeddings 等模式会带原体打错端点
+		return "", fmt.Errorf("xunfei: unsupported relay mode: %d", info.RelayMode)
 	}
 }
 

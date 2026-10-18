@@ -75,8 +75,19 @@ func (a *Adaptor) Init(info *common.RelayInfo) {
 	a.claudeAdaptor.Init(info)
 }
 
-// GetRequestURL 构建上游请求 URL
+// GetRequestURL 构建上游请求 URL。
+// Vertex 链路只实现 chat 族模式（Claude rawPredict / Gemini generateContent）；
+// 其余模式（embeddings/rerank/images 等）显式报错——此前无模式分支，这类请求
+// 会带原体静默打到 chat 端点，上游报出难以理解的错误。
 func (a *Adaptor) GetRequestURL(info *common.RelayInfo) (string, error) {
+	switch constant.RelayMode(info.RelayMode) {
+	case constant.RelayModeChatCompletions, constant.RelayModeClaudeMessages,
+		constant.RelayModeGeminiChat,
+		constant.RelayModeResponses, constant.RelayModeResponsesCompact:
+	default:
+		return "", fmt.Errorf("vertex: unsupported relay mode: %d", info.RelayMode)
+	}
+
 	baseURL := strings.TrimSuffix(info.ChannelMeta.BaseURL, "/")
 	model := info.ChannelMeta.UpstreamModelName
 
