@@ -11,6 +11,10 @@ const router = useRouter()
 const activeSection = ref('quickstart')
 const activeEndpoint = ref('')
 
+// 中继接口与控制台同源部署，示例中的 API 地址直接取当前站点真实域名
+const apiBaseUrl = window.location.origin
+const wsBaseUrl = window.location.protocol === 'https:' ? `wss://${window.location.host}` : `ws://${window.location.host}`
+
 const sections = [
 	{ id: 'quickstart', label: '快速入门' },
 	{ id: 'api-reference', label: 'API 参考' },
@@ -21,7 +25,7 @@ const sections = [
 // ============================================================
 // Quick Start Examples
 // ============================================================
-const curlExample = `curl -X POST https://api.team-api.example.com/v1/chat/completions \\
+const curlExample = `curl -X POST ${apiBaseUrl}/v1/chat/completions \\
   -H "Authorization: Bearer sk-your-api-key" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -37,7 +41,7 @@ const pythonExample = `import openai
 
 client = openai.OpenAI(
     api_key="sk-your-api-key",
-    base_url="https://api.team-api.example.com/v1"
+    base_url="${apiBaseUrl}/v1"
 )
 
 response = client.chat.completions.create(
@@ -56,7 +60,7 @@ const nodeExample = `import OpenAI from "openai";
 
 const client = new OpenAI({
   apiKey: "sk-your-api-key",
-  baseURL: "https://api.team-api.example.com/v1",
+  baseURL: "${apiBaseUrl}/v1",
 });
 
 const stream = await client.chat.completions.create({
@@ -84,7 +88,7 @@ import (
 
 func main() {
     config := openai.DefaultConfig("sk-your-api-key")
-    config.BaseURL = "https://api.team-api.example.com/v1"
+    config.BaseURL = "${apiBaseUrl}/v1"
 
     client := openai.NewClientWithConfig(config)
 
@@ -828,7 +832,7 @@ const categories: Category[] = [
 				],
 				example: {
 					req: `// WebSocket 连接
-// wss://api.team-api.example.com/v1/realtime?model=gpt-4o-realtime-preview
+// ${wsBaseUrl}/v1/realtime?model=gpt-4o-realtime-preview
 // 连接后发送 session.update 事件：
 {
   "type": "session.update",
@@ -932,7 +936,7 @@ const embeddingExamplePython = `import openai
 
 client = openai.OpenAI(
     api_key="sk-your-api-key",
-    base_url="https://api.team-api.example.com/v1"
+    base_url="${apiBaseUrl}/v1"
 )
 
 response = client.embeddings.create(
@@ -942,7 +946,7 @@ response = client.embeddings.create(
 
 print(response.data[0].embedding[:5])  # [0.0023, -0.0094, 0.0151, ...]`
 
-const ttsExampleCurl = `curl -X POST https://api.team-api.example.com/v1/audio/speech \\
+const ttsExampleCurl = `curl -X POST ${apiBaseUrl}/v1/audio/speech \\
   -H "Authorization: Bearer sk-your-api-key" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -955,7 +959,7 @@ const ttsExampleCurl = `curl -X POST https://api.team-api.example.com/v1/audio/s
 const rerankExamplePython = `import requests
 
 resp = requests.post(
-    "https://api.team-api.example.com/v1/rerank",
+    "${apiBaseUrl}/v1/rerank",
     headers={
         "Authorization": "Bearer sk-your-api-key",
         "Content-Type": "application/json"
@@ -979,7 +983,7 @@ const streamChatExampleNode = `import OpenAI from "openai";
 
 const client = new OpenAI({
   apiKey: "sk-your-api-key",
-  baseURL: "https://api.team-api.example.com/v1",
+  baseURL: "${apiBaseUrl}/v1",
 });
 
 // Streaming chat with tool calling
@@ -1020,7 +1024,7 @@ const claudeExamplePython = `from anthropic import Anthropic
 
 client = Anthropic(
     api_key="sk-your-api-key",
-    base_url="https://api.team-api.example.com"
+    base_url="${apiBaseUrl}"
 )
 
 # Note: The SDK adds /v1/messages automatically
