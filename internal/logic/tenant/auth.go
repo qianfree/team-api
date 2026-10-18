@@ -154,7 +154,7 @@ func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.
 			// Level 1 defaults will apply
 			Level:       1,
 			Settings:    "{}",
-			TeamEnabled: false, // 新注册默认个人模式，设置自定义 code 后才激活团队功能
+			TeamEnabled: userProvidedCode, // 显式传入组织代码 = 激活团队功能（与组织设置页「设置 code 即激活」语义一致）；系统分配随机码则保持个人模式
 		}).Insert()
 		if err != nil {
 			return gerror.Wrapf(err, "create tenant")
@@ -259,7 +259,7 @@ func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.
 	res.Tenant.ID = tenantID
 	res.Tenant.Name = tenantName
 	res.Tenant.Code = tenantCode
-	res.Tenant.TeamEnabled = false
+	res.Tenant.TeamEnabled = userProvidedCode
 	res.User.ID = ownerUserID
 	res.User.Username = username
 	res.User.Role = "owner"

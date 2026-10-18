@@ -235,6 +235,9 @@ async function fetchMemberQuota() {
 
 onMounted(async () => {
 	authStore.loadFromStorage()
+	// 刷新组织信息快照：长会话靠 token 续命不会重新拉租户信息，若期间启用了团队功能，
+	// localStorage 旧快照会让成员管理等页面误显「团队功能未启用」（组织页实时 fetch 则显示已启用，自相矛盾）
+	authStore.refreshOrgInfo().catch(() => {})
 	document.addEventListener('click', handleClickOutside)
 	fetchAnnouncements()
 	announcementPoller.start()

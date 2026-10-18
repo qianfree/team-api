@@ -74,6 +74,9 @@ async function fetchOrgInfo() {
 		nameForm.name = res.data?.data?.name || ''
 		teamForm.name = res.data?.data?.name || ''
 		teamForm.code = res.data?.data?.code || ''
+		// 同步登录态缓存的团队功能状态：本页实时数据显示「已启用」时，
+		// 若不回写 store，SPA 跳到成员管理仍按旧快照显示「团队功能未启用」
+		authStore.refreshOrgInfo().catch(() => {})
 	} catch {
 		// silent
 	} finally {

@@ -1009,3 +1009,13 @@ pgsql 驱动的 `TableFields` 要实时查 `pg_attribute` 系统表（`'表名':
 - 测试直连 DB 时需显式 import 驱动（`_ "github.com/gogf/gf/contrib/drivers/pgsql/v2"`、`_ ".../nosql/redis/v2"`），主程序的 bootstrap import 不会带入测试二进制；`g.Cfg()` 文件适配器需 `SetPath` 指向 `manifest/config`（测试工作目录在包目录下）。
 
 排查信号：INSERT 无报错但新列为 NULL；`SELECT *` 返回的 map 里根本没有新列名（而非值为空）——后者说明表结构就没这列。
+
+### 2026-10-18：WriteStatus 误传业务错误码导致 net/http panic
+
+**问题**：验证码端点触发 IP 限流时，客户端收到**空响应体**（连接被异常中止），而非预期的 JSON 错误 `{"code":10014,...}`；服务端日志出现 `Internal Panic: invalid WriteHeader code 10014`。
+
+**原因**：`internal/middleware/captcha_rate_limit.go` 写了 `WriteStatus(consts.CodeRateLimitExceeded)`——`WriteStatus` 的参数是 **HTTP 状态码**（合法范围 100-599），业务码 10014 直接透传给 `net/http.ResponseWriter.WriteHeader`，触发其入参校验 panic，后续的 `WriteJson` 不再执行。
+
+**修复方式**：改为 `WriteHeader(http.StatusTooManyRequests)`（429）+ `WriteJson(...)`，业务码只放 JSON 体。与上文 2026-10-08 支付回调案例同源——`WriteStatus` 一族只认 HTTP 状态码，且**不带 content 的 `WriteStatus(code)` 会先把状态文本写进响应体**（实测 429 时 body 变成 `Too Many Requests{"code":10014,...}`），状态码 + JSON 体的唯一正确组合是 `WriteHeader(code)` 后 `WriteJson(...)`。
+
+排查信号：响应体为空 + 服务端日志 `invalid WriteHeader code <五位数>`；凡是中间件/手写 handler 里出现 `WriteStatus(常量>`599`)` 一律是同类错误。

@@ -4,6 +4,7 @@ package tenant_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/qianfree/team-api/internal/consts"
@@ -31,6 +32,66 @@ func TestTenantRegister_Success(t *testing.T) {
 	}
 	if result.User.Role != "owner" {
 		t.Fatalf("expected role=owner, got %s", result.User.Role)
+	}
+}
+
+// TestTenantRegister_TeamEnabledSemantics 验证注册的团队功能激活语义：
+// 显式传入组织代码 = 激活团队功能（与组织设置页「设置 code 即激活」一致）；
+// 留空由系统分配随机码 = 保持个人模式（team_enabled=false）
+func TestTenantRegister_TeamEnabledSemantics(t *testing.T) {
+	client := admintest.NewAPIClient(testinfra.DefaultBaseURL)
+
+	// 显式传入 tenant_code → team_enabled=true
+	suffix := testinfra.RandomSuffix()
+	captchaKey, captchaX := testinfra.SolveCaptcha(t)
+	withCodeResp := client.Post("/api/tenant/auth/register", map[string]any{
+		"email":       fmt.Sprintf("team-on-%s@test.com", suffix),
+		"password":    testinfra.TestPassword,
+		"tenant_name": fmt.Sprintf("显码租户%s", suffix),
+		"tenant_code": "t-" + suffix,
+		"username":    "teamon" + suffix,
+		"captcha_key": captchaKey,
+		"captcha_x":   captchaX,
+	})
+	withCodeResp.AssertSuccess(t)
+	var withCode struct {
+		Tenant struct {
+			ID          int64 `json:"id"`
+			TeamEnabled bool  `json:"team_enabled"`
+		} `json:"tenant"`
+	}
+	withCodeResp.DecodeData(t, &withCode)
+	t.Cleanup(func() { testinfra.HardDeleteTenant(t, withCode.Tenant.ID) })
+	if !withCode.Tenant.TeamEnabled {
+		t.Fatal("explicit tenant_code should activate team features (team_enabled=true)")
+	}
+
+	// 留空 tenant_code → 系统分配随机码，保持个人模式
+	suffix = testinfra.RandomSuffix()
+	captchaKey, captchaX = testinfra.SolveCaptcha(t)
+	noCodeResp := client.Post("/api/tenant/auth/register", map[string]any{
+		"email":       fmt.Sprintf("team-off-%s@test.com", suffix),
+		"password":    testinfra.TestPassword,
+		"tenant_name": fmt.Sprintf("隐码租户%s", suffix),
+		"username":    "teamoff" + suffix,
+		"captcha_key": captchaKey,
+		"captcha_x":   captchaX,
+	})
+	noCodeResp.AssertSuccess(t)
+	var noCode struct {
+		Tenant struct {
+			ID          int64  `json:"id"`
+			Code        string `json:"code"`
+			TeamEnabled bool   `json:"team_enabled"`
+		} `json:"tenant"`
+	}
+	noCodeResp.DecodeData(t, &noCode)
+	t.Cleanup(func() { testinfra.HardDeleteTenant(t, noCode.Tenant.ID) })
+	if noCode.Tenant.TeamEnabled {
+		t.Fatal("auto-generated tenant_code should keep personal mode (team_enabled=false)")
+	}
+	if !strings.HasPrefix(noCode.Tenant.Code, "org-") {
+		t.Fatalf("expected auto-generated org- prefixed code, got %s", noCode.Tenant.Code)
 	}
 }
 
@@ -241,7 +302,7 @@ func TestTenantAuth_Unauthorized(t *testing.T) {
 // ─── 边界值测试 ────────────────────────────────────────────────────
 
 // TestTenantRegister_EmptyRequiredFields 验证缺失必填字段时注册被拒绝
-// Business rule: 注册时 username/password/tenant_name 不能为空
+// Business rule: 注册时 username/password 必填；tenant_name 可选（留空自动以用户名填充）
 func TestTenantRegister_EmptyRequiredFields(t *testing.T) {
 	captchaKey, captchaX := testinfra.SolveCaptcha(t)
 	client := admintest.NewAPIClient(testinfra.DefaultBaseURL)
@@ -277,21 +338,30 @@ func TestTenantRegister_EmptyRequiredFields(t *testing.T) {
 	}
 	t.Logf("empty password: code=%d msg=%q", resp.Code, resp.Message)
 
-	// 空租户名称
+	// 空租户名称 → 已放宽为可选（简化注册）：留空自动以用户名填充
+	nameSuffix := testinfra.RandomSuffix()
 	captchaKey, captchaX = testinfra.SolveCaptcha(t)
 	resp = client.Post("/api/tenant/auth/register", map[string]any{
-		"email":       "empty-name@test.com",
+		"email":       fmt.Sprintf("empty-name-%s@test.com", nameSuffix),
 		"password":    testinfra.TestPassword,
 		"tenant_name": "",
 		"tenant_code": "t" + testinfra.RandomSuffix(),
-		"username":    "emptynameuser",
+		"username":    "autoname" + nameSuffix,
 		"captcha_key": captchaKey,
 		"captcha_x":   captchaX,
 	})
-	if resp.Code == 0 {
-		t.Fatal("empty tenant_name should be rejected")
+	resp.AssertSuccess(t)
+	var autoName struct {
+		Tenant struct {
+			ID   int64  `json:"id"`
+			Name string `json:"name"`
+		} `json:"tenant"`
 	}
-	t.Logf("empty tenant_name: code=%d msg=%q", resp.Code, resp.Message)
+	resp.DecodeData(t, &autoName)
+	t.Cleanup(func() { testinfra.HardDeleteTenant(t, autoName.Tenant.ID) })
+	if autoName.Tenant.Name != "autoname"+nameSuffix {
+		t.Fatalf("expected tenant_name auto-filled from username, got %q", autoName.Tenant.Name)
+	}
 }
 
 // TestTenantRegister_ShortPassword 验证短密码被拒绝
