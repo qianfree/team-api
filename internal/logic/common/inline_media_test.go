@@ -150,3 +150,86 @@ func TestApplyAuditLevelMetaOnly(t *testing.T) {
 		t.Error("meta_only 错误响应仍把 base64 载荷落库")
 	}
 }
+
+// 裸 base64 载荷（input_audio.data 等无 data: 前缀的协议形态）的扫描与剥离。
+// 修复前仅识别 ";base64," 标记，聊天页音频附件的裸 base64 会按文本折算 token
+// （4MB 音频 ≈ 100 万 token 预扣估算）并原文灌入审计日志。
+func TestScanInlineMediaBytes_BareBase64(t *testing.T) {
+	audio := bigPayload(4096)
+	cases := []struct {
+		name      string
+		body      string
+		wantBytes int
+		wantCount int
+	}{
+		{
+			"input_audio 裸 base64",
+			`{"messages":[{"content":[{"type":"input_audio","input_audio":{"data":"` + audio + `","format":"mp3"}}]}]}`,
+			4096, 1,
+		},
+		{
+			"多段音频分别计入",
+			`{"a":{"data":"` + audio + `"},"b":{"data":"` + audio + `"}}`,
+			8192, 2,
+		},
+		{
+			"data URL 与裸 base64 混合",
+			`{"img":"data:image/png;base64,` + bigPayload(400) + `","audio":{"data":"` + audio + `"}}`,
+			400 + 4096, 2,
+		},
+		// hex 哈希是 base64 字母表子集，但长度远低于阈值，不误伤
+		{"hex 哈希不命中", `{"id":"` + strings.Repeat("ab", 64) + `","name":"x"}`, 0, 0},
+		{"长自然文本不命中", `{"text":"` + strings.Repeat("word ", 300) + `"}`, 0, 0},
+		{"未达阈值不命中", `{"data":"` + bigPayload(1023) + `"}`, 0, 0},
+		// 含转义字符的字符串不可能是纯 base64 载荷
+		{"含转义不命中", `{"text":"` + bigPayload(1024) + `\"quoted\" tail"}`, 0, 0},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			gotBytes, gotCount := ScanInlineMediaBytes([]byte(c.body))
+			if gotBytes != c.wantBytes || gotCount != c.wantCount {
+				t.Errorf("ScanInlineMediaBytes() = (%d, %d), want (%d, %d)",
+					gotBytes, gotCount, c.wantBytes, c.wantCount)
+			}
+		})
+	}
+}
+
+func TestStripInlineMedia_BareBase64(t *testing.T) {
+	audio := bigPayload(4096)
+
+	t.Run("input_audio 剥离且 JSON 结构保留", func(t *testing.T) {
+		in := `{"input_audio":{"data":"` + audio + `","format":"mp3"}}`
+		got := StripInlineMedia(in)
+		if strings.Contains(got, audio) {
+			t.Error("裸 base64 载荷未被剥离")
+		}
+		if !strings.Contains(got, `"input_audio":{"data":"<省略 4096 字节>","format":"mp3"}`) {
+			t.Errorf("占位或字段结构不符: %s", got)
+		}
+	})
+
+	t.Run("混合形态全部剥离", func(t *testing.T) {
+		in := `{"img":"data:image/png;base64,` + bigPayload(400) + `","audio":{"data":"` + audio + `"}}`
+		got := StripInlineMedia(in)
+		if strings.Count(got, "省略") != 2 {
+			t.Errorf("两种形态应各剥离一次: %s", got)
+		}
+	})
+
+	t.Run("阈值以下原样返回", func(t *testing.T) {
+		in := `{"data":"` + bigPayload(1023) + `"}`
+		if got := StripInlineMedia(in); got != in {
+			t.Errorf("StripInlineMedia() = %q, want 原样返回", got)
+		}
+	})
+
+	t.Run("字节版纯文本零拷贝", func(t *testing.T) {
+		plain := []byte(`{"content":"纯文本音频讨论"}`)
+		got := StripInlineMediaBytes(plain)
+		if &got[0] != &plain[0] {
+			t.Error("纯文本路径应原样返回入参切片，不做拷贝")
+		}
+	})
+}
