@@ -249,7 +249,7 @@ mkdir team-api && cd team-api
 
 # 2. 下载 docker-compose.yaml 和示例配置
 curl -O https://raw.githubusercontent.com/qianfree/team-api/main/manifest/docker/docker-compose.yaml
-curl -o config.yaml https://raw.githubusercontent.com/qianfree/team-api/main/manifest/docker/config.example.yaml
+curl -O https://raw.githubusercontent.com/qianfree/team-api/main/manifest/docker/config.example.yaml
 
 # 3. 编辑配置文件（修改数据库密码、Redis 密码、JWT 密钥、加密密钥等）
 cp config.example.yaml config.yaml
