@@ -1,3 +1,4 @@
+import { nextTick } from 'vue'
 import { createRouter, createWebHashHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
 import tenantRoutes from './tenant'
@@ -81,8 +82,15 @@ router.beforeEach(async (to) => {
 	return true
 })
 
-router.afterEach(() => {
+router.afterEach((to, from) => {
 	done()
+	// 页面切换后把焦点移到主内容（<main id="main-content" tabindex="-1">），
+	// 读屏软件随即朗读新页面标题，否则用户不知道 SPA 已切换路由
+	if (to.path !== from.path) {
+		nextTick(() => {
+			document.getElementById('main-content')?.focus({ preventScroll: true })
+		})
+	}
 })
 
 router.onError(() => {

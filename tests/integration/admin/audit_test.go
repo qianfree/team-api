@@ -21,7 +21,7 @@ func TestAuditConfigGet(t *testing.T) {
 
 	validLevels := map[string]bool{
 		"full": true, "full_text": true, "masked": true,
-		"question_only": true, "none": true,
+		"question_only": true, "meta_only": true, "none": true,
 	}
 	if !validLevels[data.AuditLevel] {
 		t.Fatalf("unexpected audit_level %q", data.AuditLevel)

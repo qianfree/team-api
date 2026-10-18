@@ -376,6 +376,7 @@ async function handleOAuthUnlink(provider: string) {
 							<button
 								@click="editingDisplayName = true"
 								class="text-primary-600 hover:text-primary-500 transition-colors"
+								aria-label="编辑显示名称"
 							>
 								<Icon name="edit" size="sm" />
 							</button>
@@ -418,6 +419,7 @@ async function handleOAuthUnlink(provider: string) {
 								@click="openEmailModal"
 								class="text-primary-600 hover:text-primary-500 transition-colors"
 								title="设置/修改邮箱"
+								aria-label="设置或修改邮箱"
 							>
 								<Icon name="edit" size="sm" />
 							</button>

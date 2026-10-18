@@ -8,7 +8,9 @@ import (
 	"github.com/gogf/gf/v2/net/ghttp"
 	"github.com/gogf/gf/v2/os/glog"
 
+	"github.com/qianfree/team-api/internal/middleware"
 	"github.com/qianfree/team-api/internal/plugin"
+	"github.com/qianfree/team-api/internal/response"
 	"github.com/qianfree/team-api/plugins/example/hooks"
 )
 
@@ -89,9 +91,17 @@ func (p *examplePlugin) Hooks() []plugin.HookBinding {
 }
 
 // Routes 实现 Routable 接口
+//
+// 插件路由组必须自己挂鉴权中间件链（在主路由组之外注册，不继承中间件），
+// 且路径落在 /api/admin/plugins/{插件名}/ 命名空间下——配套的 PermissionRules
+// 声明更长前缀，guard 匹配时胜过通用的插件管理规则（system:plugin）。
 func (p *examplePlugin) Routes(ctx context.Context, server *ghttp.Server) error {
-	// 示例：注册插件自定义路由
-	// 实际使用时可以绑定到 admin 或 tenant 路由组
+	server.Group("/api/admin/plugins/example", func(group *ghttp.RouterGroup) {
+		group.Middleware(middleware.AdminAuth, middleware.AdminPermissionGuard, middleware.OperationLog)
+		group.GET("/demo", func(r *ghttp.Request) {
+			response.Success(r, g.Map{"plugin": "example", "message": "插件路由权限链路已打通"})
+		})
+	})
 	return nil
 }
 

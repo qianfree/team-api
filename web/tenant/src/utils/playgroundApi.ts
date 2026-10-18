@@ -21,9 +21,19 @@ export function createPlaygroundApi(apiKey: string): AxiosInstance {
 	instance.interceptors.response.use(
 		(response) => response,
 		(error) => {
+			let data = error.response?.data
+			// arraybuffer 请求（如 /v1/audio/speech 的 TTS）的错误响应同为 ArrayBuffer，
+			// 需先解码为文本再解析 JSON，否则真实错误原因丢失、只剩 axios 通用文案
+			if (data instanceof ArrayBuffer) {
+				try {
+					data = JSON.parse(new TextDecoder().decode(data))
+				} catch {
+					data = undefined // 非 JSON 错误体，走通用错误分支
+				}
+			}
 			// 解析 OpenAI 错误格式: {error: {type, message, code}}
-			if (error.response?.data?.error) {
-				const relayError = error.response.data.error
+			if (data?.error) {
+				const relayError = data.error
 				const msg = relayError.message || '请求失败'
 				const err = new Error(msg)
 				;(err as any).relayError = relayError

@@ -87,8 +87,10 @@ const detailRecord = ref<any>(null)
 
 const auditLevelLabel: Record<string, string> = {
 	full: '完整',
+	full_text: '全量文本',
 	masked: '脱敏',
 	question_only: '仅提问',
+	meta_only: '仅留痕',
 	none: '关闭',
 }
 
@@ -441,7 +443,7 @@ onMounted(() => {
 					<div class="modal-content bg-white w-full max-w-2xl">
 						<div class="modal-header">
 							<h3 class="modal-title">请求详情</h3>
-							<button class="btn btn-ghost btn-sm p-1" @click="showDetail = false">
+							<button class="btn btn-ghost btn-sm p-1" aria-label="关闭详情" @click="showDetail = false">
 								<Icon name="x" size="md" />
 							</button>
 						</div>

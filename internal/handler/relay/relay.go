@@ -2,6 +2,7 @@ package relay
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"runtime/debug"
@@ -597,6 +598,7 @@ func recordAudit(r *ghttp.Request, rc *handler.RelayContext, capture *ResponseCa
 		LatencyMs:       latencyMs,
 		FirstTokenMs:    ttft,
 		IsStream:        isStream,
+		HeaderSessionID: r.Header.Get("X-Session-Id"),
 		RequestHeaders:  captureRequestHeaders(r),
 		ResponseHeaders: capture.ResponseHeaders(),
 		ForwardingTrace: rc.ForwardingTrace,
@@ -818,6 +820,36 @@ func HandleRealtime(r *ghttp.Request) {
 	if usage != nil {
 		totalTokens = usage.TotalTokens
 	}
+
+	latencyMs := int(time.Since(start).Milliseconds())
+
+	// Realtime 审计：WS 会话无标准请求/响应体可捕获，记录连接元数据
+	//（模型由 handler 回写 ResolvedModel：URL query 或首条消息解析所得）
+	statusCode := http.StatusOK
+	if err != nil {
+		statusCode = http.StatusInternalServerError
+		var relayErr *relay_constant.RelayError
+		if errors.As(err, &relayErr) {
+			statusCode = relayErr.StatusCode
+		}
+	}
+	dataProvider.RecordAudit(r.Context(), &relay_common.AuditRecord{
+		TenantID:        rc.TenantID,
+		UserID:          rc.UserID,
+		ApiKeyID:        rc.ApiKeyID,
+		ProjectID:       rc.ProjectID,
+		RequestID:       rc.RequestID,
+		Method:          r.Method,
+		Path:            "/realtime",
+		QueryParams:     r.URL.RawQuery,
+		StatusCode:      statusCode,
+		ClientIP:        rc.ClientIP,
+		UserAgent:       r.Header.Get("User-Agent"),
+		Model:           rc.ResolvedModel,
+		LatencyMs:       latencyMs,
+		IsStream:        true,
+		HeaderSessionID: r.Header.Get("X-Session-Id"),
+	})
 
 	if err != nil {
 		g.Log().Errorf(r.Context(), "[HandleRealtime] error: %v (duration=%s, total_tokens=%d)",

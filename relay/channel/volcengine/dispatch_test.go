@@ -54,6 +54,7 @@ func TestSubAdaptorGetRequestURL(t *testing.T) {
 		{"openai chat 普通模型", &openaiAdaptor{}, constant.RelayModeChatCompletions, "doubao-pro", baseURL + "/api/v3/chat/completions"},
 		{"openai chat bot- 前缀", &openaiAdaptor{}, constant.RelayModeChatCompletions, "bot-xxx", baseURL + "/api/v3/bots/chat/completions"},
 		{"openai embeddings", &openaiAdaptor{}, constant.RelayModeEmbeddings, "doubao-embedding", baseURL + "/api/v3/embeddings"},
+		{"openai rerank", &openaiAdaptor{}, constant.RelayModeRerank, "doubao-rerank", baseURL + "/api/v3/rerank"},
 		{"openai images", &openaiAdaptor{}, constant.RelayModeImagesGenerations, "doubao-IMG", baseURL + "/api/v3/images/generations"},
 		{"claude messages", &claudeAdaptor{}, constant.RelayModeClaudeMessages, "doubao-pro", baseURL + "/api/coding/v1/messages"},
 	}

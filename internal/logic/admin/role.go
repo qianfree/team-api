@@ -14,6 +14,7 @@ import (
 	"github.com/qianfree/team-api/internal/dao"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/model/do"
+	"github.com/qianfree/team-api/internal/plugin"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -331,9 +332,14 @@ func loadEffectivePermissions(ctx context.Context, userID int64) ([]string, erro
 }
 
 // AllPermissionPoints 返回系统定义的全部权限点（超级管理员使用）。
+// 与 buildValidPermissionSet 同口径：合并全部已注册插件声明的权限点，
+// 保证「可授予的」与「超管拥有的」始终是同一个集合。
 func AllPermissionPoints() []string {
 	var out []string
 	for _, grp := range predefinedPermissionGroups {
+		out = append(out, grp.Permissions...)
+	}
+	for _, grp := range plugin.RegisteredPermissionGroups() {
 		out = append(out, grp.Permissions...)
 	}
 	sort.Strings(out)

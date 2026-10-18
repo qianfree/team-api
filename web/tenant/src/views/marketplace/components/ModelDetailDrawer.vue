@@ -101,7 +101,7 @@ const drawerWidth = computed(() => (isMobile.value ? '100%' : 560))
 							<h2 class="mp-drawer-name">{{ displayName }}</h2>
 							<span v-if="badge" class="mp-drawer-badge" :class="`is-${badge.type}`">{{ badge.text }}</span>
 						</div>
-						<button type="button" class="group mt-0.5 flex max-w-full items-center gap-1.5" title="复制模型 ID" @click="emit('copy', model.model_id)">
+						<button type="button" class="group mt-0.5 flex max-w-full items-center gap-1.5" title="复制模型 ID" :aria-label="`复制模型 ID ${model.model_id}`" @click="emit('copy', model.model_id)">
 							<code class="truncate font-mono text-xs text-[var(--mp-text-dim)]">{{ model.model_id }}</code>
 							<Icon name="copy" size="xs" class="shrink-0 text-[var(--mp-text-mute)] transition-colors group-hover:text-[var(--mp-brand)]" />
 						</button>

@@ -19,6 +19,7 @@ const (
 	AuditLevelFullText     = "full_text"
 	AuditLevelMasked       = "masked"
 	AuditLevelQuestionOnly = "question_only"
+	AuditLevelMetaOnly     = "meta_only"
 	AuditLevelNone         = "none"
 )
 
@@ -98,14 +99,39 @@ func GetTenantAuditLevel(ctx context.Context, tenantID int64) string {
 	return settings.AuditLevel
 }
 
+// AuditResponseContentDropped 判断该审计级别下响应类内容（对话响应、异步任务结果）是否一律不落库。
+// none 不记录任何内容；meta_only 仅留痕；question_only 仅保留请求侧、响应一律丢弃。
+// task_result 等库内单列（无租户副本）的共享列：落库按全局级别判定，租户视角在租户
+// 详情接口按租户级别做同样的读取过滤。
+func AuditResponseContentDropped(level string) bool {
+	return level == AuditLevelNone ||
+		level == AuditLevelMetaOnly ||
+		level == AuditLevelQuestionOnly
+}
+
+// AuditRequestContentDropped 判断该审计级别下请求侧内容（含 user 字段等请求元数据）是否不落库。
+// none 不记录任何内容；meta_only 仅留痕、内容一律不记；question_only 保留请求侧，照常记录。
+func AuditRequestContentDropped(level string) bool {
+	return level == AuditLevelNone ||
+		level == AuditLevelMetaOnly
+}
+
 // ApplyAuditLevel 根据审计级别处理请求体和响应体，返回处理后的内容。
-func ApplyAuditLevel(level string, requestBody, responseBody string, isStream bool, path string) (req, resp string) {
+func ApplyAuditLevel(level string, requestBody, responseBody string, isStream bool, path string, statusCode int) (req, resp string) {
 	// 多模态请求（对话内联图片/音频、视频参考图）的 base64 载荷先剥离成长度占位：
 	// multipart 体已在 relay handler 侧被挡成 "[binary body omitted]"，但内联在 JSON
 	// 里的 data URL 会原样落库，单条就能把 aud_request_logs 撑到几 MB。
 	// 此处是对话与异步任务两条审计链路的唯一收口点（DataProviderImpl.RecordAudit），
 	// 在这里剥离即可同时覆盖。none 级别直接丢弃，无需白做一次剥离。
 	if level == AuditLevelNone {
+		return "", ""
+	}
+	// meta_only 仅留痕：元数据（路径/状态码/耗时等）由 RecordAudit 无条件落库，
+	// 内容一律不记；仅错误响应（>=400）保留响应体作为错误原因。
+	if level == AuditLevelMetaOnly {
+		if statusCode >= 400 {
+			return "", StripInlineMedia(responseBody)
+		}
 		return "", ""
 	}
 	req = StripInlineMedia(requestBody)

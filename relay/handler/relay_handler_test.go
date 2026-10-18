@@ -25,7 +25,7 @@ func TestResolveRelayModel(t *testing.T) {
 	// 后缀语法已移除：目录名即请求名，不再有「字面模型优先 / 剥后缀回退」两段查找
 	t.Run("catalog model resolves literally", func(t *testing.T) {
 		provider := &modelMappingStub{models: map[string]bool{"gpt-4o": true}}
-		lookup, err := resolveRelayModel(t.Context(), provider, "gpt-4o")
+		lookup, _, err := resolveRelayModel(t.Context(), provider, "gpt-4o")
 		if err != nil {
 			t.Fatalf("resolveRelayModel() error = %v", err)
 		}
@@ -37,7 +37,7 @@ func TestResolveRelayModel(t *testing.T) {
 	// 名字带 -max 等字样的真实目录模型按字面命中，不做任何后缀解释
 	t.Run("literal model ending in effort-like word", func(t *testing.T) {
 		provider := &modelMappingStub{models: map[string]bool{"qwen3.8-max": true}}
-		lookup, err := resolveRelayModel(t.Context(), provider, "qwen3.8-max")
+		lookup, _, err := resolveRelayModel(t.Context(), provider, "qwen3.8-max")
 		if err != nil {
 			t.Fatalf("resolveRelayModel() error = %v", err)
 		}
@@ -52,7 +52,7 @@ func TestResolveRelayModel(t *testing.T) {
 	// 目录中不存在即报错，不再尝试剥后缀回退（"o3-max" 不会命中 "o3"）
 	t.Run("missing model returns error without suffix fallback", func(t *testing.T) {
 		provider := &modelMappingStub{models: map[string]bool{"o3": true}}
-		_, err := resolveRelayModel(t.Context(), provider, "o3-max")
+		_, _, err := resolveRelayModel(t.Context(), provider, "o3-max")
 		if err == nil {
 			t.Fatal("want error for model absent from catalog")
 		}
@@ -95,6 +95,13 @@ func TestEstimateInputTokens(t *testing.T) {
 			(len(`{"a":"data:image/png;base64,`+`","b":"data:image/png;base64,`+`"}`))/4 + 2*inlineMediaTokenCost,
 		},
 		{
+			// 聊天音频附件（input_audio.data 裸 base64，无 data: 前缀）同样按固定成本计入，
+			// 否则 2MB 音频按 len/4 会被估成 ~52 万 token
+			"input_audio 裸 base64 不按字节折算",
+			`{"content":[{"type":"input_audio","input_audio":{"data":"` + payload + `","format":"mp3"}}]}`,
+			(len(`{"content":[{"type":"input_audio","input_audio":{"data":"` + `","format":"mp3"}}]}`))/4 + inlineMediaTokenCost,
+		},
+		{
 			// 畸形 data URL（无 base64 标记）退化为纯文本路径
 			"畸形 data URL",
 			`{"url":"data:image/png,` + strings.Repeat("A", 400) + `"}`,
@@ -104,7 +111,7 @@ func TestEstimateInputTokens(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := estimateInputTokens([]byte(c.body)); got != c.want {
+			if got := estimateInputTokens([]byte(c.body), ""); got != c.want {
 				t.Errorf("estimateInputTokens() = %d, want %d", got, c.want)
 			}
 		})
@@ -112,7 +119,7 @@ func TestEstimateInputTokens(t *testing.T) {
 
 	// 回归保护：2MB 图片的估算必须远低于按字节折算的量级
 	naive := len(`{"url":"data:image/png;base64,`+payload+`"}`) / 4
-	got := estimateInputTokens([]byte(`{"url":"data:image/png;base64,` + payload + `"}`))
+	got := estimateInputTokens([]byte(`{"url":"data:image/png;base64,`+payload+`"}`), "")
 	if got >= naive/10 {
 		t.Errorf("2MB 图片估算 %d tokens，与按字节折算的 %d 处于同一量级，预扣仍会冻穿余额", got, naive)
 	}

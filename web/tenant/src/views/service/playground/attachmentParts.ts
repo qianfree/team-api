@@ -118,3 +118,19 @@ export function compileVideoPrompt(text: string, attachments: Attachment[]): Com
 		deferred: attachments.filter(a => a.id !== firstImage?.id),
 	}
 }
+
+export interface CompiledImageReferences {
+	/** 参考图 data URL 列表（按上传顺序）；图片 Tab 只收图片附件，此处恒为纯图片 */
+	images: string[]
+}
+
+/**
+ * compileImageReferences 把图片附件编译成 /v1/images/generations 的参考图载荷。
+ * 图片生成没有 [@图片1] 位置语义（参考图是整单生效的素材而非句内锚点），
+ * 因此不做标记解析，全部图片附件按序发出。
+ */
+export function compileImageReferences(attachments: Attachment[]): CompiledImageReferences {
+	return {
+		images: attachments.filter(a => a.kind === 'image').map(a => a.dataUrl),
+	}
+}

@@ -407,7 +407,7 @@ const columns = computed<DataTableColumns<TaskItem>>(() => [
 		width: 120,
 		align: 'right',
 		render: (row) =>
-			h(NButton, { size: 'small', onClick: () => openDetail(row) }, { icon: () => h(Icon, { name: 'eye', size: 'sm' }) }),
+			h(NButton, { size: 'small', 'aria-label': '查看任务详情', onClick: () => openDetail(row) }, { icon: () => h(Icon, { name: 'eye', size: 'sm' }) }),
 	},
 ])
 
@@ -565,6 +565,7 @@ onMounted(() => {
 						<button
 							class="shrink-0 text-gray-400 transition-colors hover:text-primary-500"
 							title="复制任务 ID"
+							aria-label="复制任务 ID"
 							@click="copyText(detailTask.public_task_id, 'task')"
 						>
 							<Icon :name="copiedKey === 'task' ? 'check' : 'copy'" size="xs" />

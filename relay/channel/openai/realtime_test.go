@@ -33,3 +33,29 @@ func TestAccumulateUsage_CachedTokens(t *testing.T) {
 		t.Errorf("cached tokens after detail-less event = %+v, want 80 (保持累计)", sum.InputTokenDetails)
 	}
 }
+
+// 上游 URL 必须以 query 参数携带 model（OpenAI 官方 Realtime 端点要求，
+// 缺失会被官方上游拒绝）；无 model 时保持原有 /v1/realtime 路径
+func TestBuildRealtimeURL(t *testing.T) {
+	cases := []struct {
+		name  string
+		base  string
+		model string
+		want  string
+	}{
+		{"https 转 wss 带 model", "https://api.openai.com", "gpt-realtime",
+			"wss://api.openai.com/v1/realtime?model=gpt-realtime"},
+		{"http 转 ws 去尾部斜杠", "http://localhost:8080/", "m1",
+			"ws://localhost:8080/v1/realtime?model=m1"},
+		{"model 需 URL 转义", "https://x.cn", "a b&c",
+			"wss://x.cn/v1/realtime?model=a+b%26c"},
+		{"无 model 不带 query", "https://x.cn", "", "wss://x.cn/v1/realtime"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := buildRealtimeURL(c.base, c.model); got != c.want {
+				t.Errorf("buildRealtimeURL(%q, %q) = %q, want %q", c.base, c.model, got, c.want)
+			}
+		})
+	}
+}

@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"fmt"
+	"net/http"
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
@@ -34,7 +35,10 @@ func CaptchaRateLimit(r *ghttp.Request) {
 
 	blocked := checkCaptchaRate(r.Context(), ip)
 	if blocked {
-		r.Response.WriteStatus(consts.CodeRateLimitExceeded)
+		// 状态码 + JSON 体必须用 WriteHeader：WriteStatus 的参数是 HTTP 状态码，
+		// 曾误传 CodeRateLimitExceeded(10014) 导致 net/http panic（invalid WriteHeader code）；
+		// 且不带 content 的 WriteStatus 会先把状态文本写进响应体，污染 JSON
+		r.Response.WriteHeader(http.StatusTooManyRequests)
 		r.Response.WriteJson(g.Map{
 			"code":       consts.CodeRateLimitExceeded,
 			"message":    consts.MsgRateLimitExceeded,

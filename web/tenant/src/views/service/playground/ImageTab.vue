@@ -6,8 +6,11 @@ import { createPoller } from '@/composables/usePolling'
 import { calculateCost } from './calculateCost'
 import ParamRefModal from './ParamRefModal.vue'
 import GenerationProgressCard from './GenerationProgressCard.vue'
+import AttachmentBar from './AttachmentBar.vue'
 import Icon from '@/components/common/Icon.vue'
 import BaseSelect from '../../../components/common/BaseSelect.vue'
+import { useAttachments, formatBytes } from './useAttachments'
+import { compileImageReferences } from './attachmentParts'
 
 interface ModelItem {
 	model_id: string
@@ -47,6 +50,21 @@ const modelOptions = computed(() => props.models.map(m => ({ value: m.model_id, 
 
 // 空态里展示的模型名（列表由父组件异步加载，可能暂时查不到）
 const selectedModelName = computed(() => selectedModelItem.value?.model_name || selectedModel.value)
+
+// ── 参考图 ──
+// 图生图/图像编辑的参考素材：以 base64 data URL 内联进 JSON 请求体的 image 字段
+// （单张为字符串、多张为数组，与网关 ImageRequest 及主流上游——Seedream、gpt-image edits——
+// 的取值形态一致，OpenAI 兼容渠道原样透传）。只收图片：协议里没有承载其他素材的位置。
+// 数量上限 4 张——低于 Seedream 的 10 张上限，但附件总量另有 6MB 闸门（见 useAttachments），
+// 参考图过大时先压缩，压不动即拒绝。
+const {
+	list: attachmentList,
+	totalBytes: attachmentBytes,
+	accept: acceptTypes,
+	max: attachmentMax,
+	addFiles: addAttachments,
+	remove: removeAttachment,
+} = useAttachments({ kinds: ['image'], max: 4 })
 
 // ── 自定义参数系统 ──
 
@@ -254,11 +272,17 @@ onUnmounted(() => {
 	window.removeEventListener('keydown', onZoomKeydown)
 })
 
-// 组装请求体：固定字段 + 自定义参数（同步/异步共用）
+// 组装请求体：固定字段 + 参考图 + 自定义参数（同步/异步共用）
 function buildBody(): Record<string, any> {
 	const body: Record<string, any> = {
 		model: selectedModel.value,
 		prompt: prompt.value,
+	}
+	const refs = compileImageReferences(attachmentList.value)
+	if (refs.images.length === 1) {
+		body.image = refs.images[0]
+	} else if (refs.images.length > 1) {
+		body.image = refs.images
 	}
 	for (const param of customParams.value) {
 		const key = param.key.trim()
@@ -432,6 +456,16 @@ function onZoomKeydown(e: KeyboardEvent) {
 function openZoom(img: ImageResult) {
 	const src = imageSrc(img)
 	if (!src) return
+	zoomIn(src)
+}
+
+// 参考图缩略片点击 → 放大预览（AttachmentBar 的 insert 事件按名字回调）
+function previewAttachment(name: string) {
+	const att = attachmentList.value.find(a => a.name === name)
+	if (att) zoomIn(att.dataUrl)
+}
+
+function zoomIn(src: string) {
 	zoomedSrc.value = src
 	window.addEventListener('keydown', onZoomKeydown)
 }
@@ -499,6 +533,26 @@ function closeZoom() {
 							<n-input v-model:value="prompt" type="textarea" :rows="4" placeholder="描述你想生成的图片..." />
 						</div>
 
+						<!-- 参考图（图生图/编辑） -->
+						<div class="border-t border-gray-100 pt-4">
+							<div class="mb-2 flex items-center justify-between gap-2">
+								<label class="text-xs font-semibold text-gray-500">参考图</label>
+								<span v-if="attachmentList.length" class="text-[11px] text-gray-400">{{ formatBytes(attachmentBytes) }}</span>
+							</div>
+							<AttachmentBar
+								:attachments="attachmentList"
+								:accept="acceptTypes"
+								:max="attachmentMax"
+								click-hint="点击放大预览 {name}"
+								@add="addAttachments"
+								@remove="removeAttachment"
+								@insert="previewAttachment"
+							/>
+							<p class="mt-1.5 text-[11px] leading-relaxed text-gray-400">
+								可选。随请求以 base64 发送（image 字段）用于图生图 / 图像编辑，需模型支持，不支持时将被上游忽略或报错
+							</p>
+						</div>
+
 						<!-- 自定义参数 -->
 						<div class="border-t border-gray-100 pt-4">
 							<div class="mb-3 flex items-center justify-between gap-2">
@@ -556,6 +610,7 @@ function closeZoom() {
 									<button
 										class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-gray-300 transition-colors duration-150 hover:bg-red-50 hover:text-red-500"
 										title="删除该参数"
+										aria-label="删除该参数"
 										@click="removeParam(param.id)"
 									>
 										<Icon name="x" size="sm" />
@@ -718,6 +773,7 @@ function closeZoom() {
 					<button
 						class="absolute -top-3 -right-3 flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-600 shadow-lg transition-colors hover:text-gray-900"
 						title="关闭"
+						aria-label="关闭预览"
 						@click="closeZoom"
 					>
 						<Icon name="x" size="sm" />

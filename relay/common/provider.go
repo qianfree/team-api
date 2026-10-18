@@ -102,7 +102,7 @@ type ApiKeyInfo struct {
 	TenantID             int64
 	UserID               int64
 	ProjectID            int64   // 项目密钥关联的项目 ID，个人密钥为 0
-	Scope                string  // full / chat_only / embeddings_only / images_only / read_only / custom
+	Scope                string  // full / chat_only / embeddings_only / rerank_only / images_only / audio_only / read_only / custom
 	Status               string  // active / disabled / expired
 	RateLimitQps         int     // 0 表示使用全局默认
 	RateLimitConcurrency int     // 0 表示不限制
@@ -230,23 +230,26 @@ type UsageRecord struct {
 
 // AuditRecord 请求审计日志记录
 type AuditRecord struct {
-	TenantID        int64
-	UserID          int64
-	ApiKeyID        int64
-	ProjectID       int64 // 通过 API Key 关联的项目 ID
-	RequestID       string
-	Method          string
-	Path            string
-	QueryParams     string
-	StatusCode      int
-	ClientIP        string
-	UserAgent       string
-	Model           string // 请求使用的模型名称
-	RequestBody     string
-	ResponseBody    string
-	LatencyMs       int
-	FirstTokenMs    int
-	IsStream        bool
+	TenantID     int64
+	UserID       int64
+	ApiKeyID     int64
+	ProjectID    int64 // 通过 API Key 关联的项目 ID
+	RequestID    string
+	Method       string
+	Path         string
+	QueryParams  string
+	StatusCode   int
+	ClientIP     string
+	UserAgent    string
+	Model        string // 请求使用的模型名称
+	RequestBody  string
+	ResponseBody string
+	LatencyMs    int
+	FirstTokenMs int
+	IsStream     bool
+	// HeaderSessionID 客户端 X-Session-Id 头原值：审计级别无关的显式会话
+	// 信号（request_headers 仅 full 级别落库，不可作为提取来源）
+	HeaderSessionID string
 	RequestHeaders  map[string]string // 请求头（仅审计级别为 all 时记录）
 	ResponseHeaders map[string]string // 响应头（仅审计级别为 all 时记录）
 	ForwardingTrace *ForwardingTrace  // 转发路径追踪（仅管理员可见）

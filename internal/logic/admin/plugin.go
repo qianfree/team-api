@@ -119,6 +119,9 @@ func (s *sAdmin) PluginConfigSchema(ctx context.Context, req *v1.PluginConfigSch
 			Options:     f.Options,
 			Required:    f.Required,
 			Description: f.Description,
+			Encrypted:   f.Encrypted,
+			Group:       f.Group,
+			HalfWidth:   f.HalfWidth,
 		})
 	}
 	return &v1.PluginConfigSchemaRes{List: items}, nil

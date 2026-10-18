@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onUnmounted } from 'vue'
+import { ref, computed, watch, onUnmounted, nextTick } from 'vue'
 import { NInput, NCheckbox } from 'naive-ui'
 import qrcode from 'qrcode-generator'
 import BaseModal from '@/components/common/BaseModal.vue'
@@ -30,6 +30,18 @@ const steps = [
 	{ n: 3, label: '验证启用' },
 	{ n: 4, label: '保存恢复码' },
 ]
+
+// 步骤内容是 v-if 整块替换，切换后焦点会掉到 body；把焦点送进新步骤容器并借 group 名播报步骤。
+// 回退到前面的步骤（如 2→1）时，旧步骤卸载的 ref(null) 晚于新步骤挂载触发，
+// 只记录非空值才能保证 stepEl 始终指向当前挂载的步骤
+const stepEl = ref<HTMLElement | null>(null)
+function setStepEl(el: unknown) {
+	if (el) stepEl.value = el as HTMLElement
+}
+watch(step, async () => {
+	await nextTick()
+	stepEl.value?.focus()
+})
 
 const countdownText = computed(() => {
 	const left = Math.max(0, Math.floor((expiresAt.value - now.value) / 1000))
@@ -195,10 +207,11 @@ function finish() {
 			<!-- 步骤指示器 -->
 			<div class="flex items-center justify-between">
 				<template v-for="(s, i) in steps" :key="s.n">
-					<div class="flex items-center gap-2">
+					<div class="flex items-center gap-2" :aria-current="step === s.n ? 'step' : undefined">
 						<div
 							class="h-7 w-7 rounded-full flex items-center justify-center text-xs font-semibold transition-colors"
 							:class="step >= s.n ? 'bg-primary-500 text-white' : 'bg-gray-100 text-gray-400'"
+							aria-hidden="true"
 						>
 							{{ step > s.n ? '✓' : s.n }}
 						</div>
@@ -209,13 +222,14 @@ function finish() {
 			</div>
 
 			<!-- 步骤 1：扫码绑定 -->
-			<div v-if="step === 1" class="flex flex-col sm:flex-row gap-5">
+			<div v-if="step === 1" :ref="setStepEl" tabindex="-1" role="group" aria-label="步骤 1：扫码绑定" class="flex flex-col sm:flex-row gap-5 outline-none">
 				<div class="flex flex-col items-center gap-2 flex-shrink-0 mx-auto">
 					<div class="relative h-[200px] w-[200px] rounded-xl border border-gray-200 bg-white overflow-hidden flex items-center justify-center">
 						<div v-if="setupLoading" class="spinner text-primary-500"></div>
-						<img v-else-if="qrDataUrl" :src="qrDataUrl" alt="TOTP 绑定二维码" class="h-[184px] w-[184px]" />
+						<img v-else-if="qrDataUrl" :src="qrDataUrl" alt="TOTP 绑定二维码，无法扫码时请改用旁边的密钥手动添加" class="h-[184px] w-[184px]" />
 						<div
 							v-if="expired"
+							role="status"
 							class="absolute inset-0 bg-white/95 flex flex-col items-center justify-center gap-2"
 						>
 							<p class="text-sm text-gray-500">二维码已过期</p>
@@ -238,43 +252,44 @@ function finish() {
 			</div>
 
 			<!-- 步骤 2：安全确认（密码） -->
-			<div v-if="step === 2" class="space-y-4">
+			<div v-if="step === 2" :ref="setStepEl" tabindex="-1" role="group" aria-label="步骤 2：安全确认" class="space-y-4 outline-none">
 				<div class="p-3 rounded-xl bg-primary-50 border border-primary-100 text-sm text-primary-800">
 					为确认是你本人操作，请输入当前登录密码。
 				</div>
 				<div>
-					<label class="input-label">当前密码</label>
+					<label class="input-label" for="twofa-setup-password">当前密码</label>
 					<n-input
 						v-model:value="password"
 						type="password"
 						show-password-on="click"
 						placeholder="请输入当前密码"
+						:input-props="{ id: 'twofa-setup-password', autocomplete: 'current-password' }"
 						@keydown.enter="goStep3"
 					/>
 				</div>
-				<p v-if="verifyError" class="input-error-text">{{ verifyError }}</p>
+				<p v-if="verifyError" role="alert" class="input-error-text">{{ verifyError }}</p>
 			</div>
 
 			<!-- 步骤 3：验证启用 -->
-			<div v-if="step === 3" class="space-y-4">
+			<div v-if="step === 3" :ref="setStepEl" tabindex="-1" role="group" aria-label="步骤 3：验证启用" class="space-y-4 outline-none">
 				<div class="p-3 rounded-xl bg-primary-50 border border-primary-100 text-sm text-primary-800">
 					输入验证器 App 当前显示的 6 位动态码完成开启。
 				</div>
 				<div>
-					<label class="input-label">动态验证码</label>
+					<label class="input-label" for="twofa-setup-code">动态验证码</label>
 					<n-input
 						v-model:value="code"
 						placeholder="6 位数字"
 						:maxlength="6"
-						:input-props="{ inputmode: 'numeric' }"
+						:input-props="{ id: 'twofa-setup-code', inputmode: 'numeric', autocomplete: 'one-time-code' }"
 						@keydown.enter="onEnable"
 					/>
 				</div>
-				<p v-if="verifyError" class="input-error-text">{{ verifyError }}</p>
+				<p v-if="verifyError" role="alert" class="input-error-text">{{ verifyError }}</p>
 			</div>
 
 			<!-- 步骤 4：保存恢复码 -->
-			<div v-if="step === 4" class="space-y-4">
+			<div v-if="step === 4" :ref="setStepEl" tabindex="-1" role="group" aria-label="步骤 4：保存恢复码" class="space-y-4 outline-none">
 				<div class="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-sm text-emerald-700">
 					两步验证已开启。请立即保存以下恢复码。
 				</div>

@@ -63,6 +63,26 @@ func TestInit_ModelDrivenProtocolDetection(t *testing.T) {
 	}
 }
 
+// TestGetRequestURL_UnsupportedModeErrors 守卫模式分支：embeddings/rerank 等
+// 非 chat 族模式必须显式报错，不得带原体静默打到 chat 端点。
+func TestGetRequestURL_UnsupportedModeErrors(t *testing.T) {
+	for _, mode := range []constant.RelayMode{
+		constant.RelayModeEmbeddings,
+		constant.RelayModeRerank,
+		constant.RelayModeImagesGenerations,
+		constant.RelayModeAudioSpeech,
+	} {
+		a := &Adaptor{}
+		info := vertexTestInfo("gemini-2.5-pro")
+		info.RelayMode = int(mode)
+		a.Init(info)
+
+		if _, err := a.GetRequestURL(info); err == nil {
+			t.Errorf("mode %v 应显式报错，实际返回了 URL", mode)
+		}
+	}
+}
+
 // TestAdaptClaudeBodyForVertex Vertex Anthropic 端点的体改写：
 // 注入 anthropic_version（必填）、删除 model（模型由 URL 指定）。
 func TestAdaptClaudeBodyForVertex(t *testing.T) {

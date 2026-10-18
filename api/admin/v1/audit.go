@@ -18,7 +18,7 @@ type AuditConfigGetRes struct {
 
 type AuditConfigUpdateReq struct {
 	g.Meta     `path:"/audit/config" method:"put" mime:"json" tags:"管理后台-审计" summary:"更新审计配置"`
-	AuditLevel string `json:"audit_level" v:"required|in:full,full_text,masked,question_only,none"`
+	AuditLevel string `json:"audit_level" v:"required|in:full,full_text,masked,question_only,meta_only,none"`
 }
 
 type AuditConfigUpdateRes struct{}
@@ -59,22 +59,24 @@ type SensitiveLogListRes struct {
 }
 
 type RequestAuditLogListReq struct {
-	g.Meta     `path:"/audit/request-logs" method:"get" mime:"json" tags:"管理后台-审计" summary:"请求审计日志"`
-	Page       int    `json:"page" d:"1"`
-	PageSize   int    `json:"page_size" d:"20"`
-	ID         int64  `json:"id" dc:"日志ID"`
-	TenantID   int    `json:"tenant_id" dc:"租户ID"`
-	UserID     int64  `json:"user_id" dc:"用户ID"`
-	ApiKeyID   int    `json:"api_key_id" dc:"API Key ID"`
-	Username   string `json:"username" dc:"用户名（模糊匹配）"`
-	RequestId  string `json:"request_id" dc:"Request ID（精确匹配）"`
-	TaskId     string `json:"task_id" dc:"异步任务ID（精确匹配）"`
-	Method     string `json:"method" dc:"HTTP 方法"`
-	Path       string `json:"path" dc:"请求路径"`
-	Model      string `json:"model" dc:"模型名称（精确匹配）"`
-	StatusCode int    `json:"status_code" dc:"状态码"`
-	StartDate  string `json:"start_date" dc:"开始时间（YYYY-MM-DD 或 YYYY-MM-DD HH:mm:ss）"`
-	EndDate    string `json:"end_date" dc:"结束时间（YYYY-MM-DD 或 YYYY-MM-DD HH:mm:ss）"`
+	g.Meta        `path:"/audit/request-logs" method:"get" mime:"json" tags:"管理后台-审计" summary:"请求审计日志"`
+	Page          int    `json:"page" d:"1"`
+	PageSize      int    `json:"page_size" d:"20"`
+	ID            int64  `json:"id" dc:"日志ID"`
+	TenantID      int    `json:"tenant_id" dc:"租户ID"`
+	UserID        int64  `json:"user_id" dc:"用户ID"`
+	ApiKeyID      int    `json:"api_key_id" dc:"API Key ID"`
+	Username      string `json:"username" dc:"用户名（模糊匹配）"`
+	RequestId     string `json:"request_id" dc:"Request ID（精确匹配）"`
+	TaskId        string `json:"task_id" dc:"异步任务ID（精确匹配）"`
+	Method        string `json:"method" dc:"HTTP 方法"`
+	Path          string `json:"path" dc:"请求路径"`
+	Model         string `json:"model" dc:"模型名称（精确匹配）"`
+	StatusCode    int    `json:"status_code" dc:"状态码"`
+	SessionKey    string `json:"session_key" dc:"会话关联键（精确匹配）"`
+	SessionSource string `json:"session_source" dc:"会话键来源：header/anthropic/openai"`
+	StartDate     string `json:"start_date" dc:"开始时间（YYYY-MM-DD 或 YYYY-MM-DD HH:mm:ss）"`
+	EndDate       string `json:"end_date" dc:"结束时间（YYYY-MM-DD 或 YYYY-MM-DD HH:mm:ss）"`
 }
 
 type RequestAuditLogListRes struct {
@@ -94,6 +96,22 @@ type RequestAuditLogDetailRes struct {
 }
 
 func (r *RequestAuditLogDetailRes) MarshalJSON() ([]byte, error) {
+	return json.Marshal(r.Data)
+}
+
+// RequestAuditLogConversationReq 会话视图：从锚点审计记录还原完整对话
+// （按三层降级关联：会话键 → 内容链 → 身份推断，段/分支/缺失标注齐全）
+type RequestAuditLogConversationReq struct {
+	g.Meta `path:"/audit/request-logs/{id}/conversation" method:"get" mime:"json" tags:"管理后台-审计" summary:"审计日志会话视图（还原完整对话）"`
+	Id     int64 `json:"id" in:"path" v:"required|min:1" dc:"锚点审计记录ID"`
+}
+
+// RequestAuditLogConversationRes 会话重组结果平铺（json:"-" + MarshalJSON 避免双层 data）
+type RequestAuditLogConversationRes struct {
+	Data map[string]any `json:"-"`
+}
+
+func (r *RequestAuditLogConversationRes) MarshalJSON() ([]byte, error) {
 	return json.Marshal(r.Data)
 }
 

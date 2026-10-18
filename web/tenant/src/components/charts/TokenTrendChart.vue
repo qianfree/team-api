@@ -84,6 +84,15 @@ const METRIC_ORDER: MetricKey[] = ['cost', 'tokens', 'requests']
 const metric = ref<MetricKey>('cost')
 const activeMetric = computed(() => METRICS[metric.value])
 
+// canvas 对读屏不可见，用文字概要替代（峰值/最新/合计，信息等价于看图）
+const chartSummary = computed(() => {
+	const cfg = activeMetric.value
+	if (props.data.length === 0) return `近 ${props.days} 天${cfg.label}趋势：暂无数据`
+	const values = props.data.map((item) => cfg.value(item))
+	const maxIdx = values.indexOf(Math.max(...values))
+	return `近 ${props.days} 天${cfg.label}趋势：峰值 ${cfg.format(values[maxIdx])}（${props.data[maxIdx].date}），最新 ${cfg.format(values[values.length - 1])}，合计 ${cfg.format(values.reduce((a, b) => a + b, 0))}`
+})
+
 function formatDateLabel(date: string): string {
 	const parts = date.split('-')
 	return parts.length === 3 ? `${parts[1]}-${parts[2]}` : date
@@ -197,17 +206,18 @@ const chartOptions = computed<ChartOptions<'line'>>(() => {
 			</div>
 		</div>
 
-		<div v-if="loading" class="flex h-[300px] items-center justify-center">
+		<div v-if="loading" class="flex h-[300px] items-center justify-center" role="status" aria-live="polite">
 			<div class="spinner h-8 w-8 text-primary-500"></div>
+			<span class="sr-only">加载中</span>
 		</div>
-		<div v-else-if="data.length === 0" class="flex h-[300px] flex-col items-center justify-center text-slate-400">
+		<div v-else-if="data.length === 0" class="flex h-[300px] flex-col items-center justify-center text-slate-400" role="status">
 			<div class="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-50 text-primary-400">
 				<Icon name="chart" size="lg" />
 			</div>
 			<p class="mt-3 text-sm font-medium text-slate-500">暂无趋势数据</p>
 			<p class="mt-1 text-xs">完成 API 调用后即可查看趋势</p>
 		</div>
-		<div v-else class="h-[300px]">
+		<div v-else class="h-[300px]" role="img" :aria-label="chartSummary">
 			<Line :data="chartData" :options="chartOptions" />
 		</div>
 	</div>

@@ -361,6 +361,8 @@ const ALL_MENU_GROUPS = [
       { name: 'AdminTenantLoginHistory', label: '租户登录历史', icon: IconClockCircle, perm: 'audit:view' },
       { name: 'AdminSessions', label: '会话管理', icon: IconClockCircle, perm: 'user:edit' },
       { name: 'AdminAudit', label: '操作日志', icon: IconFile, perm: 'audit:view' },
+      // ai-req-analyze 插件：权限点由插件声明（PermissionProvider），插件启用后角色配置界面出现该模块
+      { name: 'AdminAiReqAnalyze', label: 'AI请求分析', icon: IconSafe, perm: 'ai-req-analyze:view' },
     ],
   },
   {

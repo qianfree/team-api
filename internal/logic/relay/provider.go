@@ -484,10 +484,15 @@ func (p *DataProviderImpl) RecordAudit(ctx context.Context, record *common.Audit
 			return
 		}
 
+		// 会话关联摘要：必须在 ApplyAuditLevel / truncateBody 之前的原始 body 上计算，
+		// 关联能力才不受审计级别与 2 KiB 截断影响（设计见 docs/会话关联与完整会话提取方案.md）
+		digest := lcommon.ExtractSessionDigest(record.Path, record.RequestBody, record.ResponseBody,
+			record.IsStream, record.HeaderSessionID, record.TenantID, record.Model)
+
 		// 按系统级别处理
-		sysReq, sysResp := lcommon.ApplyAuditLevel(globalLevel, record.RequestBody, record.ResponseBody, record.IsStream, record.Path)
+		sysReq, sysResp := lcommon.ApplyAuditLevel(globalLevel, record.RequestBody, record.ResponseBody, record.IsStream, record.Path, record.StatusCode)
 		// 按租户级别处理
-		tntReq, tntResp := lcommon.ApplyAuditLevel(tenantLevel, record.RequestBody, record.ResponseBody, record.IsStream, record.Path)
+		tntReq, tntResp := lcommon.ApplyAuditLevel(tenantLevel, record.RequestBody, record.ResponseBody, record.IsStream, record.Path, record.StatusCode)
 
 		// 截断过长的内容：配置了独立审计库时完整记录（auditBodyMaxLen=0 不截断），
 		// 否则截断到 2 KiB，防止与业务数据共用主库导致库膨胀。
@@ -550,6 +555,35 @@ func (p *DataProviderImpl) RecordAudit(ctx context.Context, record *common.Audit
 			ForwardingTrace:    forwardingTraceJSON,
 		}
 
+		// 会话关联列：空值不设字段（do 留 nil → 落 NULL，配合部分索引与查询过滤，
+		// 避免空串进索引造成膨胀与误命中）
+		if digest.SessionKey != "" {
+			insertData.SessionKey = digest.SessionKey
+			insertData.SessionSource = digest.SessionSource
+		}
+		if digest.ConvFingerprint != "" {
+			insertData.ConvFingerprint = digest.ConvFingerprint
+		}
+		if digest.RespMsgHash != "" {
+			insertData.RespMsgHash = digest.RespMsgHash
+		}
+		if digest.LastAsstMsgHash != "" {
+			insertData.LastAsstMsgHash = digest.LastAsstMsgHash
+		}
+		if digest.UserField != "" {
+			// user_field 是请求体 user 字段的客户端自由文本（可能含 PII），库内单列无租户副本，
+			// 落库只按全局级别：none/meta_only（不记请求内容）时丢弃，question_only 保留请求侧
+			// 照常落库，masked 脱敏；租户视角在租户详情接口按租户级别做读取过滤
+			if !lcommon.AuditRequestContentDropped(globalLevel) {
+				userField := digest.UserField
+				if globalLevel == lcommon.AuditLevelMasked {
+					userField = lcommon.MaskSensitiveData(userField)
+				}
+				insertData.UserField = userField
+			}
+		}
+		insertData.IsContextReset = digest.IsContextReset
+
 		// 异步任务字段
 		if record.TaskID != "" {
 			insertData.TaskId = record.TaskID
@@ -594,9 +628,12 @@ func (p *DataProviderImpl) UpdateTaskAudit(ctx context.Context, record *common.A
 		bgCtx := context.Background()
 		globalLevel, tenantLevel := lcommon.GetAuditLevels(bgCtx, record.TenantID)
 
-		// 按审计级别处理任务结果
+		// 按审计级别处理任务结果。task_result 为库内单列（无租户副本），落库只按全局级别
+		//（管理端视角）执行，租户级别不作用于落库——与正文字段「租户级别只影响租户副本」
+		// 的设计一致；租户视角在租户详情接口按该行记录的租户级别做读取过滤。
+		// 全局 none/meta_only/question_only（不记内容/仅留痕/仅记请求）时不落，masked 脱敏
 		taskResult := record.TaskResult
-		if globalLevel == lcommon.AuditLevelNone && tenantLevel == lcommon.AuditLevelNone {
+		if lcommon.AuditResponseContentDropped(globalLevel) {
 			taskResult = ""
 		} else if globalLevel == lcommon.AuditLevelMasked {
 			taskResult = lcommon.MaskSensitiveData(taskResult)

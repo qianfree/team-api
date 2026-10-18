@@ -50,6 +50,7 @@ const auditLevelOptions = [
 	{ label: '全量文本', value: 'full_text', desc: '记录思考过程和回答内容，不含原始 SSE 数据' },
 	{ label: '脱敏记录', value: 'masked', desc: '记录请求和响应，但敏感字段会脱敏处理' },
 	{ label: '仅记录提问', value: 'question_only', desc: '仅记录用户提问内容，不记录模型回复' },
+	{ label: '仅留痕', value: 'meta_only', desc: '只记录请求元数据（路径、状态码、耗时等），不记录请求和响应内容，出错时保留错误原因' },
 	{ label: '关闭', value: 'none', desc: '不记录任何审计日志' },
 ]
 
@@ -73,6 +74,9 @@ async function fetchOrgInfo() {
 		nameForm.name = res.data?.data?.name || ''
 		teamForm.name = res.data?.data?.name || ''
 		teamForm.code = res.data?.data?.code || ''
+		// 同步登录态缓存的团队功能状态：本页实时数据显示「已启用」时，
+		// 若不回写 store，SPA 跳到成员管理仍按旧快照显示「团队功能未启用」
+		authStore.refreshOrgInfo().catch(() => {})
 	} catch {
 		// silent
 	} finally {
@@ -381,6 +385,7 @@ onMounted(() => {
 							<button
 								@click="editingName = true"
 								class="text-primary-600 hover:text-primary-500 transition-colors"
+								aria-label="编辑组织名称"
 							>
 								<Icon name="edit" size="sm" />
 							</button>

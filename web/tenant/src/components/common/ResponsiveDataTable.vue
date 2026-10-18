@@ -125,6 +125,20 @@ function desktopRowProps(row: any) {
 	}
 }
 
+// 移动端整卡可点击时补足读屏语义与键盘可达（参照 ModelCard 的做法）
+const cardInteractiveAttrs = computed(() => {
+	if (!props.rowClick) return {}
+	return { role: 'button', tabindex: 0 }
+})
+
+function onCardKeydown(event: KeyboardEvent, row: any) {
+	if (!props.rowClick) return
+	if (event.key === 'Enter' || event.key === ' ') {
+		event.preventDefault()
+		props.rowClick(row)
+	}
+}
+
 // 网格字段：按 cardFields 顺序取，未指定则用除标题/徽章/副标题/操作外的全部列
 const fields = computed(() => {
 	const keys = props.cardFields?.length
@@ -179,13 +193,14 @@ function renderCell(row: any, col: DataTableColumn<any> | null): VNodeChild {
 
 	<!-- 移动端：每行 = 一张卡片 -->
 	<div v-else class="space-y-3">
-		<!-- 加载中 -->
-		<div v-if="loading" class="flex justify-center py-6">
+		<!-- 加载中：aria-live 让读屏在结果到达/为空时自动播报 -->
+		<div v-if="loading" class="flex justify-center py-6" role="status" aria-live="polite">
 			<div class="spinner h-5 w-5 text-primary-500"></div>
+			<span class="sr-only">加载中</span>
 		</div>
 
 		<!-- 空状态 -->
-		<div v-else-if="data.length === 0">
+		<div v-else-if="data.length === 0" role="status">
 			<slot name="empty">
 				<div class="empty-state">
 					<p class="empty-state-title">暂无数据</p>
@@ -199,7 +214,9 @@ function renderCell(row: any, col: DataTableColumn<any> | null): VNodeChild {
 				:key="rowKey(row)"
 				class="card p-4"
 				:class="{ 'cursor-pointer transition-transform active:scale-[0.995]': rowClick }"
+				v-bind="cardInteractiveAttrs"
 				@click="rowClick && rowClick(row)"
+				@keydown="onCardKeydown($event, row)"
 			>
 				<!-- 卡片头部：主标题 + 副标题 + 状态徽章 + 可点击箭头 -->
 				<div class="flex items-start justify-between gap-3">

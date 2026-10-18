@@ -105,6 +105,12 @@ func (s *sTenant) OrderCreate(ctx context.Context, req *v1.TenantOrderCreateReq)
 	}
 	tenantID := middleware.GetTenantID(ctx)
 	userID := middleware.GetUserID(ctx)
+
+	// 与充值入口同口径：挂起未支付订单达到上限时拒绝新建（防滥用，见 checkPendingOrderLimit）
+	if err := checkPendingOrderLimit(ctx, tenantID); err != nil {
+		return nil, err
+	}
+
 	planID := req.PlanID
 	months := req.Months
 

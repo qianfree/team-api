@@ -71,15 +71,111 @@ type modelMappingProvider interface {
 	GetModelMapping(ctx context.Context, modelName string) (standardName string, category string, err error)
 }
 
-// resolveRelayModel 校验模型在目录中存在，返回计费/调度用的目录模型名。
+// resolveRelayModel 校验模型在目录中存在，返回计费/调度用的目录模型名与模型分类。
 // 历史上此处还承担 thinking/effort 模型名后缀（-thinking/-high 等虚拟模型语法）的
 // 解析回退；该语法已于 2026-09 移除（无存量使用，思考参数一律由客户端请求参数表达），
 // 目录名即请求名。
-func resolveRelayModel(ctx context.Context, provider modelMappingProvider, modelName string) (string, error) {
-	if _, _, err := provider.GetModelMapping(ctx, modelName); err != nil {
-		return "", err
+func resolveRelayModel(ctx context.Context, provider modelMappingProvider, modelName string) (string, string, error) {
+	_, category, err := provider.GetModelMapping(ctx, modelName)
+	if err != nil {
+		return "", "", err
 	}
-	return modelName, nil
+	return modelName, category, nil
+}
+
+// checkModelCategoryMatchesMode embeddings/rerank 入口的模型分类预校验：
+// 用 chat 类模型调这些端点提前本地拒绝，不再路由到渠道后由上游报出难懂的错误。
+// category 为空时放行（目录数据不全不误杀）；chat 族入口不校验（主路径，兼容面最宽）。
+func checkModelCategoryMatchesMode(modelName, category string, mode constant.RelayMode) error {
+	var want string
+	switch mode {
+	case constant.RelayModeEmbeddings:
+		want = "embedding"
+	case constant.RelayModeRerank:
+		want = "rerank"
+	default:
+		return nil
+	}
+	if category == "" || category == want {
+		return nil
+	}
+	return constant.NewRequestError(fmt.Sprintf(
+		"model %s (category: %s) does not support the %s endpoint, use a %s model instead",
+		modelName, category, mode.String(), want), nil)
+}
+
+// validateEmbeddingsRequestParams embeddings 请求参数本地校验（畸形参数 400 拦截，
+// 不再透传上游）。input 按 OpenAI 协议允许 string / []string / []int / [][]int
+// （token ID 形态），统一约束为 JSON 字符串或数组两种形态。
+func validateEmbeddingsRequestParams(rawRequest map[string]json.RawMessage) error {
+	input, ok := rawRequest["input"]
+	if !ok {
+		return constant.NewRequestError("input is required", nil)
+	}
+	trimmed := bytes.TrimLeft(input, " \t\r\n")
+	if len(trimmed) == 0 || (trimmed[0] != '"' && trimmed[0] != '[') {
+		return constant.NewRequestError("input must be a string or an array of strings/tokens", nil)
+	}
+	if v, ok := rawRequest["dimensions"]; ok {
+		var dim int
+		if json.Unmarshal(v, &dim) == nil && dim <= 0 {
+			return constant.NewRequestError("dimensions must be a positive integer", nil)
+		}
+	}
+	if v, ok := rawRequest["encoding_format"]; ok {
+		var ef string
+		if json.Unmarshal(v, &ef) == nil && ef != "float" && ef != "base64" {
+			return constant.NewRequestError("encoding_format must be one of: float, base64", nil)
+		}
+	}
+	return nil
+}
+
+// validateRerankRequestParams rerank 请求参数本地校验（Cohere 风格协议）。
+// documents 按 Cohere v2 允许 string 或含 text 字段的对象。
+func validateRerankRequestParams(rawRequest map[string]json.RawMessage) error {
+	if q, ok := rawRequest["query"]; ok {
+		var query string
+		if json.Unmarshal(q, &query) != nil || query == "" {
+			return constant.NewRequestError("query must be a non-empty string", nil)
+		}
+	} else {
+		return constant.NewRequestError("query is required", nil)
+	}
+
+	docs, ok := rawRequest["documents"]
+	if !ok {
+		return constant.NewRequestError("documents is required", nil)
+	}
+	var documents []json.RawMessage
+	if err := json.Unmarshal(docs, &documents); err != nil || len(documents) == 0 {
+		return constant.NewRequestError("documents must be a non-empty array", nil)
+	}
+	for i, d := range documents {
+		trimmed := bytes.TrimLeft(d, " \t\r\n")
+		if len(trimmed) == 0 || (trimmed[0] != '"' && trimmed[0] != '{') {
+			return constant.NewRequestError(fmt.Sprintf("documents[%d] must be a string or an object with a text field", i), nil)
+		}
+	}
+
+	// 数值下界约束（map 迭代序不定，用切片保证报错稳定）
+	numericConstraints := []struct {
+		field string
+		min   int
+	}{
+		{"top_n", 0},
+		{"max_chunks_per_doc", 1},
+		{"overlap_tokens", 0},
+	}
+	for _, c := range numericConstraints {
+		if v, ok := rawRequest[c.field]; ok {
+			var n int
+			if json.Unmarshal(v, &n) == nil && n < c.min {
+				return constant.NewRequestError(fmt.Sprintf("%s must be >= %d", c.field, c.min), nil)
+			}
+		}
+	}
+	return nil
 }
 
 // validateRelayRequest 校验请求合法性：relay mode、QPS 限流（前置）、模型存在性、弃用状态、成员/API Key 模型范围。
@@ -88,6 +184,7 @@ func validateRelayRequest(
 	ctx context.Context,
 	body []byte,
 	path string,
+	headers http.Header,
 	rc *RelayContext,
 	provider common.DataProvider,
 	billing common.BillingProvider,
@@ -132,9 +229,11 @@ func validateRelayRequest(
 		}
 	}
 
-	// 2. 解析请求体获取模型名
+	// 2. 解析请求体获取模型名（JSON 与 multipart 双形态：官方 SDK 对 images/edits、
+	// audio/transcriptions 等端点发 multipart 表单，文件 part 透传上游、此处只取标量字段）
 	var rawRequest map[string]json.RawMessage
-	if err := json.Unmarshal(body, &rawRequest); err != nil {
+	rawRequest, err := parseRequestBodyFields(body, headers)
+	if err != nil {
 		return nil, constant.NewRequestError("invalid request body", err)
 	}
 
@@ -150,12 +249,29 @@ func validateRelayRequest(
 	}
 
 	// 2.5 验证模型在目录中存在
-	lookupModel, modelErr := resolveRelayModel(ctx, provider, modelName)
+	lookupModel, modelCategory, modelErr := resolveRelayModel(ctx, provider, modelName)
 	if modelErr != nil {
 		if modelErr == common.ErrModelNotFound {
 			return nil, constant.NewRequestError("model not found: "+modelName, modelErr)
 		}
 		return nil, modelErr
+	}
+
+	// 2.6 模型分类与端点匹配预校验（chat 模型调 embeddings/rerank 提前本地拒绝）
+	if err := checkModelCategoryMatchesMode(modelName, modelCategory, relayMode); err != nil {
+		return nil, err
+	}
+
+	// 2.7 embeddings/rerank 请求参数本地校验（畸形参数 400 拦截，不再透传上游）
+	switch relayMode {
+	case constant.RelayModeEmbeddings:
+		if err := validateEmbeddingsRequestParams(rawRequest); err != nil {
+			return nil, err
+		}
+	case constant.RelayModeRerank:
+		if err := validateRerankRequestParams(rawRequest); err != nil {
+			return nil, err
+		}
 	}
 
 	// 3.5 检查模型弃用状态
@@ -185,11 +301,20 @@ func validateRelayRequest(
 	// 5. QPS 限流已前置到步骤 1.5（见上），此处不再检查
 
 	// 7. 估算输入 token 数
-	estimatedInputTokens := estimateInputTokens(body)
+	var contentType string
+	if headers != nil {
+		contentType = headers.Get("Content-Type")
+	}
+	estimatedInputTokens := estimateInputTokens(body, contentType)
 
 	var isStream bool
 	if streamVal, ok := rawRequest["stream"]; ok {
 		_ = json.Unmarshal(streamVal, &isStream)
+	}
+
+	// embeddings/rerank 协议不支持流式：显式拒绝而非透传上游（上游对 stream 字段行为不定）
+	if isStream && (relayMode == constant.RelayModeEmbeddings || relayMode == constant.RelayModeRerank) {
+		return nil, constant.NewRequestError("stream is not supported for this endpoint", nil)
 	}
 
 	var maxTokens int
@@ -272,6 +397,12 @@ func settleSuccessfulRequest(
 	// 重新创建 context，上游 DoResponse 可能耗时很长（长文本流式输出）
 	postCtx, postCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer postCancel()
+
+	// 上游未返回 usage 时回退请求侧估算（仅 embeddings/rerank），避免漏计费
+	if applyMissingUsageFallback(usage, v) {
+		g.Log().Warningf(postCtx, "[RelayHandler] upstream returned no usage, billing falls back to request-side estimate: request=%s mode=%s estimate_tokens=%d",
+			rc.RequestID, v.relayModeStr, v.estimatedTokens)
+	}
 
 	var settleResult *common.SettlementResult
 	if billing != nil && preDeductAmount > 0 {
@@ -412,7 +543,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 	}
 
 	// 校验请求（relay mode、模型、权限、限流）
-	v, err := validateRelayRequest(ctx, body, path, rc, provider, billing)
+	v, err := validateRelayRequest(ctx, body, path, headers, rc, provider, billing)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -956,7 +1087,13 @@ func convertRequestBody(ctx context.Context, info *common.RelayInfo, body []byte
 
 	// 字段清理
 	sanitized, _ := io.ReadAll(convertedBody)
-	sanitized = helper.SanitizeFields(sanitized, info.ChannelMeta.Settings)
+	sanitizeSettings := info.ChannelMeta.Settings
+	// speech 的 speed 是 TTS 语速参数（0.25~4.0），与 SanitizeFields 默认移除的
+	// Claude 推理速度模式同名参数含义不同：按模式放行，避免语速控制被误删
+	if constant.RelayMode(info.RelayMode) == constant.RelayModeAudioSpeech {
+		sanitizeSettings.AllowSpeed = true
+	}
+	sanitized = helper.SanitizeFields(sanitized, sanitizeSettings)
 	return bytes.NewReader(sanitized), nil
 }
 
@@ -1226,12 +1363,42 @@ func recordChannelError(rc *RelayContext, selection *common.ChannelSelection, mo
 // 这里取保守上界即可——预扣只是闸门，最终以上游 usage 结算，多退少补。
 const inlineMediaTokenCost = 1500
 
+// applyMissingUsageFallback 上游未返回 usage 时的计费兜底，返回是否生效。
+//
+// 部分 OpenAI 兼容网关的 embeddings/rerank 响应不带 usage 字段，按 0 token 结算
+// （预扣全额退还）会造成漏计费。这两个模式的成本几乎全部在输入侧，回退到请求侧
+// 估算（与预扣同源的 estimateInputTokens）比按 0 结算更接近真实成本；上游正常
+// 返回 usage 时本函数不改变任何数值。
+// chat 族不启用：流式已注入 stream_options 保证 usage，异常 0 usage 场景交由
+// 对账处理，避免粗估口径影响主路径计费。
+func applyMissingUsageFallback(usage *common.Usage, v *relayValidation) bool {
+	if usage == nil || v == nil || v.estimatedTokens <= 0 {
+		return false
+	}
+	switch v.relayMode {
+	case constant.RelayModeEmbeddings, constant.RelayModeRerank:
+	default:
+		return false
+	}
+	if usage.TotalInputTokens() > 0 || usage.CompletionTokens > 0 || usage.TotalTokens > 0 {
+		return false
+	}
+	usage.PromptTokens = v.estimatedTokens
+	usage.TotalTokens = v.estimatedTokens
+	return true
+}
+
 // estimateInputTokens 粗略估算输入 token 数（仅用于预扣，结算以上游 usage 为准）。
 //
 // 文本部分按字符数 / 4；base64 内联媒体不能按字节折算——一张 2MB 的图按 len/4
 // 会被估成约 70 万 token，预扣直接冻穿余额，余额略少的租户根本发不出请求。
 // 故先扫出内联媒体载荷的字节数从长度中扣除，再按每个媒体的固定成本计入。
-func estimateInputTokens(body []byte) int {
+// multipart 体（STT 音频、图片编辑的文件表单）同理走固定成本口径，见
+// estimateMultipartInputTokens。
+func estimateInputTokens(body []byte, contentType string) int {
+	if isMultipartContentType(contentType) {
+		return estimateMultipartInputTokens(body, contentType)
+	}
 	mediaBytes, mediaCount := commonlogic.ScanInlineMediaBytes(body)
 	textBytes := len(body) - mediaBytes
 	if textBytes < 0 {
@@ -1345,6 +1512,16 @@ func relayModeString(mode constant.RelayMode) string {
 		return "video_generations"
 	case constant.RelayModeVideos:
 		return "videos"
+	case constant.RelayModeVideoFetch:
+		return "video_fetch"
+	case constant.RelayModeSunoSubmit:
+		return "suno_submit"
+	case constant.RelayModeSunoFetch:
+		return "suno_fetch"
+	case constant.RelayModeMiniMaxVideo:
+		return "minimax_video"
+	case constant.RelayModeAliVideo:
+		return "ali_video"
 	default:
 		return ""
 	}

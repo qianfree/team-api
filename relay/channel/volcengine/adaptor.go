@@ -13,6 +13,7 @@ import (
 	"github.com/qianfree/team-api/relay/channel/openai"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
+	"github.com/qianfree/team-api/relay/helper"
 )
 
 // openaiAdaptor 火山 OpenAI 兼容链路（/api/v3/*），处理非 Claude 入站。
@@ -40,8 +41,18 @@ func (a *openaiAdaptor) GetRequestURL(info *common.RelayInfo) (string, error) {
 		return baseURL + "/api/v3/chat/completions", nil
 	case constant.RelayModeEmbeddings:
 		return baseURL + "/api/v3/embeddings", nil
+	case constant.RelayModeRerank:
+		return baseURL + "/api/v3/rerank", nil
 	case constant.RelayModeImagesGenerations:
 		return baseURL + "/api/v3/images/generations", nil
+	case constant.RelayModeAudioSpeech:
+		// Ark OpenAI 兼容 TTS 端点：JSON 请求、二进制音频响应（响应由委托的 openai 适配器透传）
+		return baseURL + "/api/v3/audio/speech", nil
+	case constant.RelayModeAudioTranscription:
+		// Ark OpenAI 兼容（Whisper 风格）转写端点：multipart 文件上传。
+		// audio/translations 在 Ark 侧无支持证据，不注册：翻译请求命中火山渠道时
+		// 走 default 分支显式报错，优于静默转发到不存在的上游路径。
+		return baseURL + "/api/v3/audio/transcriptions", nil
 	default:
 		return "", fmt.Errorf("volcengine(openai): unsupported relay mode: %d", info.RelayMode)
 	}
@@ -64,8 +75,16 @@ func (a *openaiAdaptor) ConvertRequest(ctx context.Context, info *common.RelayIn
 		}
 		requestBody = converted
 	}
-	result := mapModelIfNeeded(requestBody, info)
 	mode := constant.RelayMode(info.RelayMode)
+	// Audio speech/STT：Ark OpenAI 兼容端点按 OpenAI 原生体接收，不注入 stream_options；
+	// 模型映射时 speech（JSON）通用替换，STT（multipart）在表单字段层改写（公共 helper）
+	switch mode {
+	case constant.RelayModeAudioSpeech:
+		return mapModelIfNeeded(requestBody, info), nil
+	case constant.RelayModeAudioTranscription:
+		return bytes.NewReader(helper.RewriteAudioMultipartModel(requestBody, info)), nil
+	}
+	result := mapModelIfNeeded(requestBody, info)
 	if mode != constant.RelayModeImagesGenerations && mode != constant.RelayModeImagesEdits {
 		result = openai.InjectStreamOptions(result, info)
 	}

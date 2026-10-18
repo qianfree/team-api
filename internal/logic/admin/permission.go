@@ -10,6 +10,7 @@ import (
 	v1 "github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
+	"github.com/qianfree/team-api/internal/plugin"
 )
 
 // predefinedPermissionGroups defines all available permission points grouped by module.
@@ -293,6 +294,10 @@ var tierLabels = map[string]string{
 //
 // 同时返回权限点分组（高级模式用）与「模块 × 档位」元数据（默认配置界面用）：
 // 二者是同一份数据的两个视图，由后端统一给出，避免前端复刻一份档位定义造成漂移。
+//
+// 已启用插件声明的分组与模块档位（PermissionProvider）一并合并下发：
+// 前端零改动即可在角色配置界面看到插件模块。只合并「已启用」的插件——
+// 未启用插件的路由被默认拒绝，把它的模块摆上授权界面只会造成「授了权却不生效」的困惑。
 func (s *sAdmin) GetAllPermissions(ctx context.Context, _ *v1.AdminAllPermissionsReq) (*v1.AdminAllPermissionsRes, error) {
 	modules := make([]v1.PermissionModuleMeta, 0, len(predefinedPermissionGroups))
 	for _, grp := range predefinedPermissionGroups {
@@ -312,8 +317,17 @@ func (s *sAdmin) GetAllPermissions(ctx context.Context, _ *v1.AdminAllPermission
 		})
 	}
 
+	groups := predefinedPermissionGroups
+	enabledGroups := plugin.EnabledPermissionGroups()
+	if len(enabledGroups) > 0 {
+		groups = append(append([]v1.PermissionGroup{}, predefinedPermissionGroups...), enabledGroups...)
+	}
+	if enabledModules := plugin.EnabledPermissionModules(); len(enabledModules) > 0 {
+		modules = append(modules, enabledModules...)
+	}
+
 	return &v1.AdminAllPermissionsRes{
-		Groups:    predefinedPermissionGroups,
+		Groups:    groups,
 		Modules:   modules,
 		Dangerous: dangerousPermissions,
 	}, nil
@@ -380,9 +394,19 @@ func GetDataScopes(ctx context.Context, userID int64, role string) ([]v1.DataSco
 }
 
 // buildValidPermissionSet returns a set of all valid permission points.
+//
+// 除核心预定义分组外，合并全部【已注册】插件（PermissionProvider）声明的权限点，
+// 刻意不限安装/启用状态：插件是编译期注册的，其权限点随二进制恒为「已定义」；
+// 若按启用状态收缩，插件禁用/卸载后仍持有其权限点的角色会在下一次保存时被判为
+// 无效权限点而无法保存。插件未启用时路由本来就被默认拒绝，保留有效性无放行风险。
 func buildValidPermissionSet() map[string]bool {
 	set := make(map[string]bool)
 	for _, g := range predefinedPermissionGroups {
+		for _, p := range g.Permissions {
+			set[p] = true
+		}
+	}
+	for _, g := range plugin.RegisteredPermissionGroups() {
 		for _, p := range g.Permissions {
 			set[p] = true
 		}

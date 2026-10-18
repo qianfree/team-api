@@ -78,8 +78,6 @@ func (a *Adaptor) getRelayAction(info *common.RelayInfo) (string, error) {
 			return "streamGenerateContent", nil
 		}
 		return "generateContent", nil
-	case constant.RelayModeEmbeddings:
-		return "embedContent", nil
 	case constant.RelayModeImagesGenerations:
 		if strings.HasPrefix(info.ChannelMeta.UpstreamModelName, "imagen") {
 			return "predict", nil
@@ -124,8 +122,6 @@ func (a *Adaptor) GetRequestURL(info *common.RelayInfo) (string, error) {
 			return fmt.Sprintf("%s/v1beta/models/%s:streamGenerateContent?alt=sse", baseURL, model), nil
 		}
 		return fmt.Sprintf("%s/v1beta/models/%s:generateContent", baseURL, model), nil
-	case constant.RelayModeEmbeddings:
-		return fmt.Sprintf("%s/v1beta/models/%s:embedContent", baseURL, model), nil
 	case constant.RelayModeImagesGenerations:
 		if strings.HasPrefix(model, "imagen") {
 			return fmt.Sprintf("%s/v1beta/models/%s:predict", baseURL, model), nil

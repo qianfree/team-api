@@ -40,6 +40,9 @@ type CronScheduler struct {
 	// 仅在 StartBackground 之后有值。
 	entryIDs map[string]cron.EntryID
 	entryMu  sync.Mutex
+	// started StartBackground 是否已执行。此后 Register 的任务需即时挂载条目
+	//（运行时启用插件的场景），Remove 才能摘到条目。
+	started bool
 }
 
 var (
@@ -74,15 +77,88 @@ func NewCronScheduler() *CronScheduler {
 // Register adds a scheduled job.
 // name 为全局唯一标识（用作分布式锁 key 和 sys_cron_jobs 主键，必须稳定，禁止中文）；
 // displayName 为管理后台展示用的中文名，与 name 就近声明，避免散落到前端映射表。
+//
+// 同名重复注册按覆盖处理（插件禁用→再次启用的注册路径），不会产生双条目。
+// 调度器已启动（StartBackground 之后）时即时挂载 cron 条目——此前注册只进任务表、
+// 无人再遍历，运行时启用的插件任务会静默失效。
 func (cs *CronScheduler) Register(name, displayName, schedule string, handler func(ctx context.Context) error) {
-	cs.mu.Lock()
-	defer cs.mu.Unlock()
-	cs.jobs = append(cs.jobs, &CronJob{
+	job := &CronJob{
 		Name:        name,
 		DisplayName: displayName,
 		Schedule:    schedule,
 		Handler:     handler,
+	}
+
+	cs.mu.Lock()
+	replaced := false
+	for i, j := range cs.jobs {
+		if j.Name == name {
+			cs.jobs[i] = job
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		cs.jobs = append(cs.jobs, job)
+	}
+	started := cs.started
+	cs.mu.Unlock()
+
+	if started && !replaced {
+		cs.mountEntry(name, schedule)
+	} else if started && replaced {
+		// 覆盖注册时表达式可能变化：按新表达式重挂条目
+		cs.RemountEntry(name, schedule)
+	}
+}
+
+// Remove 按名移除已注册任务（插件禁用/卸载时调用）：
+// 从任务表摘除并卸下 cron 条目；正在执行中的本次运行会自然跑完，不会被打断。
+// 任务不存在时静默返回（幂等）。
+func (cs *CronScheduler) Remove(name string) {
+	cs.mu.Lock()
+	for i, j := range cs.jobs {
+		if j.Name == name {
+			cs.jobs = append(cs.jobs[:i], cs.jobs[i+1:]...)
+			break
+		}
+	}
+	cs.mu.Unlock()
+
+	cs.entryMu.Lock()
+	if id, ok := cs.entryIDs[name]; ok {
+		cs.cron.Remove(id)
+		delete(cs.entryIDs, name)
+	}
+	cs.entryMu.Unlock()
+}
+
+// mountEntry 为任务挂载 cron 条目（仅操作 cron 与 entryIDs，不持 jobs 锁）。
+func (cs *CronScheduler) mountEntry(name, schedule string) {
+	entryID, err := cs.cron.AddFunc(schedule, func() {
+		bgCtx := gctx.New()
+		if err := cs.RunJob(bgCtx, name); err != nil {
+			g.Log().Errorf(bgCtx, "background cron error: %s: %v", name, err)
+		}
 	})
+	if err != nil {
+		g.Log().Errorf(context.Background(), "failed to register cron job %s with schedule %s: %v", name, schedule, err)
+		return
+	}
+	cs.entryMu.Lock()
+	cs.entryIDs[name] = entryID
+	cs.entryMu.Unlock()
+}
+
+// RemountEntry 摘旧条目并按新表达式重挂（覆盖注册且表达式可能变化的场景）。
+func (cs *CronScheduler) RemountEntry(name, schedule string) {
+	cs.entryMu.Lock()
+	if oldID, ok := cs.entryIDs[name]; ok {
+		cs.cron.Remove(oldID)
+		delete(cs.entryIDs, name)
+	}
+	cs.entryMu.Unlock()
+	cs.mountEntry(name, schedule)
 }
 
 // ListJobs returns all registered jobs with their running status.
@@ -290,23 +366,15 @@ func (cs *CronScheduler) StartBackground(ctx context.Context) {
 	cs.mu.RUnlock()
 
 	for _, job := range jobs {
-		j := job
-		entryID, err := cs.cron.AddFunc(j.Schedule, func() {
-			bgCtx := gctx.New()
-			if err := cs.RunJob(bgCtx, j.Name); err != nil {
-				g.Log().Errorf(bgCtx, "background cron error: %s: %v", j.Name, err)
-			}
-		})
-		if err != nil {
-			g.Log().Errorf(ctx, "failed to register cron job %s with schedule %s: %v", j.Name, j.Schedule, err)
-			continue
-		}
-		cs.entryMu.Lock()
-		cs.entryIDs[j.Name] = entryID
-		cs.entryMu.Unlock()
+		cs.mountEntry(job.Name, job.Schedule)
 	}
 
 	cs.cron.Start()
+
+	// 此后 Register 的任务即时挂载条目（运行时启用插件的注册路径）
+	cs.mu.Lock()
+	cs.started = true
+	cs.mu.Unlock()
 
 	go func() {
 		<-ctx.Done()

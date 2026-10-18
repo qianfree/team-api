@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Message } from '@arco-design/web-vue'
+import { announce } from '@/utils/announce'
 
 const props = defineProps<{ codes: string[] }>()
 
@@ -8,9 +9,16 @@ async function copyText(text: string, label = '已复制') {
 	try {
 		await navigator.clipboard.writeText(text)
 		Message.success(label)
+		announce(label)
 	} catch {
 		Message.error('复制失败，请手动选择复制')
+		announce('复制失败，请手动选择复制')
 	}
+}
+
+// 格子是 div 模拟的按钮，键盘 Enter/Space 必须与 click 等价，否则键盘/读屏用户无法复制单个恢复码
+function copyCode(codeItem: string) {
+	copyText(codeItem, '恢复码已复制')
 }
 
 function downloadCodes() {
@@ -38,8 +46,12 @@ function downloadCodes() {
 				v-for="codeItem in props.codes"
 				:key="codeItem"
 				class="code-item"
-				title="点击复制"
-				@click="copyText(codeItem, '恢复码已复制')"
+				role="button"
+				tabindex="0"
+				:aria-label="`复制恢复码 ${codeItem}`"
+				@keydown.enter.prevent="copyCode(codeItem)"
+				@keydown.space.prevent="copyCode(codeItem)"
+				@click="copyCode(codeItem)"
 			>
 				{{ codeItem }}
 			</div>

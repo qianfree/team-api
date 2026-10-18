@@ -307,7 +307,7 @@ function copyToClipboard(text: string) {
         <label class="input-label">App ID</label>
         <div class="flex items-center gap-2">
           <code class="code-block flex-1 text-sm">{{ newAppId }}</code>
-          <button class="btn btn-ghost btn-sm" @click="copyToClipboard(newAppId)">
+          <button class="btn btn-ghost btn-sm" aria-label="复制 App ID" @click="copyToClipboard(newAppId)">
             <Icon name="copy" size="sm" />
           </button>
         </div>
@@ -316,7 +316,7 @@ function copyToClipboard(text: string) {
         <label class="input-label">App Secret</label>
         <div class="flex items-center gap-2">
           <code class="code-block flex-1 text-sm break-all">{{ newSecret }}</code>
-          <button class="btn btn-ghost btn-sm" @click="copyToClipboard(newSecret)">
+          <button class="btn btn-ghost btn-sm" aria-label="复制 App Secret" @click="copyToClipboard(newSecret)">
             <Icon name="copy" size="sm" />
           </button>
         </div>

@@ -577,3 +577,24 @@ body {
     top: 16px;
   }
 }
+
+/* ── 无障碍基线（与 tenant 端 main.css 保持一致）── */
+
+/* 键盘焦点统一兜底：品牌色描边（组件自带的 focus 样式不受影响） */
+:focus-visible {
+  outline: 2px solid var(--ta-primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* 减少动效：前庭障碍用户与读屏用户关闭装饰动画 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

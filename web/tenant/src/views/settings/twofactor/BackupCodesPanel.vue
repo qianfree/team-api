@@ -12,6 +12,11 @@ async function copyText(text: string, label = '已复制') {
 	}
 }
 
+// 格子是 div 模拟的按钮，键盘 Enter/Space 必须与 click 等价，否则键盘/读屏用户无法复制单个恢复码
+function copyCode(codeItem: string) {
+	copyText(codeItem, '恢复码已复制')
+}
+
 function downloadCodes() {
 	const content = [
 		'Team-API 租户控制台 · 两步验证恢复码',
@@ -37,8 +42,12 @@ function downloadCodes() {
 				v-for="codeItem in props.codes"
 				:key="codeItem"
 				class="px-3 py-2 rounded-lg border border-gray-200 bg-gray-50 text-center font-mono text-sm tracking-wide cursor-pointer select-all hover:border-primary-400 hover:bg-primary-50/50 transition-colors"
-				title="点击复制"
-				@click="copyText(codeItem, '恢复码已复制')"
+				role="button"
+				tabindex="0"
+				:aria-label="`复制恢复码 ${codeItem}`"
+				@click="copyCode(codeItem)"
+				@keydown.enter.prevent="copyCode(codeItem)"
+				@keydown.space.prevent="copyCode(codeItem)"
 			>
 				{{ codeItem }}
 			</div>

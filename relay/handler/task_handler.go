@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
+	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
@@ -142,7 +143,21 @@ func HandleTaskSubmit(
 		return
 	}
 
-	if rc.Scope == "read_only" {
+	// 任务管线的 relay 模式提前到 scope 闸门之前确定：scope 校验需要按模式判定
+	relayMode := rc.RelayMode
+	if relayMode == 0 {
+		// 入口未显式指定时按请求路径推导（/v1/video/generations、/suno/submit/* 等共用本管线），
+		// 推导不出回退视频模式保持既有行为。relay_mode 随任务持久化，终态结算写用量日志时还原
+		if m := constant.Path2RelayMode(path); m != constant.RelayModeUnknown {
+			relayMode = int(m)
+		} else {
+			relayMode = int(constant.RelayModeVideoGenerations)
+		}
+	}
+
+	// scope 闸门与同步管线（validateRelayRequest → billing.CheckScope）同口径：此前这里只拦
+	// read_only，chat_only/rerank_only 等类型化 scope 的密钥可越权提交按次计费的视频/音乐/异步图片任务
+	if !billing.CheckScope(rc.Scope, relayModeString(constant.RelayMode(relayMode))) {
 		writeTaskError(rc.Writer, http.StatusForbidden, "API key scope denied", "")
 		return
 	}
@@ -176,17 +191,6 @@ func HandleTaskSubmit(
 	g.Log().Debugf(ctx, "HandleTaskSubmit: modelName=%s, platform=%s, channelID=%d, channelType=%d, baseURL=%s, upstreamModel=%s", modelName, platform, channelMeta.ChannelID, channelMeta.ChannelType, channelMeta.BaseURL, channelMeta.UpstreamModelName)
 
 	// 4. 构建 RelayInfo
-	relayMode := rc.RelayMode
-	if relayMode == 0 {
-		// 入口未显式指定时按请求路径推导（/v1/video/generations、/suno/submit/* 等共用本管线），
-		// 推导不出回退视频模式保持既有行为。relay_mode 随任务持久化，终态结算写用量日志时还原
-		if m := constant.Path2RelayMode(path); m != constant.RelayModeUnknown {
-			relayMode = int(m)
-		} else {
-			relayMode = int(constant.RelayModeVideoGenerations)
-		}
-	}
-
 	// 渠道调试日志：开关开启且匹配目标过滤时创建会话（捕获段1 + 包装段4 writer），
 	// 提交为单次尝试（retry_index=0），捕获器经 attemptCtx 注入传输层镜像段2/3。
 	// writer 层级：审计 capture（外层，入口胶水包）← DebugClientWriter（内层），与同步链路同构

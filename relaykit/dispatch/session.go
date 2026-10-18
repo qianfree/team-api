@@ -74,6 +74,31 @@ func ResolveSessionKey(p RequestProfile, pol SessionPolicy) SessionKey {
 	return makeSessionKey(SourceIdentity, p, ident)
 }
 
+// ResolveConversationStableKey 会话稳定键（审计分组用）。
+// 与 ResolveSessionKey（调度亲和键）的优先级语义不同：
+//   - previous_response_id 每轮指向上一轮响应，键随轮次漂移、无法聚合会话。
+//     调度用它做轮次精确亲和是合理的（把分叉请求路由回同渠道），审计分组不能用；
+//   - conversation_id 会话级稳定，Responses 协议下作为 openai 来源的键材料。
+//
+// 无任何稳定信号时返回零值（Source 为空）——身份回退不产生键，
+// 身份推断属查询时行为，防止启发式分组被当成精确键。
+// 键材料格式与 makeSessionKey 一致，header/anthropic 来源的键与调度键完全相同（存量兼容）。
+func ResolveConversationStableKey(p RequestProfile) SessionKey {
+	if validToken(p.Signals.HeaderSessionID, maxHeaderTokenLen) {
+		return makeSessionKey(SourceHeader, p, p.Signals.HeaderSessionID)
+	}
+	if raw := p.Signals.AnthropicUserID; validToken(raw, maxProtocolTokenLen) {
+		if m := anthropicSessionRe.FindStringSubmatch(raw); len(m) == 2 {
+			raw = m[1]
+		}
+		return makeSessionKey(SourceAnthropic, p, raw)
+	}
+	if validToken(p.Signals.ConversationID, maxProtocolTokenLen) {
+		return makeSessionKey(SourceOpenAI, p, p.Signals.ConversationID)
+	}
+	return SessionKey{}
+}
+
 // makeSessionKey 生成最终会话键。哈希材料带上租户与模型做命名空间隔离：
 // 不同租户携带相同 X-Session-Id 不会互相碰撞；同一会话在不同模型上的绑定互相独立。
 func makeSessionKey(src SessionSource, p RequestProfile, raw string) SessionKey {

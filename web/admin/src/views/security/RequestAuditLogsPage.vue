@@ -2,11 +2,12 @@
 import { ref, reactive, onMounted, h } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-	Tag, Button,
+	Tag, Button, Message,
 } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import TableStats from '@/components/TableStats.vue'
 import ForwardingTracePanel from '@/components/ForwardingTracePanel.vue'
+import ConversationDrawer from './ConversationDrawer.vue'
 import request from '@/utils/request'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import { useDateRange } from '@/composables/useDateRange'
@@ -53,6 +54,31 @@ const detailLoading = ref(false)
 const showDetail = ref(false)
 const detailRecord = ref<any>(null)
 
+// 会话视图：从任意审计记录进入，还原其所在完整对话
+const showConversation = ref(false)
+const conversationAnchorId = ref<number | null>(null)
+
+function openConversation(id: number) {
+	conversationAnchorId.value = id
+	showConversation.value = true
+}
+
+// 会话视图内点击消息脚注 → 打开对应记录的审计详情
+function openRecordDetail(id: number) {
+	showConversation.value = false
+	fetchDetail(id)
+}
+
+// 复制会话键（完整值为哈希派生键，不含敏感原文）
+async function copySessionKey(key: string) {
+	try {
+		await navigator.clipboard.writeText(key)
+		Message.success({ content: '会话键已复制', duration: 2000 })
+	} catch {
+		Message.warning({ content: '复制失败，请手动选择复制', duration: 2000 })
+	}
+}
+
 const statusCodeColor: Record<number, string> = {
 	200: 'green',
 	400: 'orange',
@@ -70,6 +96,7 @@ const auditLevelTagColor: Record<string, string> = {
 	full_text: 'cyan',
 	masked: 'arcoblue',
 	question_only: 'orange',
+	meta_only: 'gray',
 	none: 'red',
 }
 
@@ -78,6 +105,7 @@ const auditLevelLabel: Record<string, string> = {
 	full_text: '全量文本',
 	masked: '脱敏审计',
 	question_only: '仅问答',
+	meta_only: '仅留痕',
 	none: '关闭',
 }
 
@@ -140,14 +168,7 @@ const columns: TableColumnData[] = [
 	{ title: 'API Key', dataIndex: 'api_key_name', width: 120, ellipsis: true, render({ record }) {
 			return record.api_key_name || record.api_key_id || '-'
 		}},
-	// Request ID 不在表格展示（体积长、噪声大），需要时可通过「详情」抽屉或上方筛选框查看
-	{
-		title: '方法', dataIndex: 'method', width: 70,
-		render({ record }) {
-			const color = record.method === 'GET' ? 'arcoblue' : record.method === 'POST' ? 'green' : 'orange'
-			return h(Tag, { color, size: 'small' }, () => record.method)
-		},
-	},
+	// Request ID、方法不在表格展示（体积长、噪声大），需要时可通过「详情」抽屉查看
 	{ title: '路径', dataIndex: 'path', width: 160, ellipsis: true },
 	{ title: '模型', dataIndex: 'model_name', width: 150, ellipsis: true, render({ record }) {
 			return record.model_name || '-'
@@ -354,14 +375,14 @@ onMounted(() => {
 				:columns="columns"
 				:data="data"
 				:loading="loading"
-				:scroll="{ x: 1400 }"
+				:scroll="{ x: 1250 }"
 				:stripe="true"
 				size="small"
 				row-key="id"
 				card-title-key="path"
 				card-subtitle-key="created_at"
 				card-badge-key="status_code"
-				:card-fields="['tenant_name', 'method', 'model_name', 'latency_ms', 'first_token_ms', 'client_ip']"
+				:card-fields="['tenant_name', 'model_name', 'latency_ms', 'first_token_ms', 'client_ip']"
 			/>
 			<div class="table-footer">
 				<TableStats :total="pagination.total" />
@@ -380,9 +401,21 @@ onMounted(() => {
 		<a-drawer v-model:visible="showDetail" :width="640" title="请求详情">
 			<a-spin :loading="detailLoading" class="w-full">
 				<template v-if="detailRecord">
+					<!-- 会话入口：跳转到该记录所在会话的完整对话视图 -->
+					<div class="mb-4">
+						<a-button size="small" @click="openConversation(detailRecord.id)">
+							查看完整会话
+						</a-button>
+					</div>
 					<!-- 基础信息 -->
 					<a-descriptions :column="1" bordered size="medium">
 						<a-descriptions-item label="Request ID">{{ detailRecord.request_id }}</a-descriptions-item>
+						<a-descriptions-item v-if="detailRecord.session_key" label="会话键">
+							<div class="session-key-row">
+								<span class="session-key-text">{{ detailRecord.session_key }}</span>
+								<a-button size="mini" type="text" @click="copySessionKey(detailRecord.session_key)">复制</a-button>
+							</div>
+						</a-descriptions-item>
 						<a-descriptions-item label="租户/用户/Key">{{ detailRecord.tenant_id }} / {{ detailRecord.user_id }} / {{ detailRecord.api_key_id }}</a-descriptions-item>
 						<a-descriptions-item label="方法">{{ detailRecord.method }}</a-descriptions-item>
 						<a-descriptions-item label="路径">{{ detailRecord.path }}</a-descriptions-item>
@@ -445,6 +478,13 @@ onMounted(() => {
 				</template>
 			</a-spin>
 		</a-drawer>
+
+		<!-- 会话视图抽屉（完整对话还原） -->
+		<ConversationDrawer
+			v-model:visible="showConversation"
+			:record-id="conversationAnchorId"
+			@open-record="openRecordDetail"
+		/>
 	</div>
 </template>
 
@@ -481,6 +521,18 @@ onMounted(() => {
 /* 统计栏移入底部后，去掉全局样式的下边距，与分页栏垂直居中 */
 .table-footer :deep(.table-stats) {
 	margin-bottom: 0;
+}
+/* 会话键行：长键值换行展示，操作按钮不换行 */
+.session-key-row {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	flex-wrap: wrap;
+}
+.session-key-text {
+	font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+	font-size: 12px;
+	word-break: break-all;
 }
 .audit-body {
 	background: var(--color-fill-2, #f7f8fa);

@@ -37,3 +37,6 @@ func (c *ControllerV1) ForwardingTraceGet(ctx context.Context, req *v1.Forwardin
 func (c *ControllerV1) ContentFilterLogClear(ctx context.Context, req *v1.ContentFilterLogClearReq) (res *v1.ContentFilterLogClearRes, err error) {
 	return service.Admin().ContentFilterLogClear(ctx, req)
 }
+func (c *ControllerV1) RequestAuditLogConversation(ctx context.Context, req *v1.RequestAuditLogConversationReq) (res *v1.RequestAuditLogConversationRes, err error) {
+	return service.Admin().GetRequestAuditLogConversation(ctx, req)
+}

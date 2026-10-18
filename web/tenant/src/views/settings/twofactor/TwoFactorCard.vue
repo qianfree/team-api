@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, nextTick } from 'vue'
 import { NInput } from 'naive-ui'
 import BaseModal from '@/components/common/BaseModal.vue'
 import Icon from '@/components/common/Icon.vue'
@@ -91,6 +91,12 @@ async function handleRegen() {
 		regenLoading.value = false
 	}
 }
+
+// 生成成功后表单整块换成恢复码列表，焦点必须跟着送进去，否则读屏用户不知道页面变了
+const regenCodesEl = ref<HTMLElement | null>(null)
+watch(regenCodes, (v) => {
+	if (v.length > 0) nextTick(() => regenCodesEl.value?.focus())
+})
 </script>
 
 <template>
@@ -144,10 +150,14 @@ async function handleRegen() {
 				关闭后账号仅受密码保护，安全性降低。
 			</div>
 			<div>
-				<label class="input-label">动态验证码或恢复码</label>
-				<n-input v-model:value="disableCode" placeholder="验证器 6 位动态码，或任一未使用的恢复码" />
+				<label class="input-label" for="twofa-disable-code">动态验证码或恢复码</label>
+				<n-input
+					v-model:value="disableCode"
+					placeholder="验证器 6 位动态码，或任一未使用的恢复码"
+					:input-props="{ id: 'twofa-disable-code' }"
+				/>
 			</div>
-			<p v-if="disableError" class="input-error-text">{{ disableError }}</p>
+			<p v-if="disableError" role="alert" class="input-error-text">{{ disableError }}</p>
 		</div>
 		<template #footer>
 			<button class="btn btn-secondary" @click="showDisable = false">取消</button>
@@ -165,13 +175,20 @@ async function handleRegen() {
 					重新生成后旧的恢复码将全部作废，请确认手头验证器可用。
 				</div>
 				<div>
-					<label class="input-label">动态验证码</label>
-					<n-input v-model:value="regenCode" placeholder="验证器当前显示的 6 位动态码" :maxlength="6" />
+					<label class="input-label" for="twofa-regen-code">动态验证码</label>
+					<n-input
+						v-model:value="regenCode"
+						placeholder="验证器当前显示的 6 位动态码"
+						:maxlength="6"
+						:input-props="{ id: 'twofa-regen-code', inputmode: 'numeric', autocomplete: 'one-time-code' }"
+					/>
 				</div>
-				<p v-if="regenError" class="input-error-text">{{ regenError }}</p>
+				<p v-if="regenError" role="alert" class="input-error-text">{{ regenError }}</p>
 			</div>
 		</template>
-		<BackupCodesPanel v-else :codes="regenCodes" />
+		<div v-else ref="regenCodesEl" tabindex="-1" role="group" aria-label="新恢复码" class="outline-none">
+			<BackupCodesPanel :codes="regenCodes" />
+		</div>
 		<template #footer>
 			<template v-if="regenCodes.length === 0">
 				<button class="btn btn-secondary" @click="showRegen = false">取消</button>

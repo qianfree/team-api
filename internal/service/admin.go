@@ -63,6 +63,10 @@ type (
 		ListRequestAuditLogs(ctx context.Context, req *v1.RequestAuditLogListReq) (*v1.RequestAuditLogListRes, error)
 		// GetRequestAuditLogDetail 查询单条请求审计日志详情（含完整 request_body 和 response_body）
 		GetRequestAuditLogDetail(ctx context.Context, req *v1.RequestAuditLogDetailReq) (*v1.RequestAuditLogDetailRes, error)
+		// GetRequestAuditLogConversation 会话视图：从锚点审计记录还原完整对话。
+		// 内容为系统副本（request_body/response_body，按全局审计级别产物渲染）；
+		// 含完整对话正文，属敏感读取，落留痕。admin 全局视角，租户按锚点记录收敛。
+		GetRequestAuditLogConversation(ctx context.Context, req *v1.RequestAuditLogConversationReq) (*v1.RequestAuditLogConversationRes, error)
 		// ForwardingTraceGet 按 request_id 查询请求转发路径追踪（仅管理员，用量日志详情懒加载用）。
 		// 从审计库查询 aud_request_logs（可能独立于主库），仅取 forwarding_trace 与 audit_level 两列。
 		// 一个 request_id 仅对应一条审计记录（任务完成审计为 UPDATE 非 INSERT），OrderDesc 取最新为防御性兜底。

@@ -17,6 +17,8 @@ const props = withDefaults(
     invalid?: boolean
     /** 挂载后聚焦第一格 */
     autofocus?: boolean
+    /** 错误提示元素的 id，读屏聚焦输入框时可念出错误原因 */
+    describedBy?: string
   }>(),
   { length: 6, disabled: false, invalid: false, autofocus: false },
 )
@@ -231,6 +233,8 @@ defineExpose({
       inputmode="numeric"
       :autocomplete="i === 0 ? 'one-time-code' : 'off'"
       :aria-label="`验证码第 ${i + 1} 位`"
+      :aria-invalid="invalid || undefined"
+      :aria-describedby="describedBy || undefined"
       maxlength="1"
       :disabled="disabled"
       :autofocus="autofocus && i === 0"
@@ -332,6 +336,13 @@ defineExpose({
 
 .otp--shake {
   animation: otpShake 0.44s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+
+/* 前庭障碍用户关闭动效时抖动会引发不适，只保留红框错误态 */
+@media (prefers-reduced-motion: reduce) {
+  .otp--shake {
+    animation: none;
+  }
 }
 
 @media (max-width: 420px) {

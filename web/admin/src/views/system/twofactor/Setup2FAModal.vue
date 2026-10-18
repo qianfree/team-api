@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, computed, watch, onUnmounted } from 'vue'
+import { ref, computed, watch, onUnmounted, nextTick } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import qrcode from 'qrcode-generator'
 import request, { extractApiError } from '@/utils/request'
+import { announce } from '@/utils/announce'
 import BackupCodesPanel from './BackupCodesPanel.vue'
 
 const props = defineProps<{ visible: boolean }>()
@@ -27,6 +28,18 @@ const countdownText = computed(() => {
 })
 // pending secret 在后端 Redis 仅存 5 分钟，归零后需重新生成（后端覆盖旧键，安全）
 const expired = computed(() => step.value === 1 && expiresAt.value > 0 && now.value >= expiresAt.value)
+
+// 步骤内容是 v-if 整块替换，切换后焦点会掉到 body；把焦点送进新步骤容器并借 group 名播报步骤。
+// 回退到前面的步骤（如 2→1）时，旧步骤卸载的 ref(null) 晚于新步骤挂载触发，
+// 只记录非空值才能保证 stepEl 始终指向当前挂载的步骤
+const stepEl = ref<HTMLElement | null>(null)
+function setStepEl(el: unknown) {
+	if (el) stepEl.value = el as HTMLElement
+}
+watch(step, async () => {
+	await nextTick()
+	stepEl.value?.focus()
+})
 
 // ── 步骤 2 ──
 const code = ref('')
@@ -68,8 +81,10 @@ async function copyText(text: string, label = '已复制') {
 	try {
 		await navigator.clipboard.writeText(text)
 		Message.success(label)
+		announce(label)
 	} catch {
 		Message.error('复制失败，请手动选择复制')
+		announce('复制失败，请手动选择复制')
 	}
 }
 
@@ -86,7 +101,9 @@ async function fetchSetup() {
 		qrDataUrl.value = qr.createDataURL(6, 8)
 		expiresAt.value = Date.now() + 300_000
 	} catch (e) {
-		Message.error(extractApiError(e)?.message || '生成密钥失败，请稍后重试')
+		const msg = extractApiError(e)?.message || '生成密钥失败，请稍后重试'
+		Message.error(msg)
+		announce(msg)
 		closeModal()
 	} finally {
 		setupLoading.value = false
@@ -145,6 +162,7 @@ async function onEnable() {
 		// pending secret 已过期（后端 Redis 无暂存）→ 回步骤 1 重新生成密钥
 		if (msg.includes('请先执行2FA设置')) {
 			Message.warning('密钥已过期，已为你重新生成，请重新扫码')
+			announce('密钥已过期，已为你重新生成，请重新扫码')
 			step.value = 1
 			code.value = ''
 			password.value = ''
@@ -180,12 +198,12 @@ function finish() {
 			</a-steps>
 
 			<!-- 步骤 1：扫码绑定（左右分栏） -->
-			<div v-if="step === 1" class="step-body step-body--row">
+			<div v-if="step === 1" :ref="setStepEl" tabindex="-1" role="group" aria-label="步骤 1：扫码绑定" class="step-body step-body--row">
 				<div class="qr-col">
 					<div class="qr-box" :class="{ 'is-expired': expired }">
 						<a-spin v-if="setupLoading" />
-						<img v-else-if="qrDataUrl" :src="qrDataUrl" alt="TOTP 绑定二维码" />
-						<div v-if="expired" class="qr-mask">
+						<img v-else-if="qrDataUrl" :src="qrDataUrl" alt="TOTP 绑定二维码，无法扫码时请改用旁边的密钥手动添加" />
+						<div v-if="expired" role="status" class="qr-mask">
 							<div class="qr-mask__text">二维码已过期</div>
 							<a-button size="small" type="primary" :loading="setupLoading" @click="fetchSetup">重新生成密钥</a-button>
 						</div>
@@ -206,7 +224,7 @@ function finish() {
 			</div>
 
 			<!-- 步骤 2：验证启用（单列表单） -->
-			<div v-if="step === 2" class="step-body">
+			<div v-if="step === 2" :ref="setStepEl" tabindex="-1" role="group" aria-label="步骤 2：验证启用" class="step-body">
 				<a-alert type="info">
 					输入验证器 App 当前显示的 6 位动态码，并输入当前密码完成安全确认。
 				</a-alert>
@@ -216,18 +234,18 @@ function finish() {
 							v-model="code"
 							placeholder="6 位数字"
 							:max-length="6"
-							:input-attrs="{ inputmode: 'numeric' }"
+							:input-attrs="{ inputmode: 'numeric', autocomplete: 'one-time-code' }"
 						/>
 					</a-form-item>
 					<a-form-item label="当前密码">
 						<a-input-password v-model="password" placeholder="请输入当前密码" allow-clear />
 					</a-form-item>
 				</a-form>
-				<div v-if="verifyError" class="field-error">{{ verifyError }}</div>
+				<div v-if="verifyError" role="alert" class="field-error">{{ verifyError }}</div>
 			</div>
 
 			<!-- 步骤 3：保存恢复码（单列） -->
-			<div v-if="step === 3" class="step-body">
+			<div v-if="step === 3" :ref="setStepEl" tabindex="-1" role="group" aria-label="步骤 3：保存恢复码" class="step-body">
 				<a-alert type="success" title="两步验证已开启">
 					请立即保存以下恢复码，验证器不可用时用它登录。
 				</a-alert>
@@ -270,6 +288,10 @@ function finish() {
 .step-body--row {
 	flex-direction: row;
 	gap: 20px;
+}
+.step-body:focus {
+	/* tabindex=-1 仅接受程序化聚焦（步骤切换时移动焦点），不参与 Tab 序，去掉焦点环不影响键盘用户 */
+	outline: none;
 }
 .qr-col {
 	display: flex;
