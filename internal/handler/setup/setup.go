@@ -39,6 +39,13 @@ func HandleSetupPage(r *ghttp.Request) {
 	r.Response.Write(packed.SetupHTML)
 }
 
+// HandleSetupJS serves the embedded setup page script.
+// 脚本必须外置为 'self' 资源：全站 CSP（script-src 'self'，无 'unsafe-inline'）会拦截内联脚本。
+func HandleSetupJS(r *ghttp.Request) {
+	r.Response.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	r.Response.Write(packed.SetupJS)
+}
+
 // HandleSetupStatus returns system initialization status.
 func HandleSetupStatus(r *ghttp.Request) {
 	exists, err := admin.AdminExists(r.Context())

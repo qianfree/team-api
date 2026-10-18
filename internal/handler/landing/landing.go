@@ -17,3 +17,10 @@ func HandleLanding(r *ghttp.Request) {
 	r.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	r.Response.Write([]byte(html))
 }
+
+// HandleLandingJS serves the embedded landing page script.
+// 脚本必须外置为 'self' 资源：全站 CSP（script-src 'self'，无 'unsafe-inline'）会拦截内联脚本。
+func HandleLandingJS(r *ghttp.Request) {
+	r.Response.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	r.Response.Write(packed.LandingJS)
+}
