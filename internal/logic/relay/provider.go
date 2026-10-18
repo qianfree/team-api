@@ -571,7 +571,16 @@ func (p *DataProviderImpl) RecordAudit(ctx context.Context, record *common.Audit
 			insertData.LastAsstMsgHash = digest.LastAsstMsgHash
 		}
 		if digest.UserField != "" {
-			insertData.UserField = digest.UserField
+			// user_field 是请求体 user 字段的客户端自由文本（可能含 PII），库内单列无租户副本，
+			// 落库只按全局级别：none/meta_only（不记请求内容）时丢弃，question_only 保留请求侧
+			// 照常落库，masked 脱敏；租户视角在租户详情接口按租户级别做读取过滤
+			if !lcommon.AuditRequestContentDropped(globalLevel) {
+				userField := digest.UserField
+				if globalLevel == lcommon.AuditLevelMasked {
+					userField = lcommon.MaskSensitiveData(userField)
+				}
+				insertData.UserField = userField
+			}
 		}
 		insertData.IsContextReset = digest.IsContextReset
 
@@ -619,9 +628,12 @@ func (p *DataProviderImpl) UpdateTaskAudit(ctx context.Context, record *common.A
 		bgCtx := context.Background()
 		globalLevel, tenantLevel := lcommon.GetAuditLevels(bgCtx, record.TenantID)
 
-		// 按审计级别处理任务结果
+		// 按审计级别处理任务结果。task_result 为库内单列（无租户副本），落库只按全局级别
+		//（管理端视角）执行，租户级别不作用于落库——与正文字段「租户级别只影响租户副本」
+		// 的设计一致；租户视角在租户详情接口按该行记录的租户级别做读取过滤。
+		// 全局 none/meta_only/question_only（不记内容/仅留痕/仅记请求）时不落，masked 脱敏
 		taskResult := record.TaskResult
-		if globalLevel == lcommon.AuditLevelNone && tenantLevel == lcommon.AuditLevelNone {
+		if lcommon.AuditResponseContentDropped(globalLevel) {
 			taskResult = ""
 		} else if globalLevel == lcommon.AuditLevelMasked {
 			taskResult = lcommon.MaskSensitiveData(taskResult)

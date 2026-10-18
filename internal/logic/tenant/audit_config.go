@@ -311,5 +311,19 @@ func (s *sTenant) TenantRequestAuditLogDetail(ctx context.Context, req *v1.Tenan
 	delete(detail, "response_headers")
 	// 异步任务上游响应头仅管理后台可见
 	delete(detail, "task_upstream_headers")
+	// task_result / user_field 为库内单列（无租户副本，落库按全局级别执行）：
+	// 租户视角按本行记录的租户级别对齐——不记内容/仅留痕级别不展示，masked 展示脱敏值，
+	// 与租户正文字段的语义一致
+	tenantLevel := record.TenantAuditLevel
+	if common.AuditResponseContentDropped(tenantLevel) {
+		detail["task_result"] = ""
+	} else if tenantLevel == common.AuditLevelMasked {
+		detail["task_result"] = common.MaskSensitiveData(record.TaskResult)
+	}
+	if common.AuditRequestContentDropped(tenantLevel) {
+		detail["user_field"] = ""
+	} else if tenantLevel == common.AuditLevelMasked {
+		detail["user_field"] = common.MaskSensitiveData(record.UserField)
+	}
 	return &v1.TenantRequestAuditLogDetailRes{Data: detail}, nil
 }
