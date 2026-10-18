@@ -204,7 +204,7 @@ var (
 					return
 				}
 				// Allow setup and health endpoints
-				if r.URL.Path == "/setup" || r.URL.Path == "/api/setup/initialize" || r.URL.Path == "/api/setup/status" || r.URL.Path == "/api/health" {
+				if r.URL.Path == "/setup" || r.URL.Path == "/setup.js" || r.URL.Path == "/api/setup/initialize" || r.URL.Path == "/api/setup/status" || r.URL.Path == "/api/health" {
 					r.Middleware.Next()
 					return
 				}
@@ -226,6 +226,7 @@ var (
 			// Setup routes (always registered, guard decides if accessible)
 			s.Group("/", func(group *ghttp.RouterGroup) {
 				group.GET("/setup", setupHandler.HandleSetupPage)
+				group.GET("/setup.js", setupHandler.HandleSetupJS)
 			})
 			s.Group("/api/setup", func(group *ghttp.RouterGroup) {
 				group.Middleware(middleware.ErrorHandler)
@@ -622,6 +623,7 @@ func registerLandingPage(s *ghttp.Server) {
 	s.Group("/", func(group *ghttp.RouterGroup) {
 		group.GET("/", landing.HandleLanding)
 		group.GET("/index.html", landing.HandleLanding)
+		group.GET("/landing.js", landing.HandleLandingJS)
 	})
 }
 

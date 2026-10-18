@@ -4,25 +4,95 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Team-API - 系统初始化</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    fontFamily: {
-                        sans: ['DM Sans', 'system-ui', 'sans-serif'],
-                        mono: ['JetBrains Mono', 'monospace'],
-                    }
-                }
-            }
-        }
-    </script>
+    <!--
+        样式完全自包含（零外部依赖）：
+        初始化向导是全新部署（可能离线/内网）看到的第一个页面，
+        禁止引用 cdn.tailwindcss.com / Google Fonts 等外部资源 ——
+        会被全站 CSP（script-src/style-src 'self'）拦截，也会在受限网络下加载失败。
+        下方样式为页面所用工具类的最小本地实现，视觉与 Tailwind 版本保持一致。
+    -->
     <style>
-        body { font-family: 'DM Sans', system-ui, sans-serif; }
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        button, input { font: inherit; }
+        button { border: 0; background: none; cursor: pointer; }
+        ::placeholder { color: #9ca3af; opacity: 1; }
 
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif; }
+
+        /* ---- 布局工具类（本地最小实现） ---- */
+        .min-h-screen { min-height: 100vh; }
+        .block { display: block; }
+        .flex { display: flex; }
+        .inline-flex { display: inline-flex; }
+        .grid { display: grid; }
+        .items-center { align-items: center; }
+        .items-start { align-items: flex-start; }
+        .justify-center { justify-content: center; }
+        .text-center { text-align: center; }
+        .w-full { width: 100%; }
+        .max-w-md { max-width: 28rem; }
+        .w-12, .h-12 { width: 3rem; height: 3rem; }
+        .w-6, .h-6 { width: 1.5rem; height: 1.5rem; }
+        .w-4, .h-4 { width: 1rem; height: 1rem; }
+        .flex-shrink-0 { flex-shrink: 0; }
+        .grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .gap-2 { gap: 0.5rem; }
+        .gap-2\.5 { gap: 0.625rem; }
+        .cursor-pointer { cursor: pointer; }
+        .outline-none { outline: none; }
+
+        /* ---- 间距 ---- */
+        .p-4 { padding: 1rem; }
+        .p-8 { padding: 2rem; }
+        @media (min-width: 640px) { .sm\:p-10 { padding: 2.5rem; } }
+        .px-3\.5 { padding-left: 0.875rem; padding-right: 0.875rem; }
+        .py-2\.5 { padding-top: 0.625rem; padding-bottom: 0.625rem; }
+        .pt-1\.5 { padding-top: 0.375rem; }
+        .mb-8 { margin-bottom: 2rem; }
+        .mb-7 { margin-bottom: 1.75rem; }
+        .mb-4 { margin-bottom: 1rem; }
+        .mb-1\.5 { margin-bottom: 0.375rem; }
+        .mt-6 { margin-top: 1.5rem; }
+        .mt-1\.5 { margin-top: 0.375rem; }
+        .mt-0\.5 { margin-top: 0.125rem; }
+        .ml-1 { margin-left: 0.25rem; }
+        .space-y-4 > * + * { margin-top: 1rem; }
+        .space-y-4\.5 > * + * { margin-top: 1.125rem; }
+
+        /* ---- 字体/排版 ---- */
+        .text-xs { font-size: 12px; line-height: 16px; }
+        .text-sm { font-size: 14px; line-height: 20px; }
+        .text-2xl { font-size: 24px; line-height: 32px; }
+        .font-normal { font-weight: 400; }
+        .font-medium { font-weight: 500; }
+        .font-semibold { font-weight: 600; }
+        .tracking-tight { letter-spacing: -0.025em; }
+        .font-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace; }
+
+        /* ---- 颜色 ---- */
+        .bg-white { background-color: #ffffff; }
+        .bg-gray-50 { background-color: #f9fafb; }
+        .bg-red-50 { background-color: #fef2f2; }
+        .text-white { color: #ffffff; }
+        .text-gray-900 { color: #111827; }
+        .text-gray-700 { color: #374151; }
+        .text-gray-500 { color: #6b7280; }
+        .text-gray-400 { color: #9ca3af; }
+        .text-red-700 { color: #b91c1c; }
+        .text-red-500 { color: #ef4444; }
+        .text-amber-600 { color: #d97706; }
+        .accent-primary { accent-color: #2563eb; }
+
+        /* ---- 边框/圆角 ---- */
+        .border { border-width: 1px; border-style: solid; border-color: #e5e7eb; }
+        .border-gray-200 { border-color: #e5e7eb; }
+        .border-red-100 { border-color: #fee2e2; }
+        .rounded-lg { border-radius: 0.5rem; }
+        .rounded-xl { border-radius: 0.75rem; }
+        .rounded-2xl { border-radius: 1rem; }
+        .transition-colors { transition-property: color, background-color, border-color, text-decoration-color, fill, stroke; transition-duration: 150ms; transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1); }
+
+        /* ---- 页面自有样式 ---- */
         .setup-card {
             box-shadow:
                 0 0 0 1px rgba(0, 0, 0, 0.03),
@@ -130,7 +200,7 @@
                         <label for="username" class="block text-sm font-medium text-gray-700 mb-1.5">用户名</label>
                         <input
                             type="text" id="username" name="username" required autofocus
-                            class="input-field w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-900 placeholder-gray-400 outline-none"
+                            class="input-field w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-900 outline-none"
                             placeholder="3-20位，字母/数字/下划线" autocomplete="off" spellcheck="false">
                     </div>
 
@@ -141,7 +211,7 @@
                         </label>
                         <input
                             type="text" id="displayName" name="displayName"
-                            class="input-field w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-900 placeholder-gray-400 outline-none"
+                            class="input-field w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-900 outline-none"
                             placeholder="管理员显示名称" autocomplete="off">
                     </div>
 
@@ -150,7 +220,7 @@
                         <label for="password" class="block text-sm font-medium text-gray-700 mb-1.5">密码</label>
                         <input
                             type="password" id="password" name="password" required
-                            class="input-field w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-900 placeholder-gray-400 outline-none font-mono"
+                            class="input-field w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-900 outline-none font-mono"
                             placeholder="至少8位，含字母和数字" autocomplete="new-password">
                     </div>
 
@@ -159,7 +229,7 @@
                         <label for="confirmPassword" class="block text-sm font-medium text-gray-700 mb-1.5">确认密码</label>
                         <input
                             type="password" id="confirmPassword" name="confirmPassword" required
-                            class="input-field w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-900 placeholder-gray-400 outline-none font-mono"
+                            class="input-field w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-900 outline-none font-mono"
                             placeholder="再次输入密码" autocomplete="new-password">
                     </div>
 
@@ -171,14 +241,14 @@
                         </label>
                         <div class="grid grid-cols-2 gap-2.5" id="currencyGroup">
                             <label class="currency-option cursor-pointer flex items-start gap-2.5 px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-lg transition-colors" data-value="USD">
-                                <input type="radio" name="currency" value="USD" checked class="mt-0.5 accent-[#2563eb]">
+                                <input type="radio" name="currency" value="USD" checked class="mt-0.5 accent-primary">
                                 <span>
                                     <span class="block text-sm font-medium text-gray-900">USD（美元）</span>
                                     <span class="block text-xs text-gray-400 mt-0.5">与上游模型报价对齐</span>
                                 </span>
                             </label>
                             <label class="currency-option cursor-pointer flex items-start gap-2.5 px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-lg transition-colors" data-value="CNY">
-                                <input type="radio" name="currency" value="CNY" class="mt-0.5 accent-[#2563eb]">
+                                <input type="radio" name="currency" value="CNY" class="mt-0.5 accent-primary">
                                 <span>
                                     <span class="block text-sm font-medium text-gray-900">CNY（人民币）</span>
                                     <span class="block text-xs text-gray-400 mt-0.5">面向国内运营</span>
@@ -215,98 +285,6 @@
         </p>
     </div>
 
-    <script>
-        (function() {
-            var form = document.getElementById('setupForm');
-            var errorArea = document.getElementById('errorArea');
-            var errorText = document.getElementById('errorText');
-            var submitBtn = document.getElementById('submitBtn');
-
-            function showError(msg) {
-                errorText.textContent = msg;
-                errorArea.classList.add('visible');
-            }
-
-            function hideError() {
-                errorArea.classList.remove('visible');
-            }
-
-            function setLoading(loading) {
-                submitBtn.disabled = loading;
-                if (loading) {
-                    submitBtn.innerHTML = '<span class="spinner"></span>正在初始化...';
-                } else {
-                    submitBtn.textContent = '初始化系统';
-                }
-            }
-
-            // 本位币选择卡片高亮联动
-            var currencyOptions = document.querySelectorAll('.currency-option');
-            function syncCurrencyHighlight() {
-                var selected = document.querySelector('input[name="currency"]:checked');
-                currencyOptions.forEach(function(opt) {
-                    opt.classList.toggle('selected', opt.querySelector('input').value === selected.value);
-                });
-            }
-            currencyOptions.forEach(function(opt) {
-                opt.querySelector('input').addEventListener('change', syncCurrencyHighlight);
-            });
-            syncCurrencyHighlight();
-
-            form.addEventListener('submit', function(e) {
-                e.preventDefault();
-                hideError();
-
-                var username = document.getElementById('username').value.trim();
-                var displayName = document.getElementById('displayName').value.trim();
-                var password = document.getElementById('password').value;
-                var confirmPassword = document.getElementById('confirmPassword').value;
-                var currency = document.querySelector('input[name="currency"]:checked').value;
-
-                if (!username) {
-                    showError('请输入用户名');
-                    document.getElementById('username').focus();
-                    return;
-                }
-                if (!password) {
-                    showError('请输入密码');
-                    document.getElementById('password').focus();
-                    return;
-                }
-                if (password !== confirmPassword) {
-                    showError('两次输入的密码不一致');
-                    document.getElementById('confirmPassword').focus();
-                    return;
-                }
-
-                setLoading(true);
-
-                fetch('/api/setup/initialize', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        username: username,
-                        displayName: displayName,
-                        password: password,
-                        confirmPassword: confirmPassword,
-                        currency: currency
-                    })
-                })
-                .then(function(res) { return res.json(); })
-                .then(function(data) {
-                    if (data.code === 0) {
-                        window.location.href = '/admin/#/admin/login';
-                    } else {
-                        showError(data.message || '初始化失败，请重试');
-                        setLoading(false);
-                    }
-                })
-                .catch(function() {
-                    showError('网络错误，请检查连接后重试');
-                    setLoading(false);
-                });
-            });
-        })();
-    </script>
+    <script src="/setup.js"></script>
 </body>
 </html>
