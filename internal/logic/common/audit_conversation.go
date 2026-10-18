@@ -536,6 +536,7 @@ func LoadConversationView(ctx context.Context, anchorID, tenantID int64, cols Bo
 	upper := anchor.CreatedAt.Add(ConversationTimeBound)
 
 	var records []*ConvRecord
+	var overflow bool
 	var mode string
 	// 候选一律按锚点租户收敛：指纹为纯内容哈希（不含租户维度），admin 全局
 	// 视角下同开场白跨租户会误并；会话键虽含租户命名空间，统一收敛无副作用
@@ -543,36 +544,28 @@ func LoadConversationView(ctx context.Context, anchorID, tenantID int64, cols Bo
 	switch {
 	case anchor.SessionKey != "":
 		mode = CorrelationModeSessionKey
-		records, err = queryConvRecords(ctx, scopeTenant, "session_key", anchor.SessionKey, lower, upper, cols, 0)
+		records, overflow, err = queryConvRecords(ctx, scopeTenant, "session_key", anchor.SessionKey, lower, upper, cols, 0, anchor)
 		// 键漂移兜底：键层只聚到锚点自己时降级指纹层。存量数据里
 		// previous_response_id 派生的键随轮次漂移聚不起来；真单轮会话
 		// 降级无害（指纹层同样只聚到锚点自己）
 		if err == nil && len(records) <= 1 && anchor.ConvFingerprint != "" {
 			mode = CorrelationModeContentChain
-			records, err = queryConvRecords(ctx, scopeTenant, "conv_fingerprint", anchor.ConvFingerprint, lower, upper, cols, 0)
+			records, overflow, err = queryConvRecords(ctx, scopeTenant, "conv_fingerprint", anchor.ConvFingerprint, lower, upper, cols, 0, anchor)
 		}
 	case anchor.ConvFingerprint != "":
 		mode = CorrelationModeContentChain
-		records, err = queryConvRecords(ctx, scopeTenant, "conv_fingerprint", anchor.ConvFingerprint, lower, upper, cols, 0)
+		records, overflow, err = queryConvRecords(ctx, scopeTenant, "conv_fingerprint", anchor.ConvFingerprint, lower, upper, cols, 0, anchor)
 	default:
 		// 身份三元组（不含 model：允许会话中途切模型）
 		mode = CorrelationModeIdentity
-		records, err = queryConvRecords(ctx, scopeTenant, "user_id", anchor.UserID, lower, upper, cols, anchor.ApiKeyID)
+		records, overflow, err = queryConvRecords(ctx, scopeTenant, "user_id", anchor.UserID, lower, upper, cols, anchor.ApiKeyID, anchor)
 	}
 	if err != nil {
 		return nil, err
 	}
 
-	// 多取一条用于 truncated 判定；超限时丢最旧一条（锚点恰为最旧时丢最新，保锚点在内）
-	if len(records) > ConversationMaxRecords {
-		if records[0].ID == anchor.ID {
-			records = records[:len(records)-1]
-		} else {
-			records = records[1:]
-		}
-	}
 	v := RebuildConversation(anchor, records, mode)
-	if len(records) >= ConversationMaxRecords {
+	if overflow {
 		v.Truncated = true
 	}
 	return v, nil
@@ -605,29 +598,63 @@ func loadConvRecord(ctx context.Context, anchorID, tenantID int64, cols BodyColu
 
 // queryConvRecords 候选收集：键列（session_key/conv_fingerprint/user_id）+
 // 租户（>0 时）+ 时间界；identity 模式额外带 api_key_id。
+//
+// 以锚点为中心双向取数，锚点必在结果内：先取锚点及之前的最新 ConversationMaxRecords
+// 条（倒序取回后反转为时间升序），早侧不足额时再从锚点之后顺取补足；任一侧放不下即
+// overflow=true。此前实现按时间升序取最旧 N+1 条——长会话且锚点较新时锚点根本不在
+// 返回窗口内，重组结果为空。created_at 加 id 做稳定全序：批量写入的行可能共享同一
+// created_at，仅按时间排序无法保证锚点落在窗口内。
 func queryConvRecords(ctx context.Context, tenantID int64, keyCol string, keyVal any,
-	lower, upper time.Time, cols BodyColumns, extraAPIKeyID int64) ([]*ConvRecord, error) {
-	m := AuditModelCtx(ctx, "aud_request_logs").
-		Where(keyCol, keyVal).
-		WhereBetween("created_at", lower, upper)
-	if tenantID > 0 {
-		m = m.Where("tenant_id", tenantID)
+	lower, upper time.Time, cols BodyColumns, extraAPIKeyID int64, anchor *ConvRecord) ([]*ConvRecord, bool, error) {
+	base := func() *gdb.Model {
+		m := AuditModelCtx(ctx, "aud_request_logs").
+			Where(keyCol, keyVal).
+			WhereBetween("created_at", lower, upper)
+		if tenantID > 0 {
+			m = m.Where("tenant_id", tenantID)
+		}
+		if extraAPIKeyID > 0 {
+			m = m.Where("api_key_id", extraAPIKeyID)
+		}
+		return m.Fields(convRecordColumns(cols))
 	}
-	if extraAPIKeyID > 0 {
-		m = m.Where("api_key_id", extraAPIKeyID)
-	}
-	all, err := m.Fields(convRecordColumns(cols)).
-		Order("created_at asc").
+
+	olderAll, err := base().
+		Where("(created_at < ? OR (created_at = ? AND id <= ?))", anchor.CreatedAt, anchor.CreatedAt, anchor.ID).
+		Order("created_at desc, id desc").
 		Limit(ConversationMaxRecords + 1).
 		All()
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	out := make([]*ConvRecord, 0, len(all))
-	for _, r := range all {
-		out = append(out, scanConvRecord(r, cols))
+	overflow := len(olderAll) > ConversationMaxRecords
+	if len(olderAll) > ConversationMaxRecords {
+		olderAll = olderAll[:ConversationMaxRecords]
 	}
-	return out, nil
+	records := make([]*ConvRecord, 0, ConversationMaxRecords)
+	for i := len(olderAll) - 1; i >= 0; i-- {
+		records = append(records, scanConvRecord(olderAll[i], cols))
+	}
+
+	// 早侧不足额：剩余额度取锚点之后的记录（多取一条用于晚侧溢出判定）
+	if room := ConversationMaxRecords - len(records); room > 0 {
+		newerAll, err := base().
+			Where("(created_at > ? OR (created_at = ? AND id > ?))", anchor.CreatedAt, anchor.CreatedAt, anchor.ID).
+			Order("created_at asc, id asc").
+			Limit(room + 1).
+			All()
+		if err != nil {
+			return nil, false, err
+		}
+		if len(newerAll) > room {
+			overflow = true
+			newerAll = newerAll[:room]
+		}
+		for _, r := range newerAll {
+			records = append(records, scanConvRecord(r, cols))
+		}
+	}
+	return records, overflow, nil
 }
 
 // scanConvRecord 行 → ConvRecord（正文列按副本名取值）
