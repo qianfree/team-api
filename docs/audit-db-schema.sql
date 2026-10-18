@@ -133,7 +133,7 @@ CREATE INDEX IF NOT EXISTS idx_aud_request_logs_model
 CREATE INDEX IF NOT EXISTS idx_aud_request_logs_created_bt
     ON aud_request_logs USING btree (created_at);
 
--- 000025：会话关联列（哈希均在原始请求/响应体上计算，先于审计级别处理与截断，
+-- 000026：会话关联列（哈希均在原始请求/响应体上计算，先于审计级别处理与截断，
 -- 关联能力不受审计级别影响；设计见 docs/会话关联与完整会话提取方案.md）
 ALTER TABLE aud_request_logs ADD COLUMN IF NOT EXISTS session_key VARCHAR(128);
 ALTER TABLE aud_request_logs ADD COLUMN IF NOT EXISTS session_source VARCHAR(20);
