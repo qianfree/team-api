@@ -26,14 +26,12 @@ watch(
 	},
 )
 const inputText = ref('')
+// 音色/格式为自由填写：不同供应商的取值集合差异大（OpenAI alloy/echo 等、
+// 火山 zh_male_xxx 等），硬编码选项会把非 OpenAI 渠道的租户卡死在无效值上
 const voice = ref('alloy')
 const responseFormat = ref('mp3')
 
-const voiceOptions = ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer']
-const formatOptions = ['mp3', 'wav', 'opus', 'aac', 'flac']
 const modelOptions = computed(() => props.models.map(m => ({ value: m.model_id, label: m.model_name || m.model_id })))
-const voiceSelectOptions = computed(() => voiceOptions.map(v => ({ value: v, label: v })))
-const formatSelectOptions = computed(() => formatOptions.map(f => ({ value: f, label: f.toUpperCase() })))
 
 const audioBase64 = ref('')
 const contentType = ref('')
@@ -71,12 +69,13 @@ async function synthesize() {
 
 	try {
 		const api = createPlaygroundApi(props.apiKey)
-		const res = await api.post('/v1/audio/speech', {
+		const payload: Record<string, unknown> = {
 			model: selectedModel.value,
 			input: inputText.value,
-			voice: voice.value,
-			response_format: responseFormat.value,
-		}, { responseType: 'arraybuffer', timeout: 180_000 })
+			voice: voice.value.trim(),
+			...(responseFormat.value.trim() ? { response_format: responseFormat.value.trim() } : {}),
+		}
+		const res = await api.post('/v1/audio/speech', payload, { responseType: 'arraybuffer', timeout: 180_000 })
 
 		// /v1/audio/speech 返回原始二进制音频数据
 		const buffer = res.data as ArrayBuffer
@@ -122,19 +121,21 @@ async function synthesize() {
 						<!-- 输出参数 -->
 						<div class="space-y-4 border-t border-gray-100 pt-4">
 							<div>
-								<label class="mb-2 block text-xs font-semibold text-gray-500">语音</label>
-								<BaseSelect v-model="voice" :options="voiceSelectOptions" />
+								<label class="mb-2 block text-xs font-semibold text-gray-500">音色</label>
+								<n-input v-model:value="voice" placeholder="如 alloy、zh_male_shaonianzixin_moon_bigtts" />
+								<p class="mt-1.5 text-[11px] text-gray-400">音色 ID 由模型供应商定义，请参考对应文档</p>
 							</div>
 							<div>
 								<label class="mb-2 block text-xs font-semibold text-gray-500">格式</label>
-								<BaseSelect v-model="responseFormat" :options="formatSelectOptions" />
+								<n-input v-model:value="responseFormat" placeholder="如 mp3、wav、opus、pcm" />
+								<p class="mt-1.5 text-[11px] text-gray-400">可选值依供应商而异，默认 mp3 通用性最好</p>
 							</div>
 						</div>
 					</div>
 
 					<!-- 主操作常驻卡片底部 -->
 					<div class="shrink-0 border-t border-gray-100 px-4 py-3">
-						<button class="btn btn-primary w-full" :disabled="sending || !inputText.trim()" @click="synthesize">
+						<button class="btn btn-primary w-full" :disabled="sending || !inputText.trim() || !voice.trim()" @click="synthesize">
 							<Icon name="play" size="sm" />
 							{{ sending ? '合成中...' : '合成语音' }}
 						</button>

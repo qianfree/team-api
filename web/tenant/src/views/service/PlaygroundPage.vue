@@ -6,6 +6,7 @@ import ChatTab from './playground/ChatTab.vue'
 import ImageTab from './playground/ImageTab.vue'
 import VideoTab from './playground/VideoTab.vue'
 import AudioTab from './playground/AudioTab.vue'
+import TranscriptionTab from './playground/TranscriptionTab.vue'
 import EmbeddingTab from './playground/EmbeddingTab.vue'
 import RerankTab from './playground/RerankTab.vue'
 import { usePlaygroundApiKey } from './playground/usePlaygroundApiKey'
@@ -32,7 +33,8 @@ const tabs = [
 	{ key: 'chat', label: '对话', icon: 'chat' },
 	{ key: 'image', label: '图像', icon: 'photo' },
 	{ key: 'video', label: '视频', icon: 'film' },
-	{ key: 'audio', label: '语音', icon: 'musicalNote' },
+	{ key: 'audio', label: '语音合成', icon: 'musicalNote' },
+	{ key: 'transcription', label: '语音转写', icon: 'document' },
 	{ key: 'embedding', label: '嵌入', icon: 'cube' },
 	{ key: 'rerank', label: '重排', icon: 'chart' },
 ]
@@ -42,21 +44,24 @@ const allModels = ref<ModelItem[]>([])
 
 const { apiKeys, selectedKeyId, revealedKey, loading: keyLoading, error: keyError, selectKey } = usePlaygroundApiKey()
 
-// Tab 与组件的映射：六个 Tab 的 props 签名一致（models + apiKey），配合 KeepAlive
+// Tab 与组件的映射：各 Tab 的 props 签名一致（models + apiKey），配合 KeepAlive
 // 按 key 缓存实例，切换 Tab 不销毁组件，对话/任务/参数等状态全部保留。
 const tabComponents: Record<string, Component> = {
 	chat: ChatTab,
 	image: ImageTab,
 	video: VideoTab,
 	audio: AudioTab,
+	transcription: TranscriptionTab,
 	embedding: EmbeddingTab,
 	rerank: RerankTab,
 }
 
-// 当前 Tab 对应分类的模型列表（传给 KeepAlive 缓存的组件，切换回来时 props 保持响应）
-const activeTabModels = computed(() =>
-	allModels.value.filter(m => m.category === activeTab.value),
-)
+// 当前 Tab 对应分类的模型列表（传给 KeepAlive 缓存的组件，切换回来时 props 保持响应）。
+// 转写 Tab 与合成 Tab 共用 audio 分类：whisper/doubao-asr 等转写模型与 TTS 模型同属 audio。
+const activeTabModels = computed(() => {
+	const category = activeTab.value === 'transcription' ? 'audio' : activeTab.value
+	return allModels.value.filter(m => m.category === category)
+})
 
 const modelsLoading = ref(false)
 let loadingTimer: number | null = null
