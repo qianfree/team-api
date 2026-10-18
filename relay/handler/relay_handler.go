@@ -1512,6 +1512,16 @@ func relayModeString(mode constant.RelayMode) string {
 		return "video_generations"
 	case constant.RelayModeVideos:
 		return "videos"
+	case constant.RelayModeVideoFetch:
+		return "video_fetch"
+	case constant.RelayModeSunoSubmit:
+		return "suno_submit"
+	case constant.RelayModeSunoFetch:
+		return "suno_fetch"
+	case constant.RelayModeMiniMaxVideo:
+		return "minimax_video"
+	case constant.RelayModeAliVideo:
+		return "ali_video"
 	default:
 		return ""
 	}

@@ -13,6 +13,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
 
+	"github.com/qianfree/team-api/internal/logic/billing"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/task"
 	relay_common "github.com/qianfree/team-api/relay/common"
@@ -39,7 +40,12 @@ func HandleSyncImageSubmit(r *ghttp.Request, body []byte, rc *relay_handler.Task
 	}
 
 	// 1. gate（复刻 HandleTaskSubmit 的 scope / IP 白名单 / 限流 / key 并发）
-	if rc.Scope == "read_only" {
+	// scope 与任务/同步管线同口径（本管线语义恒为图片生成；relayMode=0 时调用方未指定，按图片回退）
+	imageMode := relay_constant.RelayMode(rc.RelayMode)
+	if imageMode == relay_constant.RelayModeUnknown {
+		imageMode = relay_constant.RelayModeImagesGenerations
+	}
+	if !billing.CheckScope(rc.Scope, imageMode.String()) {
 		writeSyncImageError(w, http.StatusForbidden, "API key scope denied")
 		return
 	}
