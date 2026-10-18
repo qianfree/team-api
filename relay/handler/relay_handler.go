@@ -188,7 +188,11 @@ func validateRelayRequest(
 	// 5. QPS 限流已前置到步骤 1.5（见上），此处不再检查
 
 	// 7. 估算输入 token 数
-	estimatedInputTokens := estimateInputTokens(body)
+	var contentType string
+	if headers != nil {
+		contentType = headers.Get("Content-Type")
+	}
+	estimatedInputTokens := estimateInputTokens(body, contentType)
 
 	var isStream bool
 	if streamVal, ok := rawRequest["stream"]; ok {
@@ -1234,7 +1238,12 @@ const inlineMediaTokenCost = 1500
 // 文本部分按字符数 / 4；base64 内联媒体不能按字节折算——一张 2MB 的图按 len/4
 // 会被估成约 70 万 token，预扣直接冻穿余额，余额略少的租户根本发不出请求。
 // 故先扫出内联媒体载荷的字节数从长度中扣除，再按每个媒体的固定成本计入。
-func estimateInputTokens(body []byte) int {
+// multipart 体（STT 音频、图片编辑的文件表单）同理走固定成本口径，见
+// estimateMultipartInputTokens。
+func estimateInputTokens(body []byte, contentType string) int {
+	if isMultipartContentType(contentType) {
+		return estimateMultipartInputTokens(body, contentType)
+	}
 	mediaBytes, mediaCount := commonlogic.ScanInlineMediaBytes(body)
 	textBytes := len(body) - mediaBytes
 	if textBytes < 0 {

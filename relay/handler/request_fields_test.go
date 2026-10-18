@@ -122,3 +122,49 @@ func TestParseRequestBodyFields_InvalidJSON(t *testing.T) {
 		t.Fatal("want parse error for non-JSON body with JSON content type")
 	}
 }
+
+// STT/图片编辑 multipart 体的预扣估算：文件 part 按固定成本计入，不随文件大小放大
+// （10MB 音频按 len/4 折算会被估成 ~260 万 token，预扣冻穿余额且误报余额不足）
+func TestEstimateMultipartInputTokens(t *testing.T) {
+	audio := bytes.Repeat([]byte{0}, 10<<20) // 10MB
+	body, contentType := buildEditsMultipart(t,
+		map[string]string{"model": "whisper-1", "prompt": "transcribe this"},
+		map[string][]byte{"file": audio},
+	)
+
+	got := estimateInputTokens(body, contentType)
+	want := (len("whisper-1")+len("transcribe this"))/4 + inlineMediaTokenCost
+	if got != want {
+		t.Errorf("estimateInputTokens(multipart) = %d, want %d (标量文本/4 + 单文件固定成本)", got, want)
+	}
+	// 回归保护：不得与按字节折算处于同一量级（naive ≈ 10MB/4 ≈ 262 万）
+	if naive := len(body) / 4; got >= naive/10 {
+		t.Errorf("10MB 音频估算 %d tokens，与按字节折算的 %d 同量级，预扣仍会冻穿余额", got, naive)
+	}
+}
+
+// 多文件（图片编辑 image[]+mask）按个数累加固定成本；无文件时退化为标量文本估算
+func TestEstimateMultipartInputTokens_MultiFileAndTextOnly(t *testing.T) {
+	body, contentType := buildEditsMultipart(t,
+		map[string]string{"model": "gpt-image-1", "prompt": "a cat"},
+		map[string][]byte{"image": {1}, "mask": {2}},
+	)
+	want := (len("gpt-image-1")+len("a cat"))/4 + 2*inlineMediaTokenCost
+	if got := estimateInputTokens(body, contentType); got != want {
+		t.Errorf("multi-file estimate = %d, want %d", got, want)
+	}
+
+	textBody, textCT := buildEditsMultipart(t,
+		map[string]string{"model": "whisper-1"}, nil)
+	if got, want := estimateInputTokens(textBody, textCT), len("whisper-1")/4; got != want {
+		t.Errorf("text-only estimate = %d, want %d", got, want)
+	}
+}
+
+// 声明 multipart 但缺 boundary（畸形请求）：退化为单文件固定成本，不按字节折算
+func TestEstimateMultipartInputTokens_MissingBoundary(t *testing.T) {
+	big := bytes.Repeat([]byte{0}, 4<<20)
+	if got := estimateInputTokens(big, "multipart/form-data"); got != inlineMediaTokenCost {
+		t.Errorf("missing boundary estimate = %d, want %d", got, inlineMediaTokenCost)
+	}
+}

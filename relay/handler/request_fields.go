@@ -39,6 +39,48 @@ var consumedMultipartFields = map[string]bool{
 	"conversation_id":       true,
 }
 
+// isMultipartContentType 判断 Content-Type 是否为 multipart 表单。
+func isMultipartContentType(contentType string) bool {
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	return err == nil && strings.HasPrefix(mediaType, "multipart/")
+}
+
+// estimateMultipartInputTokens 估算 multipart 请求体的输入 token（仅用于预扣）：
+// 标量字段按文本 len/4，文件 part（STT 音频、图片编辑的 image[]/mask 等二进制
+// 载荷）按固定成本计入，不按字节数折算——10MB 音频按 len/4 会被估成约 260 万
+// token，预扣直接冻穿余额甚至误报余额不足。音频时长/图片分辨率在网关侧无法
+// 低价获得，固定成本只是闸门，结算仍以上游 usage 为准。
+func estimateMultipartInputTokens(body []byte, contentType string) int {
+	_, params, err := mime.ParseMediaType(contentType)
+	if err != nil || params["boundary"] == "" {
+		return inlineMediaTokenCost
+	}
+
+	textBytes, files := 0, 0
+	mr := multipart.NewReader(bytes.NewReader(body), params["boundary"])
+	for {
+		part, err := mr.NextPart()
+		if err != nil {
+			break // io.EOF 或畸形体：按已扫描到的部分估算
+		}
+		if part.FileName() != "" {
+			files++
+			continue
+		}
+		raw, err := io.ReadAll(io.LimitReader(part, multipartFieldMaxBytes+1))
+		if err != nil {
+			break
+		}
+		textBytes += len(raw)
+	}
+
+	estimated := textBytes/4 + files*inlineMediaTokenCost
+	if estimated == 0 {
+		estimated = 1
+	}
+	return estimated
+}
+
 // parseRequestBodyFields 提取请求体中标量字段的原始 JSON 值，供校验阶段读取
 // 模型名、stream、max_tokens 等。JSON 请求（含未声明 Content-Type）直接反序列化；
 // multipart/form-data 只提取非文件 part 的白名单标量值，包成 JSON 字符串字面量

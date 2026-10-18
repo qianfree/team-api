@@ -20,6 +20,7 @@ import (
 	"github.com/qianfree/team-api/relay/channel/openai"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
+	"github.com/qianfree/team-api/relay/helper"
 	"github.com/qianfree/team-api/relaykit/dispatch"
 )
 
@@ -78,6 +79,10 @@ type RealtimeContext struct {
 	KeyIpWhitelist  string
 	KeyTotalQuota   float64
 	KeyUsedQuota    float64
+
+	// ResolvedModel 连接最终使用的模型名（URL query 或首条 WS 消息解析所得），
+	// 由 handler 回写，供上层包装器记审计日志
+	ResolvedModel string
 }
 
 // HandleRealtime 处理 /v1/realtime WebSocket 请求
@@ -129,26 +134,34 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 	}
 	defer clientConn.Close()
 
-	// 2. 读取第一条消息获取 model 名称
-	_, firstMsg, err := clientConn.ReadMessage()
-	if err != nil {
-		return nil, nil, fmt.Errorf("read first websocket message failed: %w", err)
-	}
-
-	var firstEvent map[string]json.RawMessage
-	if err := json.Unmarshal(firstMsg, &firstEvent); err != nil {
-		return nil, nil, fmt.Errorf("parse first websocket message failed: %w", err)
-	}
-
-	modelName := extractModelFromEvent(firstEvent)
+	// 2. 确定模型名：优先 URL query 的 model 参数（官方 SDK 连接约定
+	// wss://host/v1/realtime?model=xxx，客户端连接后不主动发含 model 的消息，
+	// 等服务端 session.created），缺失时回退读取首条 WS 消息提取。
+	// query 命中时不再阻塞读首条消息，所有客户端消息经 Proxy 循环正常转发。
+	modelName := r.URL.Query().Get("model")
+	var firstMsg []byte
 	if modelName == "" {
-		errMsg, _ := json.Marshal(map[string]any{
-			"type":  "error",
-			"error": map[string]string{"message": "model is required in the first message"},
-		})
-		_ = clientConn.WriteMessage(websocket.TextMessage, errMsg)
-		return nil, nil, fmt.Errorf("model not found in first websocket message")
+		_, firstMsg, err = clientConn.ReadMessage()
+		if err != nil {
+			return nil, nil, fmt.Errorf("read first websocket message failed: %w", err)
+		}
+
+		var firstEvent map[string]json.RawMessage
+		if err := json.Unmarshal(firstMsg, &firstEvent); err != nil {
+			return nil, nil, fmt.Errorf("parse first websocket message failed: %w", err)
+		}
+
+		modelName = extractModelFromEvent(firstEvent)
+		if modelName == "" {
+			errMsg, _ := json.Marshal(map[string]any{
+				"type":  "error",
+				"error": map[string]string{"message": "model is required in the URL query or the first message"},
+			})
+			_ = clientConn.WriteMessage(websocket.TextMessage, errMsg)
+			return nil, nil, fmt.Errorf("model not found in websocket URL query or first message")
+		}
 	}
+	rc.ResolvedModel = modelName
 
 	// 3. 验证模型
 	_, _, err = provider.GetModelMapping(ctx, modelName)
@@ -291,16 +304,22 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 		if billing != nil && preDeductAmount > 0 {
 			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
 		}
+		recordRealtimeUsage(provider, rc, r, selection, modelName, nil, nil, err, int(time.Since(realtimeStart).Milliseconds()))
 		return nil, billingResult, err
 	}
 	defer proxy.Close()
 
-	// 把第一条消息转发到上游
-	if err := proxy.GetTargetConn().WriteMessage(websocket.TextMessage, firstMsg); err != nil {
-		if billing != nil && preDeductAmount > 0 {
-			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
+	// 把首条消息转发到上游：仅在模型取自首条消息时存在缓存的 firstMsg
+	//（此时该消息已被读出、不会经 Proxy 循环）；模型来自 URL query 时
+	// 客户端消息全部由 Proxy 循环正常转发，无需补发。
+	if firstMsg != nil {
+		if err := proxy.GetTargetConn().WriteMessage(websocket.TextMessage, firstMsg); err != nil {
+			if billing != nil && preDeductAmount > 0 {
+				_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
+			}
+			recordRealtimeUsage(provider, rc, r, selection, modelName, nil, nil, err, int(time.Since(realtimeStart).Milliseconds()))
+			return nil, billingResult, err
 		}
-		return nil, billingResult, err
 	}
 
 	// 9. 启动双向代理
@@ -314,14 +333,16 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 			float64(time.Since(realtimeStart).Milliseconds()), 0)
 	}
 
-	// 10. 结算费用
+	// 10. 结算费用 + 记录用量（与 HTTP 管线对齐：结算与 bil_usage_logs 是两条独立
+	// 写入链路，realtime 此前只结算不落用量日志，租户账单与用量报表对不齐）
+	var settleResult *common.SettlementResult
 	if billing != nil && preDeductAmount > 0 {
 		if proxyErr != nil {
 			streamUsage := usage
 			if streamUsage == nil {
 				streamUsage = &common.Usage{}
 			}
-			settleResult, _ := billing.SettleStreamInterrupted(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
+			settleResult, _ = billing.SettleStreamInterrupted(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
 				modelName, rc.RequestID, "realtime", streamUsage, preDeductAmount, rc.ProjectID, info.StartTime)
 			if settleResult != nil && settleResult.ActualCost > 0 && !settleResult.DuplicateSkip {
 				billing.IncrMemberQuotaUsed(ctx, rc.TenantID, rc.UserID, settleResult.ActualCost)
@@ -330,7 +351,7 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 		} else if usage != nil {
 			// 走 SettleWithUsage 完整 Usage 结算：realtime usage 携带缓存明细
 			//（input_token_details.cached_tokens），plain Settle 只取 input/output 会把缓存按全价计费
-			settleResult := billing.SettleWithUsage(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
+			settleResult = billing.SettleWithUsage(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
 				modelName, rc.RequestID, "realtime", usage, preDeductAmount, info)
 			if settleResult != nil && settleResult.ActualCost > 0 && !settleResult.DuplicateSkip {
 				billing.IncrMemberQuotaUsed(ctx, rc.TenantID, rc.UserID, settleResult.ActualCost)
@@ -338,8 +359,95 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 			}
 		}
 	}
+	recordRealtimeUsage(provider, rc, r, selection, modelName, usage, settleResult, proxyErr, int(time.Since(realtimeStart).Milliseconds()))
 
 	return usage, billingResult, proxyErr
+}
+
+// recordRealtimeUsage 记录 Realtime 会话的用量日志。成功、中断（含拨号/首条消息
+// 转发失败）均落库：结算已扣费的会话若无量记录，钱包流水与用量报表对不齐。
+// token 口径与 settleSuccessfulRequest 一致（input 含缓存、音频 token 分离）。
+func recordRealtimeUsage(
+	provider common.DataProvider,
+	rc *RealtimeContext,
+	r *http.Request,
+	selection *common.ChannelSelection,
+	modelName string,
+	usage *common.Usage,
+	settleResult *common.SettlementResult,
+	proxyErr error,
+	latencyMs int,
+) {
+	if provider == nil {
+		return
+	}
+	if usage == nil {
+		usage = &common.Usage{}
+	}
+
+	totalInput := usage.TotalInputTokens()
+	totalTokens := totalInput + usage.CompletionTokens
+	if totalTokens == 0 {
+		totalTokens = usage.TotalTokens
+	}
+
+	record := &common.UsageRecord{
+		TenantID:         rc.TenantID,
+		UserID:           rc.UserID,
+		ApiKeyID:         rc.ApiKeyID,
+		ProjectID:        rc.ProjectID,
+		ChannelID:        selection.ChannelID,
+		ChannelName:      selection.ChannelName,
+		ChannelType:      selection.ChannelType,
+		ModelName:        modelName,
+		RequestedModel:   modelName,
+		UpstreamModel:    selection.UpstreamModelName,
+		RelayMode:        int(constant.RelayModeRealtime),
+		PromptTokens:     totalInput,
+		CompletionTokens: usage.CompletionTokens,
+		TotalTokens:      totalTokens,
+		CachedTokens:     tokenDetailField(usage.PromptTokensDetails, func(d *common.TokenDetails) int { return d.CachedTokens }),
+		AudioInputTokens: tokenDetailField(usage.PromptTokensDetails, func(d *common.TokenDetails) int { return d.AudioTokens }),
+		AudioOutputTokens: tokenDetailField(usage.CompletionTokenDetails, func(d *common.TokenDetails) int {
+			return d.AudioTokens
+		}),
+		LatencyMs:       float64(latencyMs),
+		IsStream:        true,
+		RequestType:     2, // 流式（与 requestType 一致）
+		RequestID:       rc.RequestID,
+		InboundEndpoint: "/realtime",
+		UserAgent:       r.Header.Get("User-Agent"),
+		ClientIP:        rc.ClientIP,
+	}
+
+	if proxyErr == nil {
+		record.Success = true
+		record.Status = "success"
+	} else {
+		record.Success = false
+		record.Status = "error"
+		record.ErrorMessage = helper.SafeUpstreamErrorMessage(proxyErr)
+	}
+
+	if settleResult != nil {
+		record.TotalCost = settleResult.BaseCost
+		record.ActualCost = settleResult.ActualCost
+		record.Currency = "USD"
+		record.PreDeductAmount = settleResult.PreDeductAmount
+		record.RefundAmount = settleResult.RefundAmount
+		record.SupplementAmount = settleResult.SupplementAmount
+		record.BillingSnapshot = settleResult.BillingSnapshot
+		record.BillingSummary = settleResult.BillingSummary
+		record.BillingMode = settleResult.BillingMode
+		record.BillingSource = settleResult.BillingSource
+		record.RateMultiplier = settleResult.RateMultiplier
+		record.InputCost = settleResult.InputCost
+		record.OutputCost = settleResult.OutputCost
+		record.CacheCreationCost = settleResult.CacheCreationCost
+		record.CacheReadCost = settleResult.CacheReadCost
+	}
+
+	provider.RecordUsage(context.Background(), record)
 }
 
 // extractModelFromEvent 从 WebSocket 事件中提取模型名称

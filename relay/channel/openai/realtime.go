@@ -34,11 +34,17 @@ func (p *RealtimeProxy) GetTargetConn() *websocket.Conn {
 	return p.targetConn
 }
 
-// buildRealtimeURL 将 HTTP(S) BaseURL 转换为 WS(S) URL
-func buildRealtimeURL(baseURL string) string {
+// buildRealtimeURL 将 HTTP(S) BaseURL 转换为 WS(S) URL。
+// model 以 query 参数附带：OpenAI 官方 Realtime 端点要求
+// wss://.../v1/realtime?model=xxx（缺失会被官方上游拒绝）；
+// 兼容上游若按自身约定忽略该参数亦无害。
+func buildRealtimeURL(baseURL, model string) string {
 	u := strings.TrimSuffix(baseURL, "/")
 	u = strings.Replace(u, "https://", "wss://", 1)
 	u = strings.Replace(u, "http://", "ws://", 1)
+	if model != "" {
+		return u + "/v1/realtime?model=" + url.QueryEscape(model)
+	}
 	return u + "/v1/realtime"
 }
 
@@ -63,7 +69,12 @@ func buildRealtimeHeaders(info *common.RelayInfo) http.Header {
 
 // DialUpstream 建立到上游的 WebSocket 连接
 func (p *RealtimeProxy) DialUpstream() error {
-	targetURL := buildRealtimeURL(p.info.ChannelMeta.BaseURL)
+	// 上游模型名优先（渠道可能做了模型映射），未映射时回退客户端请求名
+	model := p.info.ChannelMeta.UpstreamModelName
+	if model == "" {
+		model = p.info.OriginModelName
+	}
+	targetURL := buildRealtimeURL(p.info.ChannelMeta.BaseURL, model)
 	header := buildRealtimeHeaders(p.info)
 
 	timeout := p.info.ChannelMeta.Settings.GetTimeoutSeconds(p.info.RelayMode)

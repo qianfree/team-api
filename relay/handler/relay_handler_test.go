@@ -104,7 +104,7 @@ func TestEstimateInputTokens(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := estimateInputTokens([]byte(c.body)); got != c.want {
+			if got := estimateInputTokens([]byte(c.body), ""); got != c.want {
 				t.Errorf("estimateInputTokens() = %d, want %d", got, c.want)
 			}
 		})
@@ -112,7 +112,7 @@ func TestEstimateInputTokens(t *testing.T) {
 
 	// 回归保护：2MB 图片的估算必须远低于按字节折算的量级
 	naive := len(`{"url":"data:image/png;base64,`+payload+`"}`) / 4
-	got := estimateInputTokens([]byte(`{"url":"data:image/png;base64,` + payload + `"}`))
+	got := estimateInputTokens([]byte(`{"url":"data:image/png;base64,`+payload+`"}`), "")
 	if got >= naive/10 {
 		t.Errorf("2MB 图片估算 %d tokens，与按字节折算的 %d 处于同一量级，预扣仍会冻穿余额", got, naive)
 	}
