@@ -25,7 +25,7 @@ func TestResolveRelayModel(t *testing.T) {
 	// 后缀语法已移除：目录名即请求名，不再有「字面模型优先 / 剥后缀回退」两段查找
 	t.Run("catalog model resolves literally", func(t *testing.T) {
 		provider := &modelMappingStub{models: map[string]bool{"gpt-4o": true}}
-		lookup, err := resolveRelayModel(t.Context(), provider, "gpt-4o")
+		lookup, _, err := resolveRelayModel(t.Context(), provider, "gpt-4o")
 		if err != nil {
 			t.Fatalf("resolveRelayModel() error = %v", err)
 		}
@@ -37,7 +37,7 @@ func TestResolveRelayModel(t *testing.T) {
 	// 名字带 -max 等字样的真实目录模型按字面命中，不做任何后缀解释
 	t.Run("literal model ending in effort-like word", func(t *testing.T) {
 		provider := &modelMappingStub{models: map[string]bool{"qwen3.8-max": true}}
-		lookup, err := resolveRelayModel(t.Context(), provider, "qwen3.8-max")
+		lookup, _, err := resolveRelayModel(t.Context(), provider, "qwen3.8-max")
 		if err != nil {
 			t.Fatalf("resolveRelayModel() error = %v", err)
 		}
@@ -52,7 +52,7 @@ func TestResolveRelayModel(t *testing.T) {
 	// 目录中不存在即报错，不再尝试剥后缀回退（"o3-max" 不会命中 "o3"）
 	t.Run("missing model returns error without suffix fallback", func(t *testing.T) {
 		provider := &modelMappingStub{models: map[string]bool{"o3": true}}
-		_, err := resolveRelayModel(t.Context(), provider, "o3-max")
+		_, _, err := resolveRelayModel(t.Context(), provider, "o3-max")
 		if err == nil {
 			t.Fatal("want error for model absent from catalog")
 		}

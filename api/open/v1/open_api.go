@@ -143,7 +143,7 @@ type OpenKeyCreateReq struct {
 	g.Meta      `path:"/v1/keys" method:"post" mime:"json" tags:"开放平台API" summary:"创建API Key"`
 	Name        string   `json:"name" v:"required|length:2,100|regex:^[^<>]*$#请输入Key名称|名称长度2-100|名称不能包含 < 或 > 字符" dc:"Key名称"`
 	ProjectID   int64    `json:"project_id" dc:"关联项目 ID（可选；填写后该 Key 随项目归档一并失效）"`
-	Scope       string   `json:"scope" d:"full" v:"in:full,chat_only,embeddings_only,rerank_only,images_only,read_only#权限范围无效" dc:"权限范围"`
+	Scope       string   `json:"scope" d:"full" v:"in:full,chat_only,embeddings_only,rerank_only,images_only,audio_only,read_only#权限范围无效" dc:"权限范围"`
 	ModelScopes []string `json:"model_scopes" dc:"可用模型列表（为空则不限）"`
 	QuotaLimit  float64  `json:"quota_limit" d:"0" dc:"额度上限（0=不限）"`
 }
@@ -344,7 +344,7 @@ type OpenProjectKeyCreateReq struct {
 	g.Meta     `path:"/v1/projects/{id}/api-keys" method:"post" mime:"json" tags:"开放平台API" summary:"创建项目密钥"`
 	Id         int64       `json:"id" in:"path" v:"required#请指定项目ID" dc:"项目ID"`
 	Name       string      `json:"name" v:"required|length:1,100|regex:^[^<>]*$#请输入Key名称|名称长度1-100|名称不能包含 < 或 > 字符" dc:"Key名称"`
-	Scope      string      `json:"scope" d:"full" v:"in:full,chat_only,embeddings_only,rerank_only,images_only,read_only#权限范围无效" dc:"权限范围"`
+	Scope      string      `json:"scope" d:"full" v:"in:full,chat_only,embeddings_only,rerank_only,images_only,audio_only,read_only#权限范围无效" dc:"权限范围"`
 	ExpiresAt  *gtime.Time `json:"expires_at" dc:"过期时间"`
 	ModelNames []string    `json:"model_names" dc:"可用模型列表"`
 }

@@ -71,15 +71,111 @@ type modelMappingProvider interface {
 	GetModelMapping(ctx context.Context, modelName string) (standardName string, category string, err error)
 }
 
-// resolveRelayModel 校验模型在目录中存在，返回计费/调度用的目录模型名。
+// resolveRelayModel 校验模型在目录中存在，返回计费/调度用的目录模型名与模型分类。
 // 历史上此处还承担 thinking/effort 模型名后缀（-thinking/-high 等虚拟模型语法）的
 // 解析回退；该语法已于 2026-09 移除（无存量使用，思考参数一律由客户端请求参数表达），
 // 目录名即请求名。
-func resolveRelayModel(ctx context.Context, provider modelMappingProvider, modelName string) (string, error) {
-	if _, _, err := provider.GetModelMapping(ctx, modelName); err != nil {
-		return "", err
+func resolveRelayModel(ctx context.Context, provider modelMappingProvider, modelName string) (string, string, error) {
+	_, category, err := provider.GetModelMapping(ctx, modelName)
+	if err != nil {
+		return "", "", err
 	}
-	return modelName, nil
+	return modelName, category, nil
+}
+
+// checkModelCategoryMatchesMode embeddings/rerank 入口的模型分类预校验：
+// 用 chat 类模型调这些端点提前本地拒绝，不再路由到渠道后由上游报出难懂的错误。
+// category 为空时放行（目录数据不全不误杀）；chat 族入口不校验（主路径，兼容面最宽）。
+func checkModelCategoryMatchesMode(modelName, category string, mode constant.RelayMode) error {
+	var want string
+	switch mode {
+	case constant.RelayModeEmbeddings:
+		want = "embedding"
+	case constant.RelayModeRerank:
+		want = "rerank"
+	default:
+		return nil
+	}
+	if category == "" || category == want {
+		return nil
+	}
+	return constant.NewRequestError(fmt.Sprintf(
+		"model %s (category: %s) does not support the %s endpoint, use a %s model instead",
+		modelName, category, mode.String(), want), nil)
+}
+
+// validateEmbeddingsRequestParams embeddings 请求参数本地校验（畸形参数 400 拦截，
+// 不再透传上游）。input 按 OpenAI 协议允许 string / []string / []int / [][]int
+// （token ID 形态），统一约束为 JSON 字符串或数组两种形态。
+func validateEmbeddingsRequestParams(rawRequest map[string]json.RawMessage) error {
+	input, ok := rawRequest["input"]
+	if !ok {
+		return constant.NewRequestError("input is required", nil)
+	}
+	trimmed := bytes.TrimLeft(input, " \t\r\n")
+	if len(trimmed) == 0 || (trimmed[0] != '"' && trimmed[0] != '[') {
+		return constant.NewRequestError("input must be a string or an array of strings/tokens", nil)
+	}
+	if v, ok := rawRequest["dimensions"]; ok {
+		var dim int
+		if json.Unmarshal(v, &dim) == nil && dim <= 0 {
+			return constant.NewRequestError("dimensions must be a positive integer", nil)
+		}
+	}
+	if v, ok := rawRequest["encoding_format"]; ok {
+		var ef string
+		if json.Unmarshal(v, &ef) == nil && ef != "float" && ef != "base64" {
+			return constant.NewRequestError("encoding_format must be one of: float, base64", nil)
+		}
+	}
+	return nil
+}
+
+// validateRerankRequestParams rerank 请求参数本地校验（Cohere 风格协议）。
+// documents 按 Cohere v2 允许 string 或含 text 字段的对象。
+func validateRerankRequestParams(rawRequest map[string]json.RawMessage) error {
+	if q, ok := rawRequest["query"]; ok {
+		var query string
+		if json.Unmarshal(q, &query) != nil || query == "" {
+			return constant.NewRequestError("query must be a non-empty string", nil)
+		}
+	} else {
+		return constant.NewRequestError("query is required", nil)
+	}
+
+	docs, ok := rawRequest["documents"]
+	if !ok {
+		return constant.NewRequestError("documents is required", nil)
+	}
+	var documents []json.RawMessage
+	if err := json.Unmarshal(docs, &documents); err != nil || len(documents) == 0 {
+		return constant.NewRequestError("documents must be a non-empty array", nil)
+	}
+	for i, d := range documents {
+		trimmed := bytes.TrimLeft(d, " \t\r\n")
+		if len(trimmed) == 0 || (trimmed[0] != '"' && trimmed[0] != '{') {
+			return constant.NewRequestError(fmt.Sprintf("documents[%d] must be a string or an object with a text field", i), nil)
+		}
+	}
+
+	// 数值下界约束（map 迭代序不定，用切片保证报错稳定）
+	numericConstraints := []struct {
+		field string
+		min   int
+	}{
+		{"top_n", 0},
+		{"max_chunks_per_doc", 1},
+		{"overlap_tokens", 0},
+	}
+	for _, c := range numericConstraints {
+		if v, ok := rawRequest[c.field]; ok {
+			var n int
+			if json.Unmarshal(v, &n) == nil && n < c.min {
+				return constant.NewRequestError(fmt.Sprintf("%s must be >= %d", c.field, c.min), nil)
+			}
+		}
+	}
+	return nil
 }
 
 // validateRelayRequest 校验请求合法性：relay mode、QPS 限流（前置）、模型存在性、弃用状态、成员/API Key 模型范围。
@@ -153,12 +249,29 @@ func validateRelayRequest(
 	}
 
 	// 2.5 验证模型在目录中存在
-	lookupModel, modelErr := resolveRelayModel(ctx, provider, modelName)
+	lookupModel, modelCategory, modelErr := resolveRelayModel(ctx, provider, modelName)
 	if modelErr != nil {
 		if modelErr == common.ErrModelNotFound {
 			return nil, constant.NewRequestError("model not found: "+modelName, modelErr)
 		}
 		return nil, modelErr
+	}
+
+	// 2.6 模型分类与端点匹配预校验（chat 模型调 embeddings/rerank 提前本地拒绝）
+	if err := checkModelCategoryMatchesMode(modelName, modelCategory, relayMode); err != nil {
+		return nil, err
+	}
+
+	// 2.7 embeddings/rerank 请求参数本地校验（畸形参数 400 拦截，不再透传上游）
+	switch relayMode {
+	case constant.RelayModeEmbeddings:
+		if err := validateEmbeddingsRequestParams(rawRequest); err != nil {
+			return nil, err
+		}
+	case constant.RelayModeRerank:
+		if err := validateRerankRequestParams(rawRequest); err != nil {
+			return nil, err
+		}
 	}
 
 	// 3.5 检查模型弃用状态
@@ -197,6 +310,11 @@ func validateRelayRequest(
 	var isStream bool
 	if streamVal, ok := rawRequest["stream"]; ok {
 		_ = json.Unmarshal(streamVal, &isStream)
+	}
+
+	// embeddings/rerank 协议不支持流式：显式拒绝而非透传上游（上游对 stream 字段行为不定）
+	if isStream && (relayMode == constant.RelayModeEmbeddings || relayMode == constant.RelayModeRerank) {
+		return nil, constant.NewRequestError("stream is not supported for this endpoint", nil)
 	}
 
 	var maxTokens int
