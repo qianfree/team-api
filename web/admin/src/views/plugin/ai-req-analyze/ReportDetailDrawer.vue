@@ -69,7 +69,7 @@ const riskColor: Record<string, string> = {
 }
 const sourceLabel: Record<string, string> = { manual: '手动分析', patrol: '定时巡查' }
 const auditLevelLabel: Record<string, string> = {
-  full: '完整记录', full_text: '纯文本', masked: '脱敏记录', question_only: '仅提问', none: '关闭',
+  full: '完整记录', full_text: '纯文本', masked: '脱敏记录', question_only: '仅提问', meta_only: '仅留痕', none: '关闭',
 }
 const severityLabel: Record<string, string> = { high: '高危', medium: '可疑', low: '待复核' }
 const severityColor: Record<string, string> = { high: 'red', medium: 'orange', low: 'arcoblue' }
@@ -144,9 +144,11 @@ function openConversation(findingId: number) {
             <span v-if="dedupRatio">去重率 {{ dedupRatio }}</span>
             <span>AI 消耗 {{ detail.ai_tokens_used }} tokens（{{ detail.ai_model }}）</span>
           </div>
-          <AAlert v-if="detail.audit_level === 'masked' || detail.audit_level === 'question_only'"
+          <AAlert v-if="['masked', 'question_only', 'meta_only'].includes(detail.audit_level)"
             type="warning" :closable="false">
-            本报告基于{{ auditLevelLabel[detail.audit_level] }}级别的审计数据生成，部分内容可能已脱敏或缺失（无 AI 回答侧），泄露检测/合规判定的证据完整性受限。
+            {{ detail.audit_level === 'meta_only'
+              ? '本报告基于仅留痕级别的审计数据生成，请求与回复内容均未记录，泄露检测/合规判定无证据可用。'
+              : `本报告基于${auditLevelLabel[detail.audit_level]}级别的审计数据生成，部分内容可能已脱敏或缺失（无 AI 回答侧），泄露检测/合规判定的证据完整性受限。` }}
           </AAlert>
         </div>
 

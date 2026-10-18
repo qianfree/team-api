@@ -490,9 +490,9 @@ func (p *DataProviderImpl) RecordAudit(ctx context.Context, record *common.Audit
 			record.IsStream, record.HeaderSessionID, record.TenantID, record.Model)
 
 		// 按系统级别处理
-		sysReq, sysResp := lcommon.ApplyAuditLevel(globalLevel, record.RequestBody, record.ResponseBody, record.IsStream, record.Path)
+		sysReq, sysResp := lcommon.ApplyAuditLevel(globalLevel, record.RequestBody, record.ResponseBody, record.IsStream, record.Path, record.StatusCode)
 		// 按租户级别处理
-		tntReq, tntResp := lcommon.ApplyAuditLevel(tenantLevel, record.RequestBody, record.ResponseBody, record.IsStream, record.Path)
+		tntReq, tntResp := lcommon.ApplyAuditLevel(tenantLevel, record.RequestBody, record.ResponseBody, record.IsStream, record.Path, record.StatusCode)
 
 		// 截断过长的内容：配置了独立审计库时完整记录（auditBodyMaxLen=0 不截断），
 		// 否则截断到 2 KiB，防止与业务数据共用主库导致库膨胀。

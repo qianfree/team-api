@@ -24,6 +24,7 @@ const (
 	AuditLevelFullText     = common.AuditLevelFullText
 	AuditLevelMasked       = common.AuditLevelMasked
 	AuditLevelQuestionOnly = common.AuditLevelQuestionOnly
+	AuditLevelMetaOnly     = common.AuditLevelMetaOnly
 	AuditLevelNone         = common.AuditLevelNone
 )
 
@@ -33,6 +34,7 @@ var validAuditLevels = map[string]bool{
 	AuditLevelFullText:     true,
 	AuditLevelMasked:       true,
 	AuditLevelQuestionOnly: true,
+	AuditLevelMetaOnly:     true,
 	AuditLevelNone:         true,
 }
 
@@ -50,7 +52,7 @@ func (s *sAdmin) GetAuditConfig(ctx context.Context, _ *v1.AuditConfigGetReq) (*
 // UpdateAuditConfig updates the global audit level.
 func (s *sAdmin) UpdateAuditConfig(ctx context.Context, req *v1.AuditConfigUpdateReq) (*v1.AuditConfigUpdateRes, error) {
 	if !validAuditLevels[req.AuditLevel] {
-		return nil, common.NewBadRequestError("无效的审计级别，可选值：full, full_text, masked, question_only, none")
+		return nil, common.NewBadRequestError("无效的审计级别，可选值：full, full_text, masked, question_only, meta_only, none")
 	}
 
 	// Upsert into sys_options

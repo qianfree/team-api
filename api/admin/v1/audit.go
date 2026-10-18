@@ -18,7 +18,7 @@ type AuditConfigGetRes struct {
 
 type AuditConfigUpdateReq struct {
 	g.Meta     `path:"/audit/config" method:"put" mime:"json" tags:"管理后台-审计" summary:"更新审计配置"`
-	AuditLevel string `json:"audit_level" v:"required|in:full,full_text,masked,question_only,none"`
+	AuditLevel string `json:"audit_level" v:"required|in:full,full_text,masked,question_only,meta_only,none"`
 }
 
 type AuditConfigUpdateRes struct{}

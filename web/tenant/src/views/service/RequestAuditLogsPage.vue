@@ -87,8 +87,10 @@ const detailRecord = ref<any>(null)
 
 const auditLevelLabel: Record<string, string> = {
 	full: '完整',
+	full_text: '全量文本',
 	masked: '脱敏',
 	question_only: '仅提问',
+	meta_only: '仅留痕',
 	none: '关闭',
 }
 

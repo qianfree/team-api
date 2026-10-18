@@ -137,8 +137,8 @@ var Registry = []SettingDef{
 
 	// ── Audit ──
 	{Key: "audit_level", Type: SettingTypeString, Default: "full", Category: "audit",
-		Label: "全局审计级别", Validation: "enum:full,full_text,masked,question_only,none",
-		Description: "full=完整记录, full_text=全量文本, masked=脱敏记录, question_only=仅提问, none=不记录"},
+		Label: "全局审计级别", Validation: "enum:full,full_text,masked,question_only,meta_only,none",
+		Description: "full=完整记录, full_text=全量文本, masked=脱敏记录, question_only=仅提问, meta_only=仅留痕（不记内容，出错时记录错误原因）, none=不记录"},
 
 	// ── Payment ──
 	{Key: "payment_amount_options", Type: SettingTypeJSON, Default: "[10,20,50,100,200,500]", Category: "payment",

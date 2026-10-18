@@ -76,7 +76,7 @@ func (s *sTenant) AuditConfigUpdate(ctx context.Context, req *v1.TenantAuditConf
 	level := req.AuditLevel
 
 	if !isValidAuditLevel(level) {
-		return nil, common.NewBadRequestError("无效的审计级别，可选值：full, full_text, masked, question_only, none")
+		return nil, common.NewBadRequestError("无效的审计级别，可选值：full, full_text, masked, question_only, meta_only, none")
 	}
 
 	settings, err := getTenantSettings(ctx, tenantID)
@@ -141,7 +141,7 @@ func (s *sTenant) AuditLogs(ctx context.Context, req *v1.TenantAuditLogsReq) (*v
 func isValidAuditLevel(level string) bool {
 	switch level {
 	case common.AuditLevelFull, common.AuditLevelFullText, common.AuditLevelMasked,
-		common.AuditLevelQuestionOnly, common.AuditLevelNone:
+		common.AuditLevelQuestionOnly, common.AuditLevelMetaOnly, common.AuditLevelNone:
 		return true
 	default:
 		return false

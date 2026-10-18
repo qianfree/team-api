@@ -107,13 +107,46 @@ func TestApplyAuditLevelStripsInlineMedia(t *testing.T) {
 	payload := bigPayload(400)
 	body := `{"url":"data:image/png;base64,` + payload + `"}`
 
-	req, _ := ApplyAuditLevel(AuditLevelFull, body, "", false, "/v1/chat/completions")
+	req, _ := ApplyAuditLevel(AuditLevelFull, body, "", false, "/v1/chat/completions", 200)
 	if strings.Contains(req, payload) {
 		t.Error("full 级别仍把 base64 载荷落库")
 	}
 
-	req, resp := ApplyAuditLevel(AuditLevelNone, body, body, false, "/v1/chat/completions")
+	req, resp := ApplyAuditLevel(AuditLevelNone, body, body, false, "/v1/chat/completions", 200)
 	if req != "" || resp != "" {
 		t.Error("none 级别应返回空")
+	}
+}
+
+// meta_only 仅留痕：内容一律不记，仅错误响应（>=400）保留响应体作为错误原因。
+func TestApplyAuditLevelMetaOnly(t *testing.T) {
+	reqBody := `{"model":"gpt-4o","messages":[{"role":"user","content":"很长的提问内容"}]}`
+	errBody := `{"error":{"message":"upstream timeout","type":"upstream_error"}}`
+
+	req, resp := ApplyAuditLevel(AuditLevelMetaOnly, reqBody, `{"choices":[]}`, false, "/v1/chat/completions", 200)
+	if req != "" || resp != "" {
+		t.Errorf("成功请求应全空, got req=%q resp=%q", req, resp)
+	}
+
+	req, resp = ApplyAuditLevel(AuditLevelMetaOnly, reqBody, errBody, false, "/v1/chat/completions", 500)
+	if req != "" {
+		t.Error("meta_only 任何情况下都不应记录请求体")
+	}
+	if resp != errBody {
+		t.Errorf("错误响应应保留原文, got %q", resp)
+	}
+
+	// 400 边界同样保留错误原因
+	_, resp = ApplyAuditLevel(AuditLevelMetaOnly, reqBody, errBody, false, "/v1/chat/completions", 400)
+	if resp != errBody {
+		t.Errorf("400 响应应保留原文, got %q", resp)
+	}
+
+	// 错误响应里的内联媒体载荷仍需剥离
+	payload := bigPayload(400)
+	mediaErr := `{"error":{"data":"data:image/png;base64,` + payload + `"}}`
+	_, resp = ApplyAuditLevel(AuditLevelMetaOnly, reqBody, mediaErr, false, "/v1/chat/completions", 502)
+	if strings.Contains(resp, payload) {
+		t.Error("meta_only 错误响应仍把 base64 载荷落库")
 	}
 }

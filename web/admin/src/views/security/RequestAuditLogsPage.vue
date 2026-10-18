@@ -113,6 +113,7 @@ const auditLevelTagColor: Record<string, string> = {
 	full_text: 'cyan',
 	masked: 'arcoblue',
 	question_only: 'orange',
+	meta_only: 'gray',
 	none: 'red',
 }
 
@@ -121,6 +122,7 @@ const auditLevelLabel: Record<string, string> = {
 	full_text: '全量文本',
 	masked: '脱敏审计',
 	question_only: '仅问答',
+	meta_only: '仅留痕',
 	none: '关闭',
 }
 
