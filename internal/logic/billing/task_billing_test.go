@@ -383,3 +383,41 @@ func TestEstimateTaskCost_VideoTimeMultiplier(t *testing.T) {
 	pricing.TimeMultiplier = 0
 	assertDecimal(t, estimateTaskCost(pricing, ratios, nil), 3.375, "zero time multiplier fallback")
 }
+
+// TestEstimateTaskCost_PerRequestCountRatio 图片张数乘数：ratios["count"]=n 连乘进按次预扣。
+// 同步图片异步化链路提交时从顶层 n 构造（与阿里异步链路 ratios["count"] 同口径）。
+func TestEstimateTaskCost_PerRequestCountRatio(t *testing.T) {
+	pricing := &PricingResult{
+		BillingMode:      "per_request",
+		PerRequestPrice:  0.04,
+		TenantMultiplier: 1.0,
+	}
+	// 0.04 × 4 = 0.16
+	ratios := map[string]any{"base": 1.0, "count": 4.0}
+	assertDecimal(t, estimateTaskCost(pricing, ratios, nil), 0.16, "per_request × count")
+}
+
+// TestCollectTaskBillingFacts_CountRatioByMode count（图片张数）乘数只属于 per_request
+// 乘数链：token 等模式下张数已体现在 token 数中（与 RecalculateByTokens 的 skip 规则
+// 同源），列为乘数会双重计费。首算与重试网重放都经此处按计费模式统一判定，口径一致。
+func TestCollectTaskBillingFacts_CountRatioByMode(t *testing.T) {
+	ratios := map[string]any{"base": 1.0, "count": 4.0, "quality": 1.5}
+
+	perRequest := collectTaskBillingFacts(&PricingResult{BillingMode: "per_request"}, ratios, nil)
+	if _, ok := perRequest.AppliedRatios["count"]; !ok {
+		t.Error("per_request must keep count in applied ratios (费用 = 单价 × 张数)")
+	}
+
+	token := collectTaskBillingFacts(&PricingResult{BillingMode: "token"}, ratios, nil)
+	if _, ok := token.AppliedRatios["count"]; ok {
+		t.Error("token mode must drop count (output_tokens 已随 n 放大，列为乘数即双重计费)")
+	}
+	for _, k := range []string{"base", "quality"} {
+		if _, ok := token.AppliedRatios[k]; !ok {
+			t.Errorf("ratio %q must survive in token mode", k)
+		}
+	}
+	if _, ok := ratios["count"]; !ok {
+		t.Error("source map must not be mutated")
+	}
+}

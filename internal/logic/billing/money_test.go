@@ -37,7 +37,7 @@ func TestComputeCostDecimalPrecision(t *testing.T) {
 		TenantMultiplier: 1.0,
 		Currency:         "USD",
 	}
-	bd := computeCost(pricing, 100000, 0, nil)
+	bd := computeCost(pricing, 100000, 0, nil, 1)
 	if bd.TotalCost != 0.3 {
 		t.Fatalf("TotalCost = %v (%.20f), want exactly 0.3", bd.TotalCost, bd.TotalCost)
 	}
@@ -84,7 +84,7 @@ func TestComputeCostWithMultiplier(t *testing.T) {
 		TenantMultiplier: 1.1,
 		Currency:         "USD",
 	}
-	bd := computeCost(pricing, 100000, 0, nil)
+	bd := computeCost(pricing, 100000, 0, nil, 1)
 	if bd.TotalCost != 0.33 {
 		t.Fatalf("TotalCost = %v (%.20f), want exactly 0.33", bd.TotalCost, bd.TotalCost)
 	}

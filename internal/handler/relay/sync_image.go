@@ -80,8 +80,19 @@ func HandleSyncImageSubmit(r *ghttp.Request, body []byte, rc *relay_handler.Task
 	// 2. 强制非流式：剥离 stream 字段，防 DoResponse 走 SSE 分支
 	cleanBody := stripStreamField(body)
 
-	// 3. 估价（图片走 per_request 价；nil body = 参数倍率不参与，同步图片链路 ratios 不随任务持久化）
-	estimatedCost, err := taskBillingProvider.EstimateTaskCost(ctx, rc.TenantID, modelName, nil, nil)
+	// 3. 估价（图片走 per_request 价；顶层 n>1 时经 ratios["count"] 按张数放大，
+	// 与阿里异步链路及同步端点同口径。body 传 nil = 参数倍率不参与）
+	// n 非法（非整数/超出 1~10/类型错误）直接 400 拒绝。
+	imageCount, err := extractImageCountFromBody(cleanBody)
+	if err != nil {
+		writeSyncImageError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var estimateRatios map[string]any
+	if imageCount > 1 {
+		estimateRatios = map[string]any{"base": 1.0, "count": float64(imageCount)}
+	}
+	estimatedCost, err := taskBillingProvider.EstimateTaskCost(ctx, rc.TenantID, modelName, estimateRatios, nil)
 	if err != nil {
 		writeSyncImageError(w, http.StatusInternalServerError, "estimate cost failed: "+err.Error())
 		return
@@ -131,7 +142,7 @@ func HandleSyncImageSubmit(r *ghttp.Request, body []byte, rc *relay_handler.Task
 		"task_type":  string(relay_constant.TaskPlatformSyncImage),
 		"relay_mode": syncImageRelayMode,
 		"billing_context": map[string]any{
-			"ratios":     nil,
+			"ratios":     estimateRatios,
 			"model_name": modelName,
 			// pre_deduct 快照落 JSONB，读取端为 float64；decimal 默认带引号 MarshalJSON
 			// 会导致读取端反序列化失败，故显式转 float64。
@@ -186,7 +197,7 @@ func HandleSyncImageSubmit(r *ghttp.Request, body []byte, rc *relay_handler.Task
 		Model:           modelName,
 		RequestBody:     cleanBody,
 		PreDeductAmount: preDeduct,
-		Ratios:          nil,
+		Ratios:          estimateRatios,
 		SubmitTime:      now,
 	}
 	if !task.EnqueueSyncImageJob(job) {
@@ -246,6 +257,23 @@ func stripStreamField(body []byte) []byte {
 		return body
 	}
 	return cleaned
+}
+
+// extractImageCountFromBody 解析并校验图片协议顶层 n（一次生成 n 张）。
+// 合法值为 1~10 的整数（3.0 与 3 等价）：n 缺省/1 返回 0（不放大），
+// 非整数、超范围或 body/n 类型非法返回错误，由调用方 400 拒绝。
+// 返回值进计费上下文 ratios["count"]，按次计费按张数放大（与阿里异步链路及同步端点同口径）。
+func extractImageCountFromBody(body []byte) (int, error) {
+	var req struct {
+		N *float64 `json:"n"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return 0, fmt.Errorf("invalid request body: %w", err)
+	}
+	if req.N == nil {
+		return 0, nil
+	}
+	return relay_common.NormalizeImageCount(*req.N)
 }
 
 // checkSyncImageIPWhitelist 复刻 HandleTaskSubmit 的 IP 白名单校验（支持精确 IP 与 CIDR）。

@@ -52,6 +52,9 @@ type BillingSnapshotPricing struct {
 	// PerRequestPrice 按次单价（仅 per_request 模式填充）：摘要的「按次单价」行取此值。
 	// 此前误用 EffectiveInputPrice（token 输入价，纯按次模型恒为 0，展示「按次单价: $0」）
 	PerRequestPrice float64 `json:"per_request_price,omitempty"`
+	// PerRequestCount 按次计费张数（图片协议顶层 n，>1 时费用 = 单价 × 张数）。
+	// 摘要据此展示「张数: ×n」；旧快照无此字段，读取方按 1 处理
+	PerRequestCount int `json:"per_request_count,omitempty"`
 }
 
 // BillingSnapshotMultipliers 倍率信息
@@ -130,6 +133,7 @@ func GenerateBillingSnapshot(
 			Scheme:               pricing.Scheme,
 			PerSecondPrices:      pricing.PerSecondPrices,
 			PerRequestPrice:      pricing.PerRequestPrice,
+			PerRequestCount:      breakdown.PerRequestCount,
 		},
 		Multipliers: BillingSnapshotMultipliers{
 			ModelMultiplier:  pricing.ModelMultiplier,
@@ -291,6 +295,10 @@ func GenerateBillingSummary(ctx context.Context, snapshot *BillingSnapshot) stri
 		// 按次单价取 PerRequestPrice（此前误用 EffectiveInputPrice = token 输入价，
 		// 纯按次模型恒为 0，摘要展示「按次单价: $0.000000」）
 		lines = append(lines, fmt.Sprintf("按次单价: %s", money(snapshot.Pricing.PerRequestPrice)))
+		// 图片协议一次生成 n 张时按张数放大（张数>1 才展示，旧快照按 1 处理）
+		if snapshot.Pricing.PerRequestCount > 1 {
+			lines = append(lines, fmt.Sprintf("张数: ×%d", snapshot.Pricing.PerRequestCount))
+		}
 	} else {
 		// 各类 token 费用明细：tokens × 原价/1M × 倍率 = 实际费用。
 		// Cost 分项已含折扣（computeCost 分项 × mul），倍率必须显式进入算式，

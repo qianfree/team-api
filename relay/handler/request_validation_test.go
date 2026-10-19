@@ -106,3 +106,41 @@ func TestCheckModelCategoryMatchesMode(t *testing.T) {
 		})
 	}
 }
+
+func TestParseImageCount(t *testing.T) {
+	cases := []struct {
+		name    string
+		raw     json.RawMessage
+		want    int
+		wantErr bool
+	}{
+		{"json number 4", json.RawMessage(`4`), 4, false},
+		{"json integral float 3.0", json.RawMessage(`3.0`), 3, false},
+		{"json number 1 no amplification", json.RawMessage(`1`), 0, false},
+		{"json null treated as absent", json.RawMessage(`null`), 0, false},
+		{"multipart string form", json.RawMessage(`"4"`), 4, false},
+		{"multipart string with spaces", json.RawMessage(`" 3 "`), 3, false},
+		{"multipart integral float string", json.RawMessage(`"3.0"`), 3, false},
+		{"absent", nil, 0, false},
+		{"over limit 11", json.RawMessage(`11`), 0, true},
+		{"over limit string 11", json.RawMessage(`"11"`), 0, true},
+		{"zero", json.RawMessage(`0`), 0, true},
+		{"negative", json.RawMessage(`-1`), 0, true},
+		{"non-integer float", json.RawMessage(`2.5`), 0, true},
+		{"non-numeric string", json.RawMessage(`"abc"`), 0, true},
+		{"bool", json.RawMessage(`true`), 0, true},
+		{"array", json.RawMessage(`[4]`), 0, true},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseImageCount(tt.raw)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("parseImageCount(%s) error = %v, wantErr %v", tt.raw, err, tt.wantErr)
+				return
+			}
+			if err == nil && got != tt.want {
+				t.Errorf("parseImageCount(%s) = %d, want %d", tt.raw, got, tt.want)
+			}
+		})
+	}
+}

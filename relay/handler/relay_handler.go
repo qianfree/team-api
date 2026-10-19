@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -62,6 +63,7 @@ type relayValidation struct {
 	isStream        bool
 	estimatedTokens int
 	maxTokens       int
+	imageCount      int // 图片协议顶层 n（生成张数），n>1 时按次计费按张数放大
 	depInfo         *common.DeprecationInfo
 	billingResult   *BillingResult
 	sessionSignals  dispatch.SessionSignals // 请求体中的会话信号（影子模式/新调度用）
@@ -337,6 +339,17 @@ func validateRelayRequest(
 		}
 	}
 
+	// 图片协议顶层 n（一次生成 n 张）：按次计费需按张数放大（预扣与结算同口径）。
+	// 合法值为 1~10 的整数，非法直接 400 拒绝（含同步端点对 n 的协议校验语义）；
+	// token 计费模型不乘（usage 已随 n 放大）。
+	var imageCount int
+	if relayMode == constant.RelayModeImagesGenerations || relayMode == constant.RelayModeImagesEdits {
+		imageCount, err = parseImageCount(rawRequest["n"])
+		if err != nil {
+			return nil, constant.NewRequestError(err.Error(), nil)
+		}
+	}
+
 	return &relayValidation{
 		relayMode:       relayMode,
 		relayModeStr:    relayModeStr,
@@ -345,10 +358,35 @@ func validateRelayRequest(
 		isStream:        isStream,
 		estimatedTokens: estimatedInputTokens,
 		maxTokens:       maxTokens,
+		imageCount:      imageCount,
 		depInfo:         depInfo,
 		billingResult:   billingResult,
 		sessionSignals:  extractSessionSignals(rawRequest),
 	}, nil
+}
+
+// parseImageCount 解析并校验图片协议顶层 n（JSON 数字或 multipart 字符串形态）。
+// 合法值为 1~common.MaxImageCount 的整数：n=1/缺省/null 返回 0（不放大），
+// 非整数或超范围返回 ErrInvalidImageCount，由调用方 400 拒绝。
+func parseImageCount(raw json.RawMessage) (int, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return 0, nil
+	}
+	// JSON 数字先按 float64 解析（3.0 与 3 等价），整数性与范围交给 NormalizeImageCount
+	var f float64
+	if err := json.Unmarshal(raw, &f); err == nil {
+		return common.NormalizeImageCount(f)
+	}
+	// multipart 形态下标量字段保持字符串字面量（见 request_fields.go）
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		v, perr := strconv.ParseFloat(strings.TrimSpace(s), 64)
+		if perr != nil {
+			return 0, common.ErrInvalidImageCount
+		}
+		return common.NormalizeImageCount(v)
+	}
+	return 0, common.ErrInvalidImageCount
 }
 
 // extractSessionSignals 从已解析的请求体提取会话信号（解析链的协议内信号部分）。
@@ -578,7 +616,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 
 	var preDeductAmount float64
 	if billing != nil {
-		amt, err := billing.PreDeduct(ctx, rc.TenantID, v.modelName, v.estimatedTokens, v.maxTokens, v.isStream, rc.RequestID)
+		amt, err := billing.PreDeduct(ctx, rc.TenantID, v.modelName, v.imageCount, v.estimatedTokens, v.maxTokens, v.isStream, rc.RequestID)
 		if err != nil {
 			// 未配价模型 fail-closed：返回明确的请求错误，而非误导性的"余额不足"
 			if errors.Is(err, common.ErrModelPricingNotConfigured) {
@@ -870,7 +908,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 				var interruptSettle *common.SettlementResult
 				if billing != nil && preDeductAmount > 0 {
 					settleResult, err := billing.SettleStreamInterrupted(settleCtx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
-						v.modelName, rc.RequestID, v.relayModeStr, streamUsage, preDeductAmount, rc.ProjectID, info.StartTime)
+						v.modelName, rc.RequestID, v.relayModeStr, streamUsage, preDeductAmount, rc.ProjectID, info.ImageCount, info.StartTime)
 					if err != nil {
 						g.Log().Warningf(settleCtx, "[RelayHandler] Stream interrupted settlement failed: tenant=%d project=%d request=%s err=%v",
 							rc.TenantID, rc.ProjectID, rc.RequestID, err)
@@ -977,6 +1015,7 @@ func buildRelayInfo(ctx context.Context, rc *RelayContext, v *relayValidation, s
 		RetryIndex:      attempt,
 		RelayMode:       int(v.relayMode),
 		IsStream:        v.isStream,
+		ImageCount:      v.imageCount,
 		OriginModelName: v.modelName,
 		BaseModelName:   v.lookupModel,
 		RequestURLPath:  path,

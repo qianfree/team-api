@@ -183,6 +183,11 @@ type RelayInfo struct {
 	RequestHeaders  http.Header
 	StartTime       time.Time
 
+	// ImageCount 图片协议顶层 n（一次生成 n 张，入口已校验为 1~10 的整数，非法值 400 拒绝）。
+	// 按次计费（per_request）按张数放大（预扣与结算同口径）；token 计费不乘——usage 已随 n 放大。
+	// 0/1 表示无放大。
+	ImageCount int
+
 	// 渠道信息（由调度器设置）
 	ChannelMeta *ChannelMeta
 
