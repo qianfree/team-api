@@ -581,7 +581,8 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 					actualCost = materialCost
 				}
 			} else if taskInfo.TotalTokens > 0 && pd.BillingContext.Ratios != nil {
-				// 用上游 total_tokens + 保存的 ratios 重算
+				// 用上游 total_tokens + 保存的 ratios 重算（count 不参与重算乘法，
+				// 快照侧由 collectTaskBillingFacts 按计费模式统一剔除，见其注释）
 				if tokenCost, err := taskBilling.RecalculateByTokens(ctx, task.TenantID, task.ModelName, taskInfo.TotalTokens, pd.BillingContext.Ratios, task.CreatedAt); err == nil && tokenCost.GreaterThan(billing.Zero) {
 					actualCost = tokenCost
 				}

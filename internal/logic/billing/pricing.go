@@ -595,18 +595,22 @@ func CalculateCost(ctx context.Context, tenantID int64, modelName string, inputT
 		return nil, err
 	}
 
-	return computeCost(pricing, inputTokens, outputTokens, nil), nil
+	return computeCost(pricing, inputTokens, outputTokens, nil, 1), nil
 }
 
 // computeCost 纯计算：根据定价结果和 token 用量计算费用明细。
 // 提取为独立函数以便单元测试，不依赖数据库或缓存。
-func computeCost(pricing *PricingResult, inputTokens, outputTokens int, usage *rcommon.Usage) *CostBreakdown {
+// count 为按次计费放大倍数（图片协议顶层 n），<=1 不放大；token/tiered 计费不受其影响。
+func computeCost(pricing *PricingResult, inputTokens, outputTokens int, usage *rcommon.Usage, count int) *CostBreakdown {
 	baseInputTokens, outputTokens, cacheReadTokens, cacheCreation5mTokens, cacheCreation1hTokens := resolveTokenCounts(pricing, inputTokens, outputTokens, usage)
+	if count < 1 {
+		count = 1
+	}
 
-	// 按次计费：单价 × 租户乘数 × 时段乘数。
+	// 按次计费：单价 × 张数 × 租户乘数 × 时段乘数。
 	// 此前未乘租户乘数（按次模型对租户折扣免疫，疑似遗漏），本次与 token/tiered 口径对齐
 	if pricing.BillingMode == "per_request" {
-		mulD := NewFromFloat(pricing.TenantMultiplier).Mul(NewFromFloat(effectiveTimeMultiplier(pricing)))
+		mulD := NewFromFloat(float64(count)).Mul(NewFromFloat(pricing.TenantMultiplier)).Mul(NewFromFloat(effectiveTimeMultiplier(pricing)))
 		return &CostBreakdown{
 			BaseCost:            pricing.PerRequestPrice,
 			TotalCost:           InexactFloat64(RoundMoney(NewFromFloat(pricing.PerRequestPrice).Mul(mulD))),
@@ -614,6 +618,7 @@ func computeCost(pricing *PricingResult, inputTokens, outputTokens int, usage *r
 			OutputTokens:        outputTokens,
 			BillingMode:         pricing.BillingMode,
 			PerRequestPrice:     pricing.PerRequestPrice,
+			PerRequestCount:     count,
 			DiscountRatio:       pricing.DiscountRatio,
 			TenantMultiplier:    pricing.TenantMultiplier,
 			Currency:            pricing.Currency,
@@ -735,7 +740,7 @@ func CalculateCostWithUsage(ctx context.Context, tenantID int64, modelName strin
 		return nil, err
 	}
 
-	return computeCost(pricing, usage.PromptTokens, usage.CompletionTokens, usage), nil
+	return computeCost(pricing, usage.PromptTokens, usage.CompletionTokens, usage, 1), nil
 }
 
 // CostBreakdown 费用明细
@@ -748,6 +753,7 @@ type CostBreakdown struct {
 	OutputTokens     int
 	BillingMode      string
 	PerRequestPrice  float64
+	PerRequestCount  int // 按次计费张数（图片协议顶层 n），>1 时费用 = 单价 × 张数
 	DiscountRatio    float64
 	InputMultiplier  float64
 	OutputMultiplier float64
@@ -768,8 +774,12 @@ type CostBreakdown struct {
 // EstimatePreDeductAmount 估算预扣金额
 // 输出 token 估算：用户指定 max_tokens 时按其值（截断到模型上限）；未指定时按模型 max_output_tokens 的 80%。
 // 按估算全额冻结（无上限封顶），下限 $0.001；未配置定价的模型 fail-closed 返回错误拒绝请求。
-func EstimatePreDeductAmount(ctx context.Context, tenantID int64, modelName string, inputTokens, requestedMaxTokens int, isStream bool) (float64, error) {
+// count 为按次计费放大倍数（图片协议顶层 n），<=1 不放大；token 计费不受其影响（usage 已随 n 放大）。
+func EstimatePreDeductAmount(ctx context.Context, tenantID int64, modelName string, count, inputTokens, requestedMaxTokens int, isStream bool) (float64, error) {
 	_ = isStream // 预留参数：估算逻辑不再区分流式/非流式，接口签名保持兼容
+	if count < 1 {
+		count = 1
+	}
 	pricing, err := GetModelPrice(ctx, tenantID, modelName)
 	if err != nil {
 		return 0, gerror.Wrapf(err, "estimate pre-deduct: get model price")
@@ -780,10 +790,10 @@ func EstimatePreDeductAmount(ctx context.Context, tenantID int64, modelName stri
 		return 0, err
 	}
 
-	// 按次计费：单价 × 租户乘数 × 时段乘数（与 computeCost 结算口径一致）
+	// 按次计费：单价 × 张数 × 租户乘数 × 时段乘数（与 computeCost 结算口径一致）
 	if pricing.BillingMode == "per_request" {
 		mult := NewFromFloat(pricing.TenantMultiplier).Mul(NewFromFloat(effectiveTimeMultiplier(pricing)))
-		return InexactFloat64(NewFromFloat(pricing.PerRequestPrice).Mul(mult)), nil
+		return InexactFloat64(NewFromFloat(pricing.PerRequestPrice).Mul(NewFromFloat(float64(count))).Mul(mult)), nil
 	}
 
 	// Token 计费：估算输出上限。

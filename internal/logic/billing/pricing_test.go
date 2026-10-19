@@ -509,7 +509,7 @@ func TestComputeCost_TokenMode(t *testing.T) {
 		Currency:         "USD",
 	}
 
-	cb := computeCost(pricing, 1000, 500, nil)
+	cb := computeCost(pricing, 1000, 500, nil, 1)
 
 	// 1000/1M * 30 = 0.03, 500/1M * 60 = 0.03, total = 0.06
 	assertFloat(t, cb.InputCost, 0.03, "InputCost")
@@ -536,7 +536,7 @@ func TestComputeCost_TokenMode_WithTenantMultiplier(t *testing.T) {
 		Currency:         "USD",
 	}
 
-	cb := computeCost(pricing, 100_000, 50_000, nil)
+	cb := computeCost(pricing, 100_000, 50_000, nil, 1)
 
 	// input: 100K/1M * 10 = 1.0, output: 50K/1M * 30 = 1.5, base = 2.5
 	// with 0.8 multiplier: total = 2.0
@@ -554,7 +554,7 @@ func TestComputeCost_PerRequestMode(t *testing.T) {
 		Currency:         "USD",
 	}
 
-	cb := computeCost(pricing, 5000, 3000, nil)
+	cb := computeCost(pricing, 5000, 3000, nil, 1)
 
 	// Per-request: cost is flat regardless of tokens
 	assertFloat(t, cb.TotalCost, 0.05, "TotalCost (per_request)")
@@ -575,7 +575,7 @@ func TestComputeCost_PerRequestMode_WithMultiplier(t *testing.T) {
 		Currency:         "USD",
 	}
 
-	cb := computeCost(pricing, 100, 50, nil)
+	cb := computeCost(pricing, 100, 50, nil, 1)
 
 	// BaseCost 保持折扣前单价，TotalCost = 单价 × 租户乘数 × 时段乘数
 	// （此前按次计费不乘租户乘数，租户折扣对按次模型不生效，已对齐 token/tiered 口径）
@@ -592,12 +592,12 @@ func TestComputeCost_PerRequestMode_WithTimeMultiplier(t *testing.T) {
 		Currency:         "USD",
 	}
 
-	cb := computeCost(pricing, 100, 50, nil)
+	cb := computeCost(pricing, 100, 50, nil, 1)
 	assertFloat(t, cb.TotalCost, 0.045, "per_request TotalCost (tenant×time)")
 
 	// 时段乘数零值兜底：视为 1.0，不得把费用清零
 	pricing.TimeMultiplier = 0
-	cb = computeCost(pricing, 100, 50, nil)
+	cb = computeCost(pricing, 100, 50, nil, 1)
 	assertFloat(t, cb.TotalCost, 0.09, "per_request TotalCost (zero time multiplier fallback)")
 }
 
@@ -612,14 +612,14 @@ func TestComputeCost_WithTimeMultiplier(t *testing.T) {
 	}
 
 	// 1M input + 1M output：默认价 18，闲时半价 9
-	cb := computeCost(pricing, 1_000_000, 1_000_000, nil)
+	cb := computeCost(pricing, 1_000_000, 1_000_000, nil, 1)
 	assertFloat(t, cb.InputCost, 1.5, "InputCost (time 0.5)")
 	assertFloat(t, cb.OutputCost, 7.5, "OutputCost (time 0.5)")
 	assertFloat(t, cb.TotalCost, 9.0, "TotalCost (time 0.5)")
 
 	// 与租户乘数叠加：0.8 × 0.5 = 0.4
 	pricing.TenantMultiplier = 0.8
-	cb = computeCost(pricing, 1_000_000, 1_000_000, nil)
+	cb = computeCost(pricing, 1_000_000, 1_000_000, nil, 1)
 	assertFloat(t, cb.TotalCost, 7.2, "TotalCost (tenant 0.8 × time 0.5)")
 
 	// tiered 模式：阶梯小计 × 时段乘数
@@ -634,7 +634,7 @@ func TestComputeCost_WithTimeMultiplier(t *testing.T) {
 		},
 	}
 	// 输入 200K：命中第二档全量按 $3/1M = 0.6，半价 0.3
-	cb = computeCost(tiered, 200_000, 0, nil)
+	cb = computeCost(tiered, 200_000, 0, nil, 1)
 	assertFloat(t, cb.InputCost, 0.3, "tiered InputCost (time 0.5)")
 	assertFloat(t, cb.TotalCost, 0.3, "tiered TotalCost (time 0.5)")
 }
@@ -650,7 +650,7 @@ func TestComputeCost_TieredMode_WithCustomTiers(t *testing.T) {
 		},
 	}
 
-	cb := computeCost(pricing, 200_000, 50_000, nil)
+	cb := computeCost(pricing, 200_000, 50_000, nil, 1)
 
 	// 输入长度 200K 使输入、输出都命中第二档；各自按实际 token 数计费。
 	// Input: 200K × $3/1M = $0.6；Output: 50K × $10/1M = $0.5
@@ -687,7 +687,7 @@ func TestComputeCost_TieredMode_CacheTokensCountTowardTier(t *testing.T) {
 		},
 		CacheIncludedInPrompt: true,
 	}
-	cb := computeCost(newTieredPricing(), 200_000, 1_000, usageOpenAI)
+	cb := computeCost(newTieredPricing(), 200_000, 1_000, usageOpenAI, 1)
 	// input: 50K × $3/1M（第二档）；output: 1K × $10/1M（第二档）
 	assertFloat(t, cb.InputCost, 50_000.0/1e6*3.0, "InputCost (openai: tier by full prompt)")
 	assertFloat(t, cb.OutputCost, 1_000.0/1e6*10.0, "OutputCost (openai: tier by full prompt)")
@@ -702,7 +702,7 @@ func TestComputeCost_TieredMode_CacheTokensCountTowardTier(t *testing.T) {
 		},
 		CacheIncludedInPrompt: false,
 	}
-	cb = computeCost(newTieredPricing(), 50_000, 1_000, usageClaude)
+	cb = computeCost(newTieredPricing(), 50_000, 1_000, usageClaude, 1)
 	assertFloat(t, cb.InputCost, 50_000.0/1e6*3.0, "InputCost (claude: cache added to tier basis)")
 	assertFloat(t, cb.OutputCost, 1_000.0/1e6*10.0, "OutputCost (claude: cache added to tier basis)")
 }
@@ -716,7 +716,7 @@ func TestComputeCost_ZeroTokens(t *testing.T) {
 		Currency:         "USD",
 	}
 
-	cb := computeCost(pricing, 0, 0, nil)
+	cb := computeCost(pricing, 0, 0, nil, 1)
 	assertFloat(t, cb.TotalCost, 0.0, "zero tokens cost")
 }
 
@@ -743,7 +743,7 @@ func TestComputeCost_WithCacheTokens(t *testing.T) {
 		CacheIncludedInPrompt: true,
 	}
 
-	cb := computeCost(pricing, 10_000, 2_000, usage)
+	cb := computeCost(pricing, 10_000, 2_000, usage, 1)
 
 	// base input = 10K - 5K cache_read - 1K cache_creation = 4K
 	// input cost: 4K/1M * 10 = 0.04
@@ -788,7 +788,7 @@ func TestComputeCost_CacheNotIncludedInPrompt(t *testing.T) {
 		CacheIncludedInPrompt: false,
 	}
 
-	cb := computeCost(pricing, 10_000, 2_000, usage)
+	cb := computeCost(pricing, 10_000, 2_000, usage, 1)
 
 	// When cache NOT included in prompt, full prompt tokens are billed
 	// input cost: 10K/1M * 10 = 0.10 (no deduction)
@@ -818,7 +818,7 @@ func TestComputeCost_CacheWithTenantMultiplier(t *testing.T) {
 		CacheIncludedInPrompt: true,
 	}
 
-	cb := computeCost(pricing, 10_000, 0, usage)
+	cb := computeCost(pricing, 10_000, 0, usage, 1)
 
 	// All input is cache, so base input tokens = 0
 	// cache read: 10K/1M * 2.0 = 0.02, * 0.5 multiplier = 0.01
@@ -853,7 +853,7 @@ func TestComputeCost_WithCacheWriteTokens(t *testing.T) {
 		CacheIncludedInPrompt: true,
 	}
 
-	cb := computeCost(pricing, 10_000, 0, usage)
+	cb := computeCost(pricing, 10_000, 0, usage, 1)
 
 	// base input = 10K - 4K cache_read - 2K cache_write = 4K → 4K/1M×10 = 0.04
 	assertFloat(t, cb.InputCost, 0.04, "InputCost (after cache write deduction)")
@@ -892,7 +892,7 @@ func TestComputeCost_CacheWriteUnconfigured(t *testing.T) {
 		CacheIncludedInPrompt: true,
 	}
 
-	cb := computeCost(pricing, 10_000, 0, usage)
+	cb := computeCost(pricing, 10_000, 0, usage, 1)
 
 	// base input = 10K - 2K = 8K → 0.08；写 token 免费
 	assertFloat(t, cb.InputCost, 0.08, "InputCost (cache write deducted)")
@@ -920,7 +920,7 @@ func TestComputeCost_CacheWriteWithMultiplier(t *testing.T) {
 		CacheIncludedInPrompt: true,
 	}
 
-	cb := computeCost(pricing, 5_000, 0, usage)
+	cb := computeCost(pricing, 5_000, 0, usage, 1)
 	// 5K/1M × 2.0 × 0.5 = 0.005
 	assertFloat(t, cb.CacheCreationCost, 0.005, "CacheCreationCost (with 0.5 multiplier)")
 	assertFloat(t, cb.TotalCost, 0.005, "TotalCost")
@@ -1152,5 +1152,50 @@ func TestLevelFallbackApplies(t *testing.T) {
 				t.Errorf("levelFallbackApplies(%v, %v, %v) = %v, want %v", tt.mul, tt.customPriced, tt.ratioEx, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestComputeCost_PerRequestImageCount 按次计费张数放大（图片协议顶层 n）：
+// 费用 = 单价 × 张数 × 租户乘数 × 时段乘数；仅 per_request 生效，token 模式不受影响。
+func TestComputeCost_PerRequestImageCount(t *testing.T) {
+	pricing := &PricingResult{
+		BillingMode:      "per_request",
+		PerRequestPrice:  0.05,
+		TenantMultiplier: 1.0,
+		Currency:         "USD",
+	}
+
+	// n=1（缺省口径）：不放大
+	cb := computeCost(pricing, 0, 0, nil, 1)
+	assertFloat(t, cb.TotalCost, 0.05, "TotalCost count=1")
+	if cb.PerRequestCount != 1 {
+		t.Errorf("PerRequestCount = %d, want 1", cb.PerRequestCount)
+	}
+
+	// n=4：0.05 × 4
+	cb = computeCost(pricing, 0, 0, nil, 4)
+	assertFloat(t, cb.TotalCost, 0.20, "TotalCost count=4")
+	if cb.PerRequestCount != 4 {
+		t.Errorf("PerRequestCount = %d, want 4", cb.PerRequestCount)
+	}
+	// BaseCost 保持单张单价，便于快照解释「单价 × 张数 = 费用」
+	assertFloat(t, cb.BaseCost, 0.05, "BaseCost stays unit price")
+
+	// count<=0 兜底为 1
+	cb = computeCost(pricing, 0, 0, nil, 0)
+	assertFloat(t, cb.TotalCost, 0.05, "TotalCost count<=0 fallback 1")
+
+	// token 计费模型不乘 count（usage 已随 n 放大）
+	token := &PricingResult{
+		BillingMode:      "token",
+		InputPrice:       3.0,
+		OutputPrice:      10.0,
+		TenantMultiplier: 1.0,
+		Currency:         "USD",
+	}
+	cb1 := computeCost(token, 1000, 500, nil, 1)
+	cb4 := computeCost(token, 1000, 500, nil, 4)
+	if cb1.TotalCost != cb4.TotalCost {
+		t.Errorf("token mode must ignore count: %f != %f", cb1.TotalCost, cb4.TotalCost)
 	}
 }

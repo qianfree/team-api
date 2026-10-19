@@ -621,6 +621,7 @@ func settleSyncImageSuccess(ctx context.Context, job *SyncImageJob, sel *common.
 	// 默认实际费用 == 预扣（按次计费图片，如 DALL·E，无 token 用量）。
 	actualCost := job.PreDeductAmount
 	// 上游返回了 token 用量 → 按真实 token 重算；仅 token 计费模型返回 >0，按次模型返回 0 保持预扣。
+	// （count 不参与重算乘法，快照侧由 collectTaskBillingFacts 按计费模式统一剔除，见其注释）
 	if totalTokens > 0 {
 		if tokenCost, rerr := syncImageBilling.RecalculateByTokens(ctx, job.TenantID, job.Model, totalTokens, job.Ratios, job.SubmitTime); rerr == nil && tokenCost.GreaterThan(billing.Zero) {
 			actualCost = tokenCost
@@ -760,7 +761,8 @@ func failSyncImageJob(ctx context.Context, job *SyncImageJob, sel *common.Channe
 // b64_json 无条件 re-host；url 按配置开关（默认透传，开启则下载 re-host）。
 //
 // 采用 all-or-nothing：任一张解码 / re-host 失败即整体返回错误，由调用方走 FAILURE + 全额
-// 退款（与单图行为一致）。计费按次扁平，多图不额外计费，与同步端点口径保持一致。
+// 退款（与单图行为一致）。多图按张数计费（顶层 n 在提交时经 ratios["count"] 放大预扣，
+// 与阿里异步链路及同步端点同口径），响应里的全部图片 re-host 返回。
 func buildImageResult(ctx context.Context, job *SyncImageJob, body []byte) (resultURL string, normalized []byte, err error) {
 	var imgResp dto.ImageResponse
 	if e := json.Unmarshal(body, &imgResp); e != nil {

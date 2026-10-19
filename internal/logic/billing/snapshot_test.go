@@ -619,7 +619,7 @@ func TestSummaryEquationConsistency(t *testing.T) {
 		Currency:         "USD",
 	}
 	usage := &rcommon.Usage{PromptTokens: 1_000_000, CompletionTokens: 500_000}
-	bd := computeCost(pricing, usage.PromptTokens, usage.CompletionTokens, usage)
+	bd := computeCost(pricing, usage.PromptTokens, usage.CompletionTokens, usage, 1)
 
 	snap := GenerateBillingSnapshot(pricing, bd, usage, &SettlementResult{
 		PreDeductAmount: 6.0,
@@ -673,7 +673,7 @@ func TestSummaryNoDiscountPlain(t *testing.T) {
 		Currency:         "USD",
 	}
 	usage := &rcommon.Usage{PromptTokens: 1_000_000, CompletionTokens: 500_000}
-	bd := computeCost(pricing, usage.PromptTokens, usage.CompletionTokens, usage)
+	bd := computeCost(pricing, usage.PromptTokens, usage.CompletionTokens, usage, 1)
 	snap := GenerateBillingSnapshot(pricing, bd, usage, &SettlementResult{ActualCost: bd.TotalCost}, nil)
 	text := GenerateBillingSummary(context.Background(), snap)
 

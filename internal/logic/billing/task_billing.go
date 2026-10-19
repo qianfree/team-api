@@ -378,14 +378,23 @@ type PerSecondFacts struct {
 // 时长已体现在秒数/token 中，resolution 为乘数语义的存量键；spec.* 为事实值非乘数），
 // 按秒命中明细仅在按秒矩阵参与定价（查价 > 0）时记录，避免对非按秒计价的任务误导。
 //
+// count（图片张数）只在 per_request 下属于乘数链（费用 = 单价 × 张数）；其余模式下
+// 张数已体现在计费依据中（token 重算的 output_tokens 已随 n 放大，RecalculateByTokens
+// 同样跳过 count），列为乘数会破坏复算等式。重试网重放结算时不携带「token 重算是否
+// 胜出」的首算决策上下文，此处按计费模式统一判定，保证首算与重放的快照口径一致。
+//
 // 复算等式「数量 × 单价 × 乘数链 = 费用」成立的前提：实际费用确经 wrapSchemeCost
 // （预扣估算对所有模式统一套用，含 per_request；素材重算同）或 RecalculateByTokens
 // 产生——当前全部任务适配器均满足（无一填充上游 ActualCost，minimax 适配器还显式
 // 断言其为 0）。若未来接入上游直接报价（taskInfo.ActualCost > 0），金额语义由上游
 // 决定，乘数链等式不再保证，届时需同步调整快照要素的采集条件
 func collectTaskBillingFacts(pricing *PricingResult, ratios map[string]any, usage *common.TaskMaterialUsage) *TaskBillingFacts {
+	skips := []string{"duration", "resolution"}
+	if pricing == nil || pricing.BillingMode != "per_request" {
+		skips = append(skips, "count")
+	}
 	facts := &TaskBillingFacts{
-		AppliedRatios: appliedRatioMultipliers(ratios, "duration", "resolution"),
+		AppliedRatios: appliedRatioMultipliers(ratios, skips...),
 	}
 	if pm, ok := ratioString(ratios, ratioKeyParamMatched); ok {
 		facts.ParamMatched = pm
@@ -600,8 +609,10 @@ func (b *TaskBillingProviderImpl) RecalculateByTokens(ctx context.Context, tenan
 		Mul(NewFromFloat(effectiveTimeMultiplier(pricing)))
 
 	// 应用附加比率（视频输入折扣等）
-	// 注意：跳过 duration/resolution 与 spec.*——时长/规格已体现在上游返回的 token 数中，不应再乘
-	costD = applyRatioMultipliers(costD, ratios, "duration", "resolution")
+	// 注意：跳过 duration/resolution/count 与 spec.*——时长/规格/张数已体现在上游返回的
+	// token 数中，不应再乘（count 为图片张数：token 计费模型的 output_tokens 已随 n 放大，
+	// 再乘会双重计费；按次模型 OutputPrice=0 提前返回，不受影响）
+	costD = applyRatioMultipliers(costD, ratios, "duration", "resolution", "count")
 
 	costD = RoundMoney(costD)
 

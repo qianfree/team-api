@@ -273,7 +273,7 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 		}
 		defer billing.ReleaseApiKeyConcurrent(ctx, rc.ApiKeyID)
 
-		amt, billErr := billing.PreDeduct(ctx, rc.TenantID, modelName, 0, 0, false, rc.RequestID)
+		amt, billErr := billing.PreDeduct(ctx, rc.TenantID, modelName, 1, 0, 0, false, rc.RequestID)
 		if billErr != nil {
 			// 未配价模型 fail-closed：返回明确的请求错误，而非误导性的"余额不足"
 			if errors.Is(billErr, common.ErrModelPricingNotConfigured) {
@@ -343,7 +343,7 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 				streamUsage = &common.Usage{}
 			}
 			settleResult, _ = billing.SettleStreamInterrupted(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
-				modelName, rc.RequestID, "realtime", streamUsage, preDeductAmount, rc.ProjectID, info.StartTime)
+				modelName, rc.RequestID, "realtime", streamUsage, preDeductAmount, rc.ProjectID, info.ImageCount, info.StartTime)
 			if settleResult != nil && settleResult.ActualCost > 0 && !settleResult.DuplicateSkip {
 				billing.IncrMemberQuotaUsed(ctx, rc.TenantID, rc.UserID, settleResult.ActualCost)
 				billing.IncrApiKeyQuotaUsed(ctx, rc.ApiKeyID, settleResult.ActualCost)

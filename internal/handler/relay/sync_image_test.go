@@ -113,3 +113,37 @@ func TestGenerateSyncImagePublicID(t *testing.T) {
 		t.Fatal("two ids should differ")
 	}
 }
+
+func TestExtractImageCountFromBody(t *testing.T) {
+	cases := []struct {
+		name    string
+		body    string
+		want    int
+		wantErr bool
+	}{
+		{"n=4", `{"model":"gpt-image-1","prompt":"a cat","n":4}`, 4, false},
+		{"integral float n", `{"model":"gpt-image-1","n":3.0}`, 3, false},
+		{"n=1 no amplification", `{"model":"gpt-image-1","n":1}`, 0, false},
+		{"n missing", `{"model":"gpt-image-1","prompt":"a cat"}`, 0, false},
+		{"n null treated as absent", `{"model":"gpt-image-1","n":null}`, 0, false},
+		{"n=0 rejected", `{"model":"gpt-image-1","n":0}`, 0, true},
+		{"negative n rejected", `{"model":"gpt-image-1","n":-2}`, 0, true},
+		{"non-integer n rejected", `{"model":"gpt-image-1","n":2.5}`, 0, true},
+		{"over limit n=11 rejected", `{"model":"gpt-image-1","n":11}`, 0, true},
+		{"string n rejected", `{"model":"gpt-image-1","n":"4"}`, 0, true},
+		{"array n rejected", `{"model":"gpt-image-1","n":[4]}`, 0, true},
+		{"invalid json rejected", `not json`, 0, true},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := extractImageCountFromBody([]byte(tt.body))
+			if (err != nil) != tt.wantErr {
+				t.Errorf("extractImageCountFromBody(%s) error = %v, wantErr %v", tt.body, err, tt.wantErr)
+				return
+			}
+			if err == nil && got != tt.want {
+				t.Errorf("extractImageCountFromBody(%s) = %d, want %d", tt.body, got, tt.want)
+			}
+		})
+	}
+}

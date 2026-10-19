@@ -353,6 +353,14 @@ func HandleAliImageSubmit(r *ghttp.Request) {
 		RelayMode: int(relay_constant.RelayModeImagesGenerations),
 	}
 
+	// 图片协议顶层 n 预校验：必须为 1~10 的整数（按次计费按张数放大，异常值在入口
+	// 统一 400 拒绝，与同步端点同口径）。三条分流（阿里 taskchannel / 同步异步化 / 禁用）
+	// 共用此拦截，阿里分支的 ratios["count"] 由此保证合法。
+	if _, err := extractImageCountFromBody(body); err != nil {
+		writeSyncImageError(rc.Writer, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	channelMeta, err := selectTaskChannel(r, body)
 	if err != nil {
 		writeTaskChannelSelectionError(r, err)

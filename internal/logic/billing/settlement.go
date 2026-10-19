@@ -170,7 +170,7 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 			Currency:     Currency(ctx),
 		}
 	} else {
-		breakdown = computeCost(pricingResult, inputTokens, outputTokens, nil)
+		breakdown = computeCost(pricingResult, inputTokens, outputTokens, nil, 1)
 	}
 	actualCost := breakdown.TotalCost
 
@@ -268,8 +268,10 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 	// 1. 定价与实际费用：按受理时刻一次性取价后用完整 Usage 计算（含 cache token）。
 	// 此前 CalculateCostWithUsage 与第 4 步各取一次定价，两次结果可能不一致（缓存刷新窗口），已合并。
 	var billAt time.Time
+	var perRequestCount int
 	if relayInfo != nil {
 		billAt = relayInfo.StartTime
+		perRequestCount = relayInfo.ImageCount
 	}
 	pricingResult, pricingErr := GetModelPriceAt(ctx, tenantID, modelName, billAt)
 	var breakdown *CostBreakdown
@@ -293,7 +295,7 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 		}
 		breakdown = fb
 	} else {
-		breakdown = computeCost(pricingResult, usage.PromptTokens, usage.CompletionTokens, usage)
+		breakdown = computeCost(pricingResult, usage.PromptTokens, usage.CompletionTokens, usage, perRequestCount)
 	}
 	actualCost := breakdown.TotalCost
 
@@ -419,9 +421,11 @@ func SettleFailed(ctx context.Context, tenantID int64, requestID string, preDedu
 // 此前按 (input, output) 两数走 Settle，会丢弃 usage 中的 cache_read / cache_creation token——
 // Claude 场景 prompt_tokens 不含 cache token，大缓存请求中断时缓存部分完全漏计费。
 // billAt 为请求受理时刻（写入合成 RelayInfo 供时段定价评估；零值按当前时刻兜底）。
+// imageCount 为按次计费张数（图片协议顶层 n），随合成 RelayInfo 进 computeCost——
+// 中断结算与预扣同口径按张数放大，防止「预扣冻 n 张、结算按 1 张计」多退差额。
 func SettleStreamInterrupted(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 	modelName, requestID, relayMode string,
-	usage *rcommon.Usage, preDeductAmount float64, projectID int64, billAt time.Time) (*SettlementResult, error) {
+	usage *rcommon.Usage, preDeductAmount float64, projectID int64, imageCount int, billAt time.Time) (*SettlementResult, error) {
 
 	// usage 为 nil 必须兜换空 Usage：SettleWithUsage 对 nil usage 会 fail-closed 按预扣全额计费，
 	// 而中断且无任何 usage 的正确语义是 0 token 结算（成本 0，全额退差）
@@ -433,6 +437,7 @@ func SettleStreamInterrupted(ctx context.Context, tenantID, userID, apiKeyID, ch
 		OriginModelName: modelName,
 		IsStream:        true,
 		StartTime:       billAt,
+		ImageCount:      imageCount,
 	}
 	return SettleWithUsage(ctx, tenantID, userID, apiKeyID, channelID,
 		modelName, requestID, relayMode, usage, preDeductAmount, relayInfo)

@@ -34,6 +34,7 @@ var consumedMultipartFields = map[string]bool{
 	"max_tokens":            true,
 	"max_completion_tokens": true,
 	"max_output_tokens":     true,
+	"n":                     true, // 图片协议张数（images/edits multipart 形态），计费放大用
 	"metadata":              true,
 	"previous_response_id":  true,
 	"conversation_id":       true,
