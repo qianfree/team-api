@@ -553,27 +553,26 @@ func captureRequestHeaders(r *ghttp.Request) map[string]string {
 
 // recordAudit 收集请求元数据并异步记录审计日志
 func recordAudit(r *ghttp.Request, rc *handler.RelayContext, capture *ResponseCaptureWriter, body []byte, path string, latencyMs int, ttft int) {
-	// multipart / 二进制请求体（如图片编辑、音频转写）含整段二进制，强行 Unmarshal
-	// 无意义，原样写入会把 base64 图片灌进审计表。这里按 Content-Type 判定后只记元数据。
+	// multipart / 二进制请求体（如图片编辑、音频转写）含整段二进制，原文不落审计表，
+	// 只记元数据（替换为占位标注），避免把 base64 图片灌进审计表。
 	requestBody := string(body)
-	isMultipart := isBinaryContentType(r.Header.Get("Content-Type"))
+	if isBinaryContentType(r.Header.Get("Content-Type")) {
+		requestBody = "[binary body omitted]"
+	}
 
-	// 解析 stream 标志
+	// 解析 stream 标志与模型名。JSON 与 multipart 双形态统一走 ParseRequestBodyFields：
+	// 官方 SDK 对 images/edits、audio/transcriptions 等端点发 multipart 表单，
+	// model 是表单里的标量字段，此前 multipart 直接跳过解析导致审计日志模型列为空。
+	// 解析失败静默兜底，审计不因畸形请求体阻塞。
 	var isStream bool
 	var modelName string
-	if !isMultipart {
-		var rawRequest map[string]json.RawMessage
-		if err := json.Unmarshal(body, &rawRequest); err == nil {
-			if streamVal, ok := rawRequest["stream"]; ok {
-				_ = json.Unmarshal(streamVal, &isStream)
-			}
-			if modelVal, ok := rawRequest["model"]; ok {
-				_ = json.Unmarshal(modelVal, &modelName)
-			}
+	if fields, err := handler.ParseRequestBodyFields(body, r.Header); err == nil {
+		if streamVal, ok := fields["stream"]; ok {
+			_ = json.Unmarshal(streamVal, &isStream)
 		}
-	} else {
-		// 二进制体不落原文，仅标注类型，便于排查又不污染审计表
-		requestBody = "[binary body omitted]"
+		if modelVal, ok := fields["model"]; ok {
+			_ = json.Unmarshal(modelVal, &modelName)
+		}
 	}
 
 	// 捕获响应体（流式请求记录 SSE 原始数据，非流式记录完整响应）

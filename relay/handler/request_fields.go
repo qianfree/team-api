@@ -82,12 +82,13 @@ func estimateMultipartInputTokens(body []byte, contentType string) int {
 	return estimated
 }
 
-// parseRequestBodyFields 提取请求体中标量字段的原始 JSON 值，供校验阶段读取
-// 模型名、stream、max_tokens 等。JSON 请求（含未声明 Content-Type）直接反序列化；
+// ParseRequestBodyFields 提取请求体中标量字段的原始 JSON 值，供校验阶段读取
+// 模型名、stream、max_tokens 等，宿主审计层也复用（multipart 请求的 model/stream
+// 元数据提取）。JSON 请求（含未声明 Content-Type）直接反序列化；
 // multipart/form-data 只提取非文件 part 的白名单标量值，包成 JSON 字符串字面量
 // （下游按 string 解析的 model 等字段不受影响；数值/布尔字段在 multipart 形态下
 // 保持字符串形态，读取处本就容错忽略）。
-func parseRequestBodyFields(body []byte, headers http.Header) (map[string]json.RawMessage, error) {
+func ParseRequestBodyFields(body []byte, headers http.Header) (map[string]json.RawMessage, error) {
 	var contentType string
 	if headers != nil {
 		contentType = headers.Get("Content-Type")

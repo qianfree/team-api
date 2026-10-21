@@ -39,7 +39,7 @@ func TestParseRequestBodyFields_JSON(t *testing.T) {
 	body := []byte(`{"model":"gpt-image-1","prompt":"a cat","stream":false,"max_tokens":100}`)
 	headers := http.Header{"Content-Type": []string{"application/json"}}
 
-	fields, err := parseRequestBodyFields(body, headers)
+	fields, err := ParseRequestBodyFields(body, headers)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestParseRequestBodyFields_JSON(t *testing.T) {
 
 // JSON 请求未带 Content-Type 时按 JSON 解析（保持旧行为）
 func TestParseRequestBodyFields_JSONWithoutContentType(t *testing.T) {
-	fields, err := parseRequestBodyFields([]byte(`{"model":"dall-e-2"}`), nil)
+	fields, err := ParseRequestBodyFields([]byte(`{"model":"dall-e-2"}`), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestParseRequestBodyFields_MultipartImagesEdits(t *testing.T) {
 	)
 	headers := http.Header{"Content-Type": []string{contentType}}
 
-	fields, err := parseRequestBodyFields(body, headers)
+	fields, err := ParseRequestBodyFields(body, headers)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestParseRequestBodyFields_MultipartAudioTranscription(t *testing.T) {
 	)
 	headers := http.Header{"Content-Type": []string{contentType}}
 
-	fields, err := parseRequestBodyFields(body, headers)
+	fields, err := ParseRequestBodyFields(body, headers)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestParseRequestBodyFields_MultipartAudioTranscription(t *testing.T) {
 
 func TestParseRequestBodyFields_MultipartMissingBoundary(t *testing.T) {
 	headers := http.Header{"Content-Type": []string{"multipart/form-data"}}
-	_, err := parseRequestBodyFields([]byte("--x\r\n"), headers)
+	_, err := ParseRequestBodyFields([]byte("--x\r\n"), headers)
 	if err == nil || !strings.Contains(err.Error(), "boundary") {
 		t.Fatalf("want boundary error, got %v", err)
 	}
@@ -118,7 +118,7 @@ func TestParseRequestBodyFields_MultipartMissingBoundary(t *testing.T) {
 // 由上层包装为 400 invalid request body
 func TestParseRequestBodyFields_InvalidJSON(t *testing.T) {
 	headers := http.Header{"Content-Type": []string{"application/json"}}
-	if _, err := parseRequestBodyFields([]byte("--boundary\r\nnot-json"), headers); err == nil {
+	if _, err := ParseRequestBodyFields([]byte("--boundary\r\nnot-json"), headers); err == nil {
 		t.Fatal("want parse error for non-JSON body with JSON content type")
 	}
 }
