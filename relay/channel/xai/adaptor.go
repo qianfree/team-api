@@ -37,6 +37,8 @@ func (a *Adaptor) GetRequestURL(info *common.RelayInfo) (string, error) {
 		return baseURL + "/v1/embeddings", nil
 	case constant.RelayModeImagesGenerations:
 		return baseURL + "/v1/images/generations", nil
+	case constant.RelayModeImagesEdits:
+		return baseURL + "/v1/images/edits", nil
 	default:
 		return baseURL + "/v1/chat/completions", nil
 	}
@@ -57,6 +59,11 @@ func (a *Adaptor) SetupRequestHeader(header http.Header, info *common.RelayInfo)
 //
 // 剥离后缀后再做模型名映射（如果配置了映射）。
 func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, requestBody []byte) (io.Reader, error) {
+	// 参考图编辑：上游只收 JSON + image_url，入站的 image 字段/multipart 表单
+	// 须经 image_edits.go 归一化，不走通用模型映射路径。
+	if constant.RelayMode(info.RelayMode) == constant.RelayModeImagesEdits {
+		return convertImagesEditsRequest(requestBody, info)
+	}
 	processed, err := postProcessRequest(requestBody, info)
 	if err != nil {
 		return nil, err

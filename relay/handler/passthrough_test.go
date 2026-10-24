@@ -278,6 +278,37 @@ func TestCanPassThrough_ChatViaResponses_ResponsesInbound(t *testing.T) {
 	}
 }
 
+// TestCanPassThrough_XAIImagesEditsBlocked xAI 渠道的参考图编辑：入站 image 字段/
+// multipart 表单须经 adaptor.ConvertRequest 归一化为 JSON image_url，即使显式开启
+// 直连也不得透传；同渠道 generations（文生图，两侧格式一致）不受影响。
+func TestCanPassThrough_XAIImagesEditsBlocked(t *testing.T) {
+	blocked := &common.RelayInfo{
+		InboundFormat: constant.RelayFormatOpenAI,
+		RelayMode:     int(constant.RelayModeImagesEdits),
+		ChannelMeta: &common.ChannelMeta{
+			ChannelType: int(constant.ProviderXAI),
+			Settings: common.ChannelSettings{
+				PassThroughBodyEnabled: true,
+			},
+		},
+	}
+	if canPassThrough(blocked) {
+		t.Error("xAI images/edits must NOT pass through, even with explicit passthrough")
+	}
+
+	generations := &common.RelayInfo{
+		InboundFormat: constant.RelayFormatOpenAI,
+		RelayMode:     int(constant.RelayModeImagesGenerations),
+		ChannelMeta: &common.ChannelMeta{
+			ChannelType: int(constant.ProviderXAI),
+			Settings:    common.ChannelSettings{},
+		},
+	}
+	if !canPassThrough(generations) {
+		t.Error("xAI images/generations should pass through natively (same format both sides)")
+	}
+}
+
 // TestRequestConverterIDForRoute 验证请求侧 converter ID 解析（矩阵已统一收敛到
 // relaykit_bridge.RequestConverterIDForRoute），含反向、跨原生方向与 Ollama 的 RelayMode 守卫。
 func TestRequestConverterIDForRoute(t *testing.T) {
