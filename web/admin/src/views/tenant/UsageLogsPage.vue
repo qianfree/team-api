@@ -1071,8 +1071,12 @@ const { exporting, exportFile } = useExport({
 										<span class="snapshot-value">{{ formatBilling(snapshot.pricing.effective_input_price, 6) }}/次</span>
 									</div>
 									<div v-if="snapshot.cache_prices && snapshot.cache_prices.cache_creation_price > 0" class="snapshot-row">
-										<span class="snapshot-label">缓存创建单价</span>
+										<span class="snapshot-label">缓存创建单价(5分钟)</span>
 										<span class="snapshot-value">{{ formatBilling(snapshot.cache_prices.cache_creation_price || 0, 6) }}/1M</span>
+									</div>
+									<div v-if="snapshot.cache_prices && snapshot.cache_prices.cache_creation_1h_price > 0" class="snapshot-row">
+										<span class="snapshot-label">缓存创建单价(1小时)</span>
+										<span class="snapshot-value">{{ formatBilling(snapshot.cache_prices.cache_creation_1h_price || 0, 6) }}/1M</span>
 									</div>
 									<div v-if="snapshot.cache_prices && snapshot.cache_prices.cache_read_price > 0" class="snapshot-row">
 										<span class="snapshot-label">缓存读取单价</span>

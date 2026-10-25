@@ -135,6 +135,7 @@ func TestClaudeToOpenAIResponseConverter_CacheUsageAddition(t *testing.T) {
 			OutputTokens:             50,
 			CacheReadInputTokens:     1800,
 			CacheCreationInputTokens: 248,
+			CacheCreation:            &dto.ClaudeCacheUsage{Ephemeral5mInputTokens: 200, Ephemeral1hInputTokens: 48},
 		},
 	}
 
@@ -159,6 +160,8 @@ func TestClaudeToOpenAIResponseConverter_CacheUsageAddition(t *testing.T) {
 	}
 	if d := openaiResp.Usage.PromptTokensDetails; d == nil || d.CachedTokens != 1800 || d.CachedCreationTokens != 248 {
 		t.Errorf("PromptTokensDetails = %+v, want cached=1800 creation=248", openaiResp.Usage.PromptTokensDetails)
+	} else if d.CachedCreation5mTokens != 200 || d.CachedCreation1hTokens != 48 {
+		t.Errorf("PromptTokensDetails TTL 细分 = 5m:%d 1h:%d, want 5m:200 1h:48", d.CachedCreation5mTokens, d.CachedCreation1hTokens)
 	}
 }
 

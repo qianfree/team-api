@@ -77,6 +77,7 @@ function createEmptyItem(mode: string) {
 		per_request_price: null,
 		cache_read_price: 0,
 		cache_creation_price: 0,
+		cache_creation_1h_price: 0,
 		per_second_prices: null as Record<string, number> | null,
 	}
 }
@@ -260,7 +261,7 @@ function addOfficialPerSecondRow(spec = '') {
 // 空行（价格全 0）不视为已配置，提交时后端按全空清除，无害
 function ensureOfficialFirstRow(mode = officialBillingMode.value) {
 	if (officialItems.length === 0) {
-		officialItems.push({ billing_mode: mode, min_tokens: 0, max_tokens: null, input_price: 0, output_price: 0, per_request_price: null, cache_read_price: 0, cache_creation_price: 0, per_second_prices: null })
+		officialItems.push({ billing_mode: mode, min_tokens: 0, max_tokens: null, input_price: 0, output_price: 0, per_request_price: null, cache_read_price: 0, cache_creation_price: 0, cache_creation_1h_price: 0, per_second_prices: null })
 	}
 }
 
@@ -287,9 +288,9 @@ function addOfficialTier() {
 	if (last && last.max_tokens != null) {
 		const nextMin = Number(last.max_tokens) + 1
 		last.max_tokens = nextMin - 1
-		officialItems.push({ billing_mode: 'tiered', min_tokens: nextMin, max_tokens: null, input_price: 0, output_price: 0, per_request_price: null, cache_read_price: 0, cache_creation_price: 0, per_second_prices: null })
+		officialItems.push({ billing_mode: 'tiered', min_tokens: nextMin, max_tokens: null, input_price: 0, output_price: 0, per_request_price: null, cache_read_price: 0, cache_creation_price: 0, cache_creation_1h_price: 0, per_second_prices: null })
 	} else {
-		officialItems.push({ billing_mode: 'tiered', min_tokens: 0, max_tokens: null, input_price: 0, output_price: 0, per_request_price: null, cache_read_price: 0, cache_creation_price: 0, per_second_prices: null })
+		officialItems.push({ billing_mode: 'tiered', min_tokens: 0, max_tokens: null, input_price: 0, output_price: 0, per_request_price: null, cache_read_price: 0, cache_creation_price: 0, cache_creation_1h_price: 0, per_second_prices: null })
 	}
 }
 
@@ -319,6 +320,7 @@ function loadOfficialPricing(data: any) {
 				per_request_price: item.per_request_price ?? null,
 				cache_read_price: item.cache_read_price ?? 0,
 				cache_creation_price: item.cache_creation_price ?? 0,
+				cache_creation_1h_price: item.cache_creation_1h_price ?? 0,
 				per_second_prices: item.per_second_prices ?? null,
 			})
 		}
@@ -361,6 +363,7 @@ function officialItemsPayload(): any[] {
 		per_request_price: officialBillingMode.value === 'per_request' ? (item.per_request_price ?? null) : null,
 		cache_read_price: item.cache_read_price,
 		cache_creation_price: item.cache_creation_price,
+		cache_creation_1h_price: item.cache_creation_1h_price ?? 0,
 		per_second_prices: officialBillingMode.value === 'per_second' ? officialPerSecondPayload() : null,
 	}))
 }
@@ -407,7 +410,7 @@ function applySourceToOfficial(pricing: any) {
 		return
 	}
 	if (officialItems.length === 0) {
-		officialItems.push({ billing_mode: officialBillingMode.value, min_tokens: 0, max_tokens: null, input_price: 0, output_price: 0, per_request_price: null, cache_read_price: 0, cache_creation_price: 0, per_second_prices: null })
+		officialItems.push({ billing_mode: officialBillingMode.value, min_tokens: 0, max_tokens: null, input_price: 0, output_price: 0, per_request_price: null, cache_read_price: 0, cache_creation_price: 0, cache_creation_1h_price: 0, per_second_prices: null })
 	}
 	const first = officialItems[0]
 	if (pricing.billing_mode === 'per_request') {
@@ -755,6 +758,7 @@ async function loadPricing() {
 					per_request_price: item.per_request_price ?? null,
 					cache_read_price: item.cache_read_price ?? 0,
 					cache_creation_price: item.cache_creation_price ?? 0,
+					cache_creation_1h_price: item.cache_creation_1h_price ?? 0,
 					per_second_prices: item.per_second_prices ?? null,
 				})
 			}
@@ -901,6 +905,8 @@ async function savePricing() {
 			per_request_price: editorBillingMode.value === 'per_request' ? (item.per_request_price ?? null) : null,
 			cache_read_price: item.cache_read_price,
 			cache_creation_price: item.cache_creation_price,
+			// 1h TTL 价：0=未配置（后端按 5m 基准 ×1.6 推导）；tiered 仅首档生效（后端取锚点）
+			cache_creation_1h_price: item.cache_creation_1h_price ?? 0,
 			per_second_prices: editorBillingMode.value === 'per_second' ? perSecondPrices : null,
 		}))
 		await request.put(`/admin/models/${props.modelId}/pricing`, {
@@ -1095,14 +1101,15 @@ watch(() => props.visible, (val) => {
 							<h3>按量定价</h3>
 							<span class="section-hint">价格单位为 {{ currencySymbol }} / 1M Token</span>
 						</div>
-						<div class="grid grid-cols-2 md:grid-cols-4 gap-x-4">
+						<!-- 价格两行布局：基础价 2 个一行，缓存价 3 个一行；输入框固定宽（w-44）不占满弹窗 -->
+						<div class="grid w-fit grid-cols-2 gap-x-4">
 							<AFormItem label="输入价格">
 								<AInputNumber
 									v-model="editorItems[0].input_price"
 									:min="0"
 									:precision="6"
 									placeholder="0"
-									class="w-full"
+									class="w-44"
 								>
 									<template #suffix>{{ currencySymbol }} / 1M</template>
 								</AInputNumber>
@@ -1113,29 +1120,42 @@ watch(() => props.visible, (val) => {
 									:min="0"
 									:precision="6"
 									placeholder="0"
-									class="w-full"
+									class="w-44"
 								>
 									<template #suffix>{{ currencySymbol }} / 1M</template>
 								</AInputNumber>
 							</AFormItem>
+						</div>
+						<div class="grid w-fit grid-cols-2 gap-x-4 md:grid-cols-3">
 							<AFormItem label="缓存读取">
 								<AInputNumber
 									v-model="editorItems[0].cache_read_price"
 									:min="0"
 									:precision="6"
 									placeholder="0"
-									class="w-full"
+									class="w-44"
 								>
 									<template #suffix>{{ currencySymbol }} / 1M</template>
 								</AInputNumber>
 							</AFormItem>
-							<AFormItem label="缓存创建">
+							<AFormItem label="缓存创建/写入">
 								<AInputNumber
 									v-model="editorItems[0].cache_creation_price"
 									:min="0"
 									:precision="6"
 									placeholder="0"
-									class="w-full"
+									class="w-44"
+								>
+									<template #suffix>{{ currencySymbol }} / 1M</template>
+								</AInputNumber>
+							</AFormItem>
+							<AFormItem label="缓存创建(1小时)" extra="仅 Claude 1h TTL 缓存生效，其他模型忽略">
+								<AInputNumber
+									v-model="editorItems[0].cache_creation_1h_price"
+									:min="0"
+									:precision="6"
+									placeholder="留空按上方基准价×1.6"
+									class="w-44"
 								>
 									<template #suffix>{{ currencySymbol }} / 1M</template>
 								</AInputNumber>
@@ -1215,21 +1235,33 @@ watch(() => props.visible, (val) => {
 										<template #suffix>{{ currencySymbol }}/1M</template>
 									</AInputNumber>
 								</AFormItem>
-								<AFormItem label="缓存创建价格">
-									<AInputNumber
-										v-model="tier.cache_creation_price"
-										:min="0"
-										:precision="6"
-										class="w-full"
-									>
-										<template #suffix>{{ currencySymbol }}/1M</template>
-									</AInputNumber>
-								</AFormItem>
-							</div>
+							<AFormItem label="缓存创建/写入价格">
+								<AInputNumber
+									v-model="tier.cache_creation_price"
+									:min="0"
+									:precision="6"
+									class="w-full"
+								>
+									<template #suffix>{{ currencySymbol }}/1M</template>
+								</AInputNumber>
+							</AFormItem>
+							<!-- 1h TTL 价仅锚点（首档）生效：计费引擎只读首档缓存价，非首档不提供输入 -->
+							<AFormItem v-if="index === 0" label="缓存创建价格(1小时)" extra="仅 Claude 1h TTL 缓存生效，其他模型忽略">
+								<AInputNumber
+									v-model="tier.cache_creation_1h_price"
+									:min="0"
+									:precision="6"
+									placeholder="留空按基准价×1.6"
+									class="w-full"
+								>
+									<template #suffix>{{ currencySymbol }}/1M</template>
+								</AInputNumber>
+							</AFormItem>
 						</div>
-						<AButton type="dashed" long @click="addTier" class="mt-3">+ 添加梯度</AButton>
 					</div>
-				</template>
+					<AButton type="dashed" long @click="addTier" class="mt-3">+ 添加梯度</AButton>
+				</div>
+			</template>
 
 				<!-- Time Segment Pricing（时段定价：峰谷/工作时段/促销）——编辑器组件与官方弹窗共用 -->
 				<PricingTimeSegmentsEditor

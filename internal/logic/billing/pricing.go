@@ -398,6 +398,7 @@ func GetModelPriceAt(ctx context.Context, tenantID int64, modelName string, bill
 	var perRequestPrice float64
 	cacheReadPrice := 0.0
 	cacheCreationPrice := 0.0
+	var cacheCreation1hPrice *float64
 	var platformTiers []pricingTierRow
 	var perSecondPrices map[string]float64
 	var timeSegments []TimeSegment
@@ -429,6 +430,7 @@ func GetModelPriceAt(ctx context.Context, tenantID int64, modelName string, bill
 				if blob.CacheCreationPrice != nil {
 					cacheCreationPrice = *blob.CacheCreationPrice
 				}
+				cacheCreation1hPrice = blob.CacheCreation1hPrice
 				if blob.Price != nil {
 					perRequestPrice = *blob.Price
 				}
@@ -481,6 +483,9 @@ func GetModelPriceAt(ctx context.Context, tenantID int64, modelName string, bill
 		}
 		if tm.CustomCacheCreationPrice != nil && *tm.CustomCacheCreationPrice > 0 {
 			cacheCreationPrice = *tm.CustomCacheCreationPrice
+			// 租户重定缓存创建基准价 = 重定整套缓存创建价格体系：平台的显式 1h 价
+			// 不再适用（锚点已换，旧 1h 价相对新基准无意义），回落按租户基准 ×1.6 推导
+			cacheCreation1hPrice = nil
 		}
 
 		// 租户自定义阶梯定价
@@ -549,8 +554,8 @@ func GetModelPriceAt(ctx context.Context, tenantID int64, modelName string, bill
 		Currency:             Currency(ctx),
 		CacheReadPrice:       cacheReadPrice,
 		CacheCreationPrice:   cacheCreationPrice,
-		CacheCreation5mPrice: cacheCreationPrice,       // 5m TTL = cache_creation_price 基础价（对应官方 1.25× 输入价）
-		CacheCreation1hPrice: cacheCreationPrice * 1.6, // 1h TTL = 1.6× 基础价（因为 2.0÷1.25=1.6，对应官方 2× 输入价）
+		CacheCreation5mPrice: cacheCreationPrice, // 5m TTL = cache_creation_price 基础价（对应官方 1.25× 输入价）
+		CacheCreation1hPrice: resolveCacheCreation1hPrice(cacheCreationPrice, cacheCreation1hPrice),
 		MaxOutputTokens:      model.MaxOutputTokens,
 		CustomTiers:          customTiers,
 		TimeSegments:         timeSegments,
@@ -611,7 +616,7 @@ func computeCost(pricing *PricingResult, inputTokens, outputTokens int, usage *r
 	// 此前未乘租户乘数（按次模型对租户折扣免疫，疑似遗漏），本次与 token/tiered 口径对齐
 	if pricing.BillingMode == "per_request" {
 		mulD := NewFromFloat(float64(count)).Mul(NewFromFloat(pricing.TenantMultiplier)).Mul(NewFromFloat(effectiveTimeMultiplier(pricing)))
-		return &CostBreakdown{
+		bd := &CostBreakdown{
 			BaseCost:            pricing.PerRequestPrice,
 			TotalCost:           InexactFloat64(RoundMoney(NewFromFloat(pricing.PerRequestPrice).Mul(mulD))),
 			InputTokens:         baseInputTokens,
@@ -625,6 +630,9 @@ func computeCost(pricing *PricingResult, inputTokens, outputTokens int, usage *r
 			CacheCreationTokens: cacheCreation5mTokens + cacheCreation1hTokens,
 			CacheReadTokens:     cacheReadTokens,
 		}
+		// per_request 分支同样透出 TTL 分桶 token（观测快照用；按次计价本身不作用）
+		fillCacheCreationBuckets(bd, cacheCreation5mTokens, cacheCreation1hTokens, 0, 0)
+		return bd
 	}
 
 	// 基础输入费用（已改为 decimal）
@@ -668,7 +676,21 @@ func computeCost(pricing *PricingResult, inputTokens, outputTokens int, usage *r
 		CacheReadTokens:     cacheReadTokens,
 		CacheCreationCost:   InexactFloat64(RoundMoney(cacheCreationCostD.Mul(mul))),
 		CacheReadCost:       InexactFloat64(RoundMoney(cacheReadCostD.Mul(mul))),
+		// TTL 分桶费用（已乘综合倍率，与 CacheCreationCost 口径一致；快照按桶展示）
+		CacheCreation5mTokens: cacheCreation5mTokens,
+		CacheCreation1hTokens: cacheCreation1hTokens,
+		CacheCreation5mCost:   InexactFloat64(RoundMoney(cacheCreation5mCostD.Mul(mul))),
+		CacheCreation1hCost:   InexactFloat64(RoundMoney(cacheCreation1hCostD.Mul(mul))),
 	}
+}
+
+// fillCacheCreationBuckets 填充 CostBreakdown 的缓存创建 TTL 分桶字段（per_request 等
+// 不经 token 计价路径的分支复用；cost5m/cost1h 传入已乘倍率的费用或 0）
+func fillCacheCreationBuckets(bd *CostBreakdown, tokens5m, tokens1h int, cost5m, cost1h float64) {
+	bd.CacheCreation5mTokens = tokens5m
+	bd.CacheCreation1hTokens = tokens1h
+	bd.CacheCreation5mCost = cost5m
+	bd.CacheCreation1hCost = cost1h
 }
 
 // resolveTokenCounts 根据 usage 信息解析最终的 token 计数。
@@ -765,6 +787,12 @@ type CostBreakdown struct {
 	CacheReadTokens     int
 	CacheCreationCost   float64
 	CacheReadCost       float64
+	// 缓存创建 TTL 分桶（计费口径与观测快照共用；OpenAI cache_write 并入 5m 桶，
+	// 无 TTL 细分的 Claude 旧协议报文同样全落 5m 桶，1h 恒 0）
+	CacheCreation5mTokens int
+	CacheCreation1hTokens int
+	CacheCreation5mCost   float64
+	CacheCreation1hCost   float64
 
 	// TaskFacts 任务计费要素明细（仅任务结算路径填充：附加乘数清单、参数倍率命中、
 	// 按秒命中明细），随快照留痕供账单复算；同步对话路径恒为 nil
@@ -852,15 +880,16 @@ func validatePricingConfigured(pricing *PricingResult, modelName string) error {
 // PricingItemInput BuildPricingBlob 的输入项（管理端 SetModelPricing / 模型导入共用，
 // 与 api/admin/v1.PricingItem 字段一一对应但避免 billing 反向依赖 api 层）
 type PricingItemInput struct {
-	BillingMode        string
-	MinTokens          int64
-	MaxTokens          *int64
-	InputPrice         float64
-	OutputPrice        float64
-	PerRequestPrice    *float64
-	CacheReadPrice     float64
-	CacheCreationPrice float64
-	PerSecondPrices    map[string]float64
+	BillingMode          string
+	MinTokens            int64
+	MaxTokens            *int64
+	InputPrice           float64
+	OutputPrice          float64
+	PerRequestPrice      *float64
+	CacheReadPrice       float64
+	CacheCreationPrice   float64
+	CacheCreation1hPrice float64 // 1h TTL 缓存创建价；0=未配置（计费按基准价 ×1.6 推导）
+	PerSecondPrices      map[string]float64
 }
 
 // BuildPricingBlob 从全量替换语义的定价项列表构造 pricing JSONB（按 billing_mode 单模式存储）。
@@ -910,9 +939,10 @@ func BuildPricingBlob(items []PricingItemInput) (*PricingBlob, error) {
 
 	case "tiered":
 		blob := &PricingBlob{
-			Tiers:              make([]pricingTierRow, 0, len(items)),
-			CacheReadPrice:     positivePtr(anchor.CacheReadPrice),
-			CacheCreationPrice: positivePtr(anchor.CacheCreationPrice),
+			Tiers:                make([]pricingTierRow, 0, len(items)),
+			CacheReadPrice:       positivePtr(anchor.CacheReadPrice),
+			CacheCreationPrice:   positivePtr(anchor.CacheCreationPrice),
+			CacheCreation1hPrice: positivePtr(anchor.CacheCreation1hPrice),
 		}
 		for _, item := range items {
 			blob.Tiers = append(blob.Tiers, pricingTierRow{
@@ -928,10 +958,11 @@ func BuildPricingBlob(items []PricingItemInput) (*PricingBlob, error) {
 
 	default: // token
 		return &PricingBlob{
-			InputPrice:         positivePtr(anchor.InputPrice),
-			OutputPrice:        positivePtr(anchor.OutputPrice),
-			CacheReadPrice:     positivePtr(anchor.CacheReadPrice),
-			CacheCreationPrice: positivePtr(anchor.CacheCreationPrice),
+			InputPrice:           positivePtr(anchor.InputPrice),
+			OutputPrice:          positivePtr(anchor.OutputPrice),
+			CacheReadPrice:       positivePtr(anchor.CacheReadPrice),
+			CacheCreationPrice:   positivePtr(anchor.CacheCreationPrice),
+			CacheCreation1hPrice: positivePtr(anchor.CacheCreation1hPrice),
 		}, nil
 	}
 }
@@ -942,6 +973,16 @@ func positivePtr(v float64) *float64 {
 		return &v
 	}
 	return nil
+}
+
+// resolveCacheCreation1hPrice 1h TTL 缓存创建价：显式配置优先（pricing JSONB
+// cache_creation_1h_price，管理员自定义场景），缺省按 5m 基准价 ×1.6 推导
+// （官方 1h=2× 输入价、5m=1.25×，2÷1.25=1.6；非 1.25× 定价的第三方渠道可显式配置覆盖）
+func resolveCacheCreation1hPrice(base float64, explicit *float64) float64 {
+	if explicit != nil && *explicit > 0 {
+		return *explicit
+	}
+	return base * 1.6
 }
 
 // ParsePricingBlob 解析 mdl_pricing.pricing JSONB（管理端/租户端展示路径复用）。
@@ -965,10 +1006,11 @@ func ParsePricingBlob(raw string) *PricingBlob {
 //     custom_pricing 覆盖补丁（见 TenantPricingPatch），覆盖矩阵后折扣不再叠加（一口价）。
 type PricingBlob struct {
 	// token 模式
-	InputPrice         *float64 `json:"input_price,omitempty"`
-	OutputPrice        *float64 `json:"output_price,omitempty"`
-	CacheReadPrice     *float64 `json:"cache_read_price,omitempty"`
-	CacheCreationPrice *float64 `json:"cache_creation_price,omitempty"`
+	InputPrice           *float64 `json:"input_price,omitempty"`
+	OutputPrice          *float64 `json:"output_price,omitempty"`
+	CacheReadPrice       *float64 `json:"cache_read_price,omitempty"`
+	CacheCreationPrice   *float64 `json:"cache_creation_price,omitempty"`
+	CacheCreation1hPrice *float64 `json:"cache_creation_1h_price,omitempty"` // 1h TTL 缓存创建价；缺省按基准价 ×1.6 推导（官方 2×÷1.25×）
 	// tiered 模式：档位数组（min_tokens 升序，最后一档 max_tokens 可为 null）
 	Tiers []pricingTierRow `json:"tiers,omitempty"`
 	// per_request 模式

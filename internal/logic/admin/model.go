@@ -642,6 +642,10 @@ func expandPricingBlob(mode string, blob *billing.PricingBlob) ([]v1.PricingItem
 			} else if i == 0 && blob.CacheCreationPrice != nil {
 				item.CacheCreationPrice = *blob.CacheCreationPrice
 			}
+			// 1h TTL 价仅存 blob 顶层锚点（计费引擎不读档内值），随首档还原
+			if i == 0 && blob.CacheCreation1hPrice != nil {
+				item.CacheCreation1hPrice = *blob.CacheCreation1hPrice
+			}
 			items = append(items, item)
 		}
 	default:
@@ -657,6 +661,9 @@ func expandPricingBlob(mode string, blob *billing.PricingBlob) ([]v1.PricingItem
 		}
 		if blob.CacheCreationPrice != nil {
 			item.CacheCreationPrice = *blob.CacheCreationPrice
+		}
+		if blob.CacheCreation1hPrice != nil {
+			item.CacheCreation1hPrice = *blob.CacheCreation1hPrice
 		}
 		if blob.Price != nil {
 			p := *blob.Price
@@ -776,15 +783,16 @@ func pricingItemsToInput(items []v1.PricingItem) []billing.PricingItemInput {
 	result := make([]billing.PricingItemInput, 0, len(items))
 	for _, item := range items {
 		result = append(result, billing.PricingItemInput{
-			BillingMode:        item.BillingMode,
-			MinTokens:          item.MinTokens,
-			MaxTokens:          item.MaxTokens,
-			InputPrice:         item.InputPrice,
-			OutputPrice:        item.OutputPrice,
-			PerRequestPrice:    item.PerRequestPrice,
-			CacheReadPrice:     item.CacheReadPrice,
-			CacheCreationPrice: item.CacheCreationPrice,
-			PerSecondPrices:    item.PerSecondPrices,
+			BillingMode:          item.BillingMode,
+			MinTokens:            item.MinTokens,
+			MaxTokens:            item.MaxTokens,
+			InputPrice:           item.InputPrice,
+			OutputPrice:          item.OutputPrice,
+			PerRequestPrice:      item.PerRequestPrice,
+			CacheReadPrice:       item.CacheReadPrice,
+			CacheCreationPrice:   item.CacheCreationPrice,
+			CacheCreation1hPrice: item.CacheCreation1hPrice,
+			PerSecondPrices:      item.PerSecondPrices,
 		})
 	}
 	return result

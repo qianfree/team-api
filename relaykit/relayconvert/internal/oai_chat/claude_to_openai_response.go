@@ -75,15 +75,30 @@ func (c *ClaudeToOpenAIResponseConverter) ConvertResponse(
 			CompletionTokens: claudeResp.Usage.OutputTokens,
 			TotalTokens:      promptTotal + claudeResp.Usage.OutputTokens,
 		}
-		if claudeResp.Usage.CacheReadInputTokens > 0 || claudeResp.Usage.CacheCreationInputTokens > 0 {
-			openaiResp.Usage.PromptTokensDetails = &dto.TokenDetails{
-				CachedTokens:         claudeResp.Usage.CacheReadInputTokens,
-				CachedCreationTokens: claudeResp.Usage.CacheCreationInputTokens,
-			}
-		}
+		openaiResp.Usage.PromptTokensDetails = claudeCacheTokenDetails(claudeResp.Usage)
 	}
 
 	return openaiResp, nil
+}
+
+// claudeCacheTokenDetails 将 ClaudeUsage 的缓存字段映射为 OpenAI prompt_tokens_details 细分。
+// OpenAI 协议本身无 5m/1h TTL 概念，这两个字段以扩展键（cached_creation_5m/1h_tokens）透出：
+// 宿主计费（resolveTokenCounts 的 TTL 分桶计价）从转换产物捕获用量，细分缺失时 1h 写入
+// 会被兜底按 5m 基础价计费（少收 37.5%），因此与总量一并透传，客户端不识别扩展键无副作用。
+// 无任何缓存用量时返回 nil（与 OpenAI 官方行为一致：prompt_tokens_details 省略）。
+func claudeCacheTokenDetails(u *dto.ClaudeUsage) *dto.TokenDetails {
+	if u == nil || (u.CacheReadInputTokens <= 0 && u.CacheCreationInputTokens <= 0) {
+		return nil
+	}
+	td := &dto.TokenDetails{
+		CachedTokens:         u.CacheReadInputTokens,
+		CachedCreationTokens: u.CacheCreationInputTokens,
+	}
+	if u.CacheCreation != nil {
+		td.CachedCreation5mTokens = u.CacheCreation.Ephemeral5mInputTokens
+		td.CachedCreation1hTokens = u.CacheCreation.Ephemeral1hInputTokens
+	}
+	return td
 }
 
 // convertClaudeContentToMessage 将 Claude content blocks 转换为 OpenAI message 格式

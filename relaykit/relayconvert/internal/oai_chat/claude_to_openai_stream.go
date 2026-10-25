@@ -219,6 +219,11 @@ func (c *ClaudeToOpenAIStreamConverter) ConvertStreamResponse(
 				if event.Usage.CacheCreationInputTokens > 0 {
 					usage.CacheCreationInputTokens = event.Usage.CacheCreationInputTokens
 				}
+				// TTL 细分（cache_creation.ephemeral_5m/1h）：官方 MessageDeltaUsage 不含该对象，
+				// 仅 message_start 携带；防御性合并兼容上游把它补发在 message_delta 的实现
+				if event.Usage.CacheCreation != nil {
+					usage.CacheCreation = event.Usage.CacheCreation
+				}
 			}
 
 		case "message_stop":
@@ -236,10 +241,7 @@ func (c *ClaudeToOpenAIStreamConverter) ConvertStreamResponse(
 				TotalTokens:      promptTotal + usage.OutputTokens,
 			}
 			if usage.CacheReadInputTokens > 0 || usage.CacheCreationInputTokens > 0 {
-				usageObj.PromptTokensDetails = &dto.TokenDetails{
-					CachedTokens:         usage.CacheReadInputTokens,
-					CachedCreationTokens: usage.CacheCreationInputTokens,
-				}
+				usageObj.PromptTokensDetails = claudeCacheTokenDetails(&usage)
 			}
 			if usageObj.CompletionTokens == 0 {
 				// 未提供时根据文本长度估算

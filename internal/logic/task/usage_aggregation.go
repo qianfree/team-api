@@ -9,12 +9,15 @@ import (
 // aggregateUsageSQL 将 bil_usage_logs 在 [startDate, endDate)（半开区间，endDate 不含）
 // 内的记录按 租户/项目/模型/渠道/状态 维度聚合，幂等 upsert 到 bil_usage_daily。
 // 参数为 YYYY-MM-DD 字符串。ON CONFLICT 使重跑安全（覆盖短暂宕机、历史回填重算）。
+// cache_creation_5m/1h_tokens 为 TTL 分桶（5m 桶含 OpenAI cache_write 与无细分报文），
+// 与合并桶 cache_creation_tokens 同时聚合，两桶之和恒等于合并桶。
 const aggregateUsageSQL = `
 INSERT INTO bil_usage_daily
     (stat_date, tenant_id, project_id, model_name, channel_id, status,
      request_count, input_tokens, output_tokens, total_cost, account_cost,
      sum_latency_ms, sum_first_token_ms,
      cache_creation_tokens, cache_read_tokens, cache_hit_request_count,
+     cache_creation_5m_tokens, cache_creation_1h_tokens,
      updated_at)
 SELECT
     DATE(created_at)                            AS stat_date,
@@ -33,6 +36,8 @@ SELECT
     COALESCE(SUM(cache_creation_tokens), 0)     AS cache_creation_tokens,
     COALESCE(SUM(cache_read_tokens), 0)         AS cache_read_tokens,
     COALESCE(SUM(CASE WHEN cache_read_tokens > 0 THEN 1 ELSE 0 END), 0) AS cache_hit_request_count,
+    COALESCE(SUM(cache_creation_5m_tokens), 0)  AS cache_creation_5m_tokens,
+    COALESCE(SUM(cache_creation_1h_tokens), 0)  AS cache_creation_1h_tokens,
     now()
 FROM bil_usage_logs
 WHERE created_at >= $1 AND created_at < $2
@@ -54,6 +59,8 @@ ON CONFLICT (stat_date, tenant_id, project_id, model_name, channel_id, status) D
     cache_creation_tokens   = EXCLUDED.cache_creation_tokens,
     cache_read_tokens       = EXCLUDED.cache_read_tokens,
     cache_hit_request_count = EXCLUDED.cache_hit_request_count,
+    cache_creation_5m_tokens = EXCLUDED.cache_creation_5m_tokens,
+    cache_creation_1h_tokens = EXCLUDED.cache_creation_1h_tokens,
     updated_at         = now()
 `
 

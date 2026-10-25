@@ -120,15 +120,16 @@ type ModelDeleteReq struct {
 
 // PricingItem 定价项（支持按次/按量/阶梯/按秒/特殊方案）
 type PricingItem struct {
-	BillingMode        string             `json:"billing_mode" v:"required|in:token,per_request,tiered,per_second,special" dc:"计费模式（special 仅由特殊计费方案编辑器提交，不进通用模式下拉）"`
-	MinTokens          int64              `json:"min_tokens" dc:"阶梯起始 token 数"`
-	MaxTokens          *int64             `json:"max_tokens" dc:"阶梯结束 token 数（NULL=无上限）"`
-	InputPrice         float64            `json:"input_price" dc:"每 1M input token 价格"`
-	OutputPrice        float64            `json:"output_price" dc:"每 1M output token 价格"`
-	PerRequestPrice    *float64           `json:"per_request_price" dc:"按次单价（仅 per_request）"`
-	CacheReadPrice     float64            `json:"cache_read_price" dc:"缓存读取每 1M token 价格"`
-	CacheCreationPrice float64            `json:"cache_creation_price" dc:"缓存创建/写入每 1M token 价格（Claude cache_creation 与 OpenAI cache_write 合并计费）"`
-	PerSecondPrices    map[string]float64 `json:"per_second_prices" dc:"按秒单价矩阵（仅 per_second）：分辨率规格→每秒单价（本位币），\"*\"为兜底价，如 {\"480p\":0.25,\"720p\":0.5,\"*\":0.5}"`
+	BillingMode          string             `json:"billing_mode" v:"required|in:token,per_request,tiered,per_second,special" dc:"计费模式（special 仅由特殊计费方案编辑器提交，不进通用模式下拉）"`
+	MinTokens            int64              `json:"min_tokens" dc:"阶梯起始 token 数"`
+	MaxTokens            *int64             `json:"max_tokens" dc:"阶梯结束 token 数（NULL=无上限）"`
+	InputPrice           float64            `json:"input_price" dc:"每 1M input token 价格"`
+	OutputPrice          float64            `json:"output_price" dc:"每 1M output token 价格"`
+	PerRequestPrice      *float64           `json:"per_request_price" dc:"按次单价（仅 per_request）"`
+	CacheReadPrice       float64            `json:"cache_read_price" dc:"缓存读取每 1M token 价格"`
+	CacheCreationPrice   float64            `json:"cache_creation_price" dc:"缓存创建/写入每 1M token 价格（即 5 分钟 TTL 价；Claude cache_creation 与 OpenAI cache_write 合并计费）"`
+	CacheCreation1hPrice float64            `json:"cache_creation_1h_price" dc:"1 小时 TTL 缓存创建价（仅 Claude ephemeral_1h；0=未配置，自动按 5 分钟价 ×1.6 推导）"`
+	PerSecondPrices      map[string]float64 `json:"per_second_prices" dc:"按秒单价矩阵（仅 per_second）：分辨率规格→每秒单价（本位币），\"*\"为兜底价，如 {\"480p\":0.25,\"720p\":0.5,\"*\":0.5}"`
 }
 
 // TimeSegmentItem 时段定价项（mdl_pricing.pricing JSONB 顶层 time_segments 数组元素）。
