@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SettingsSection from './SettingsSection.vue'
 import { useFormValues } from './useSettings'
 const values = useFormValues()
 </script>
@@ -6,8 +7,7 @@ const values = useFormValues()
 <template>
 	<div class="tab-content">
 		<!-- SMTP 连接 -->
-		<div class="section">
-			<div class="section-title">SMTP 连接</div>
+		<SettingsSection title="SMTP 连接" size="half">
 			<div class="section-grid">
 				<AFormItem label="SMTP 服务器">
 					<AInput v-model="values['email_smtp_host']" placeholder="smtp.example.com" />
@@ -28,11 +28,10 @@ const values = useFormValues()
 					<AInputPassword v-model="values['email_smtp_password']" placeholder="留空则不修改" />
 				</AFormItem>
 			</div>
-		</div>
+		</SettingsSection>
 
 		<!-- 发件设置 -->
-		<div class="section">
-			<div class="section-title">发件设置</div>
+		<SettingsSection title="发件设置" size="half">
 			<div class="section-grid">
 				<AFormItem label="发件人地址" help="格式: noreply@example.com">
 					<AInput v-model="values['email_smtp_from']" placeholder="noreply@example.com" />
@@ -40,16 +39,20 @@ const values = useFormValues()
 				<AFormItem label="发件人名称" help="收件人看到的发件人显示名，留空则使用站点名称">
 					<AInput v-model="values['email_smtp_from_name']" placeholder="team-api" />
 				</AFormItem>
-				<div class="switch-row">
-					<span class="switch-label">启用 TLS</span>
-					<span class="switch-desc">587/465 端口建议开启</span>
+			</div>
+			<div class="switch-list">
+				<div class="switch-item">
+					<div class="switch-item__text">
+						<div class="switch-item__label">启用 TLS</div>
+						<div class="switch-item__desc">587/465 端口建议开启</div>
+					</div>
 					<ASwitch
 						:model-value="!!values['email_smtp_tls']"
 						@change="(v: string | number | boolean) => values['email_smtp_tls'] = v"
 					/>
 				</div>
 			</div>
-		</div>
+		</SettingsSection>
 	</div>
 </template>
 

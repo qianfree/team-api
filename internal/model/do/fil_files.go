@@ -23,6 +23,8 @@ type FilFiles struct {
 	StoragePath     any         // 存储桶中的完整路径
 	VirusScanStatus any         // 病毒扫描状态：pending（待扫描）/ scanning（扫描中）/ clean（安全）/ infected（感染）
 	Checksum        any         // 文件 SHA-256 校验和
+	ExtId           any         // 对外文件 ID（file-xxx，OpenAI 兼容 /v1/files 专用，NULL=非用户上传素材）
+	Purpose         any         // OpenAI 上传用途声明（vision/user_data 等），NULL=非 /v1/files 上传
 	CreatedAt       *gtime.Time // 创建时间
 	UpdatedAt       *gtime.Time // 更新时间
 }

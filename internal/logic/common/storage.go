@@ -14,6 +14,11 @@ import (
 	"github.com/google/uuid"
 )
 
+// UploadsPathPrefix /v1/files（OpenAI 兼容素材上传）文件的存储路径前缀。
+// 与导出前缀（exports/）互斥：导出文件按前缀进入保留期清理，用户上传素材
+// 按前缀被清理任务豁免（生命周期由用户 DELETE / 管理员手动删除控制）。
+const UploadsPathPrefix = "uploads/"
+
 // StorageProvider 定义文件存储后端的统一接口。
 type StorageProvider interface {
 	// Upload 上传文件并返回存储路径。
@@ -58,6 +63,11 @@ type FileUpload struct {
 	Size        int64
 	TenantID    int64
 	UserID      int64
+	// ExtID/Purpose 仅 /v1/files（OpenAI 兼容素材上传）链路写入：
+	// ext_id 是对外暴露的不可枚举文件 ID（file-xxx），purpose 是 OpenAI 用途声明。
+	// 留空表示内部流程文件（导出/图片转存等），两列落 NULL。
+	ExtID   string
+	Purpose string
 }
 
 // FileRecord 表示一条文件元数据记录。
@@ -73,6 +83,8 @@ type FileRecord struct {
 	StoragePath     string `json:"storage_path"`
 	VirusScanStatus string `json:"virus_scan_status"`
 	Checksum        string `json:"checksum"`
+	ExtID           string `json:"ext_id"`
+	Purpose         string `json:"purpose"`
 	CreatedAt       string `json:"created_at"`
 }
 
@@ -125,7 +137,7 @@ func (s *FileService) persist(ctx context.Context, upload *FileUpload, key strin
 	fileName := filepath.Base(key)
 
 	// 写入元数据记录
-	result, err := dao.FilFiles.Ctx(ctx).Data(do.FilFiles{
+	data := do.FilFiles{
 		TenantId:        upload.TenantID,
 		UserId:          upload.UserID,
 		Filename:        fileName,
@@ -135,7 +147,15 @@ func (s *FileService) persist(ctx context.Context, upload *FileUpload, key strin
 		StorageProvider: s.providerName,
 		StoragePath:     key,
 		VirusScanStatus: "pending",
-	}).Insert()
+	}
+	// 可选列仅在填写时写入，内部流程文件保持 NULL 语义
+	if upload.ExtID != "" {
+		data.ExtId = upload.ExtID
+	}
+	if upload.Purpose != "" {
+		data.Purpose = upload.Purpose
+	}
+	result, err := dao.FilFiles.Ctx(ctx).Data(data).Insert()
 	if err != nil {
 		// 元数据写入失败，尝试清理已上传的文件
 		_ = s.provider.Delete(ctx, key)
@@ -155,6 +175,8 @@ func (s *FileService) persist(ctx context.Context, upload *FileUpload, key strin
 		StorageProvider: s.providerName,
 		StoragePath:     key,
 		VirusScanStatus: "pending",
+		ExtID:           upload.ExtID,
+		Purpose:         upload.Purpose,
 	}, nil
 }
 

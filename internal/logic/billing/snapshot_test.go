@@ -684,3 +684,73 @@ func TestSummaryNoDiscountPlain(t *testing.T) {
 		t.Errorf("no-discount summary should not contain applied multiplier line, got:\n%s", text)
 	}
 }
+
+// TestBuildTokenCosts_CacheTTLBuckets 快照 token_costs 的 5m/1h 分桶键：
+// 有分桶 token 时随合并桶一并产出（管理端日志页已预置标签）；无 1h token 不出 1h 键
+func TestBuildTokenCosts_CacheTTLBuckets(t *testing.T) {
+	pricing := &PricingResult{
+		InputPrice: 1.0, OutputPrice: 2.0, BillingMode: "token",
+		CacheReadPrice: 0.1, CacheCreationPrice: 3.75,
+		CacheCreation5mPrice: 3.75, CacheCreation1hPrice: 6.0,
+		TenantMultiplier: 1.0, ModelMultiplier: 1.0,
+	}
+	breakdown := &CostBreakdown{
+		CacheReadTokens:       200,
+		CacheCreationTokens:   300,
+		CacheReadCost:         0.00002,
+		CacheCreationCost:     0.001575,
+		CacheCreation5mTokens: 100,
+		CacheCreation1hTokens: 200,
+		CacheCreation5mCost:   0.000375,
+		CacheCreation1hCost:   0.0012,
+	}
+
+	costs := buildTokenCosts(pricing, breakdown)
+	tc5m, ok := costs["cache_creation_5m"]
+	if !ok {
+		t.Fatal("expected cache_creation_5m key")
+	}
+	if tc5m.Tokens != 100 || tc5m.UnitPrice != 3.75 {
+		t.Errorf("5m bucket = %+v, want tokens=100 unitPrice=3.75", tc5m)
+	}
+	tc1h, ok := costs["cache_creation_1h"]
+	if !ok {
+		t.Fatal("expected cache_creation_1h key")
+	}
+	if tc1h.Tokens != 200 || tc1h.UnitPrice != 6.0 {
+		t.Errorf("1h bucket = %+v, want tokens=200 unitPrice=6.0", tc1h)
+	}
+	// 合并桶仍在（旧展示兼容）
+	if tc, ok := costs["cache_creation"]; !ok || tc.Tokens != 300 {
+		t.Errorf("merged bucket = %+v ok=%v, want tokens=300", tc, ok)
+	}
+
+	// 无 1h token：不出 1h 键
+	breakdown2 := &CostBreakdown{
+		CacheCreationTokens:   50,
+		CacheCreationCost:     0.1,
+		CacheCreation5mTokens: 50,
+		CacheCreation5mCost:   0.1,
+	}
+	costs2 := buildTokenCosts(pricing, breakdown2)
+	if _, ok := costs2["cache_creation_1h"]; ok {
+		t.Error("1h key should be omitted when no 1h tokens")
+	}
+}
+
+// TestGenerateBillingSnapshot_CachePrices1h 快照缓存单价携带实际生效的 1h 价
+func TestGenerateBillingSnapshot_CachePrices1h(t *testing.T) {
+	pricing := &PricingResult{
+		InputPrice: 1.0, OutputPrice: 2.0, BillingMode: "token",
+		CacheReadPrice: 0.1, CacheCreationPrice: 3.75,
+		CacheCreation5mPrice: 3.75, CacheCreation1hPrice: 6.0,
+		TenantMultiplier: 1.0, ModelMultiplier: 1.0,
+	}
+	breakdown := &CostBreakdown{CacheCreationTokens: 100, CacheCreation1hTokens: 100}
+
+	snapshot := GenerateBillingSnapshot(pricing, breakdown, nil, nil, nil)
+	if snapshot.CachePrices == nil {
+		t.Fatal("expected CachePrices")
+	}
+	assertFloat(t, snapshot.CachePrices.CacheCreation1hPrice, 6.0, "snapshot 1h price")
+}

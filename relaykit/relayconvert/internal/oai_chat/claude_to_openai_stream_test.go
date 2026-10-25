@@ -470,12 +470,13 @@ func createClaudeSSEStream(events []map[string]any) *bytes.Buffer {
 }
 
 // TestClaudeToOpenAIStreamConverter_CacheUsageAddition 验证流式转换的缓存加法口径：
-// 末 chunk 的 prompt_tokens 须为 input+cache_read+cache_creation 合计（OpenAI 子集语义）。
+// 末 chunk 的 prompt_tokens 须为 input+cache_read+cache_creation 合计（OpenAI 子集语义），
+// 且 cache_creation 的 5m/1h TTL 细分须随 details 透出（宿主计费依赖其分桶计价）。
 func TestClaudeToOpenAIStreamConverter_CacheUsageAddition(t *testing.T) {
 	converter := &ClaudeToOpenAIStreamConverter{}
 	ctx := context.Background()
 
-	claudeStream := `data: {"type":"message_start","message":{"id":"msg_cache","type":"message","role":"assistant","model":"claude-sonnet-4","usage":{"input_tokens":204,"output_tokens":0,"cache_read_input_tokens":1800,"cache_creation_input_tokens":248}}}
+	claudeStream := `data: {"type":"message_start","message":{"id":"msg_cache","type":"message","role":"assistant","model":"claude-sonnet-4","usage":{"input_tokens":204,"output_tokens":0,"cache_read_input_tokens":1800,"cache_creation_input_tokens":248,"cache_creation":{"ephemeral_5m_input_tokens":200,"ephemeral_1h_input_tokens":48}}}}
 
 data: {"type":"content_block_start","index":0,"content_block":{"type":"text"}}
 
@@ -518,5 +519,8 @@ data: {"type":"message_stop"}
 	}
 	if d := lastChunk.Usage.PromptTokensDetails; d == nil || d.CachedTokens != 1800 || d.CachedCreationTokens != 248 {
 		t.Errorf("PromptTokensDetails = %+v, want cached=1800 creation=248", lastChunk.Usage.PromptTokensDetails)
+	} else if d.CachedCreation5mTokens != 200 || d.CachedCreation1hTokens != 48 {
+		t.Errorf("PromptTokensDetails TTL 细分 = 5m:%d 1h:%d, want 5m:200 1h:48（缺失时宿主计费按 5m 基础价兜底，1h 写入少收 37.5%%）",
+			d.CachedCreation5mTokens, d.CachedCreation1hTokens)
 	}
 }

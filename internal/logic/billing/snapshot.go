@@ -76,8 +76,12 @@ type BillingSnapshotMultipliers struct {
 
 // BillingSnapshotCachePrices 缓存价格信息
 type BillingSnapshotCachePrices struct {
-	CacheReadPrice     float64 `json:"cache_read_price"`
+	CacheReadPrice float64 `json:"cache_read_price"`
+	// CacheCreationPrice 5m TTL 基准价（cache_creation_price，Claude 5m 与 OpenAI cache_write 共用）
 	CacheCreationPrice float64 `json:"cache_creation_price"`
+	// CacheCreation1hPrice 实际生效的 1h TTL 价（显式配置或基准 ×1.6 推导），
+	// 快照携带推导值使「1h tokens/1M × 单价 = 费用」可复算；旧快照无此键，读取方按 0 处理
+	CacheCreation1hPrice float64 `json:"cache_creation_1h_price,omitempty"`
 }
 
 // TokenCostDetail 单类 token 的费用明细
@@ -162,8 +166,9 @@ func GenerateBillingSnapshot(
 	// Cache 比率（仅当有 cache token 时填充）
 	if breakdown.CacheReadTokens > 0 || breakdown.CacheCreationTokens > 0 {
 		snapshot.CachePrices = &BillingSnapshotCachePrices{
-			CacheReadPrice:     pricing.CacheReadPrice,
-			CacheCreationPrice: pricing.CacheCreationPrice,
+			CacheReadPrice:       pricing.CacheReadPrice,
+			CacheCreationPrice:   pricing.CacheCreationPrice,
+			CacheCreation1hPrice: pricing.CacheCreation1hPrice,
 		}
 	}
 
@@ -235,6 +240,14 @@ func buildTokenCosts(pricing *PricingResult, breakdown *CostBreakdown) map[strin
 	if breakdown.CacheCreationTokens > 0 {
 		// direct cache creation price（含 OpenAI cache_write 并入的写入 token，合并桶）
 		costs["cache_creation"] = detail(breakdown.CacheCreationTokens, pricing.CacheCreationPrice, breakdown.CacheCreationCost)
+		// TTL 分桶明细（观测细分；OpenAI cache_write 与无细分报文全落 5m 桶，1h 桶仅
+		// Claude ephemeral_1h 触发。前端日志页已预置这两个键的展示标签）
+		if breakdown.CacheCreation5mTokens > 0 {
+			costs["cache_creation_5m"] = detail(breakdown.CacheCreation5mTokens, pricing.CacheCreation5mPrice, breakdown.CacheCreation5mCost)
+		}
+		if breakdown.CacheCreation1hTokens > 0 {
+			costs["cache_creation_1h"] = detail(breakdown.CacheCreation1hTokens, pricing.CacheCreation1hPrice, breakdown.CacheCreation1hCost)
+		}
 	}
 
 	return costs
@@ -303,7 +316,9 @@ func GenerateBillingSummary(ctx context.Context, snapshot *BillingSnapshot) stri
 		// 各类 token 费用明细：tokens × 原价/1M × 倍率 = 实际费用。
 		// Cost 分项已含折扣（computeCost 分项 × mul），倍率必须显式进入算式，
 		// 否则「原价单价 = 折后费用」表面不成立；无折扣时省略倍率段。
-		// 任务路径的行倍率含 ratios 附加乘数（buildTokenCosts 已并入乘数链）
+		// 任务路径的行倍率含 ratios 附加乘数（buildTokenCosts 已并入乘数链）。
+		// 缓存创建：新快照有 5m/1h 分桶键时按桶展示（合并桶行省略，防止合计重复
+		// 累加）；旧快照只有合并桶，照旧行展示
 		tokenRows := []struct {
 			label string
 			key   string
@@ -311,7 +326,14 @@ func GenerateBillingSummary(ctx context.Context, snapshot *BillingSnapshot) stri
 			{"输入", "input"},
 			{"输出", "output"},
 			{"缓存读取", "cache_read"},
-			{"缓存创建", "cache_creation"},
+		}
+		if _, has5m := snapshot.TokenCosts["cache_creation_5m"]; has5m {
+			tokenRows = append(tokenRows,
+				struct{ label, key string }{"缓存创建(5分钟)", "cache_creation_5m"},
+				struct{ label, key string }{"缓存创建(1小时)", "cache_creation_1h"},
+			)
+		} else {
+			tokenRows = append(tokenRows, struct{ label, key string }{"缓存创建", "cache_creation"})
 		}
 		var costParts []string
 		for _, row := range tokenRows {

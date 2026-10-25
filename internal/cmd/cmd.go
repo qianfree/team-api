@@ -551,6 +551,14 @@ func registerRelayRoutes(server *ghttp.Server) {
 		group.POST("/rerank", relay.HandleRerank)
 		group.POST("/moderations", relay.HandleModerations)
 		group.POST("/images/edits", relay.HandleImagesEdits)
+		// Files 素材上传（OpenAI 兼容）：上传/列表/详情/内容/删除。
+		// 仅对象存储模式可用（local 上传报错）；单文件上限由 clientMaxBodySize 约束。
+		// 中转时 image_url.url 里的 file-xxx 引用在 relay_handler 出口处替换为签名 URL
+		group.POST("/files", relay.HandleFilesUpload)
+		group.GET("/files", relay.HandleFilesList)
+		group.GET("/files/{file_id}", relay.HandleFileRetrieve)
+		group.GET("/files/{file_id}/content", relay.HandleFileContent)
+		group.DELETE("/files/{file_id}", relay.HandleFileDelete)
 		group.GET("/realtime", relay.HandleRealtime)
 		// OpenAI Videos 协议端点（官方 SDK 兼容，对接第三方视频模型）
 		group.POST("/videos", relay.HandleVideoCreate)

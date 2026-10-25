@@ -18,6 +18,14 @@ func canPassThrough(info *common.RelayInfo) bool {
 		return false
 	}
 
+	// xAI 参考图编辑：入站的 image 字段/multipart 表单与上游要求的 JSON image_url
+	// 不一致，必须经 adaptor.ConvertRequest 归一化（multipart 直达上游必 400），
+	// 即使显式开启直连也不得透传。
+	if constant.RelayMode(info.RelayMode) == constant.RelayModeImagesEdits &&
+		constant.ProviderType(info.ChannelMeta.ChannelType) == constant.ProviderXAI {
+		return false
+	}
+
 	// responses-only 桥接渠道的 chat 入站：chat 体与上游 /v1/responses 端点不兼容，
 	// 必须经 relaykit chat→Responses 桥接转换，即使显式开启直连也不得原样透传。
 	if info.ChannelMeta.ChatViaResponses &&

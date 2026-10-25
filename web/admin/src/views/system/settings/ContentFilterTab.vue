@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SettingsSection from './SettingsSection.vue'
 import { useFormValues } from './useSettings'
 const values = useFormValues()
 </script>
@@ -6,8 +7,7 @@ const values = useFormValues()
 <template>
 	<div class="tab-content">
 		<!-- 过滤策略 -->
-		<div class="section">
-			<div class="section-title">过滤策略</div>
+		<SettingsSection title="过滤策略" size="half">
 			<div class="section-grid">
 				<AFormItem label="过滤策略" help="off=关闭, log=仅记录, replace=替换, block=拦截">
 					<ASelect v-model="values['content_filter_mode']">
@@ -18,19 +18,18 @@ const values = useFormValues()
 					</ASelect>
 				</AFormItem>
 			</div>
-		</div>
+		</SettingsSection>
 
 		<!-- 过滤配置 -->
-		<div class="section">
-			<div class="section-title">过滤配置</div>
-			<AFormItem label="敏感词列表" help="JSON 数组，支持通配符 *">
-				<ATextarea
-					v-model="values['content_filter_words']"
-					:auto-size="{ minRows: 3, maxRows: 8 }"
-					placeholder='["敏感词1", "敏感词2"]'
-				/>
-			</AFormItem>
-			<div class="section-grid" style="margin-top: 12px">
+		<SettingsSection title="过滤配置" size="half">
+			<div class="section-grid">
+				<AFormItem label="敏感词列表" help="JSON 数组，支持通配符 *" class="field-full">
+					<ATextarea
+						v-model="values['content_filter_words']"
+						:auto-size="{ minRows: 3, maxRows: 8 }"
+						placeholder='["敏感词1", "敏感词2"]'
+					/>
+				</AFormItem>
 				<AFormItem label="替换文本" help="replace 策略下的替换内容">
 					<AInput v-model="values['content_filter_replacement']" placeholder="***" />
 				</AFormItem>
@@ -38,7 +37,7 @@ const values = useFormValues()
 					<AInput v-model="values['content_filter_response']" placeholder="内容包含敏感词，请修改后重试" />
 				</AFormItem>
 			</div>
-		</div>
+		</SettingsSection>
 	</div>
 </template>
 

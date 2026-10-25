@@ -43,14 +43,14 @@ export function useSettings(category: () => string) {
 		}
 	}
 
-	async function save() {
+	async function save(): Promise<boolean> {
 		// 先跑分类校验器，非法值直接拦截，避免把脏数据发到后端
 		const validator = categoryValidators[category()]
 		if (validator) {
 			const errMsg = validator(formValues)
 			if (errMsg) {
 				Message.error(errMsg)
-				return
+				return false
 			}
 		}
 		saving.value = true
@@ -60,8 +60,10 @@ export function useSettings(category: () => string) {
 			// 汇率等公共配置变更后强制刷新，已打开页面立即按新值重渲染货币显示
 			refreshCurrencySettings()
 			await refresh()
+			return true
 		} catch {
 			// error toast already shown by interceptor
+			return false
 		} finally {
 			saving.value = false
 		}

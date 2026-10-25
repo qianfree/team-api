@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import SettingsSection from './SettingsSection.vue'
 import { useFormValues } from './useSettings'
 const values = useFormValues()
 
@@ -23,8 +24,7 @@ function updateCnyToUsd(usdToCny: number | undefined) {
 <template>
 	<div class="tab-content">
 		<!-- 基础设置 -->
-		<div class="section">
-			<div class="section-title">基础设置</div>
+		<SettingsSection title="基础设置" size="half">
 			<div class="section-grid">
 				<AFormItem label="本位币" help="系统记账与全站显示货币，初始化时选定，不可更改">
 					<AInput :model-value="values['billing_currency'] || 'USD'" disabled style="width: 100%" />
@@ -40,13 +40,12 @@ function updateCnyToUsd(usdToCny: number | undefined) {
 					<AInput v-model="values['payment_callback_base_url']" placeholder="https://api.example.com" />
 				</AFormItem>
 			</div>
-		</div>
+		</SettingsSection>
 
 		<!-- 货币兑换 -->
-		<div class="section">
-			<div class="section-title">货币兑换</div>
+		<SettingsSection title="货币兑换" size="half">
 			<div class="section-grid">
-				<AFormItem label="USD → CNY" help="1 美元兑换多少人民币（常用汇率约 7.0~7.3）" class="field-full">
+				<AFormItem label="USD → CNY" help="1 美元兑换多少人民币（常用汇率约 7.0~7.3）">
 					<AInputNumber
 						:model-value="(1 / (values['payment_exchange_rate_cny_to_usd'] as number || 0.14)) as number"
 						@change="updateCnyToUsd"
@@ -54,18 +53,17 @@ function updateCnyToUsd(usdToCny: number | undefined) {
 						style="width: 100%"
 					/>
 				</AFormItem>
-				<AFormItem label="CNY → USD（自动计算）" help="取上方汇率的倒数，确保往返闭合" class="field-full">
+				<AFormItem label="CNY → USD" help="自动取上方汇率的倒数，确保往返闭合">
 					<AInput :model-value="computedCnyToUsd.toFixed(6)" disabled style="width: 100%" />
 				</AFormItem>
-				<div class="field-full" style="font-size: 12px; color: var(--color-text-3); margin-top: -8px">
+				<div class="field-full exchange-hint">
 					💡 系统以 USD→CNY 为输入（更符合习惯），内部自动取倒数存储，确保往返换算闭合
 				</div>
 			</div>
-		</div>
+		</SettingsSection>
 
 		<!-- 充值选项 -->
-		<div class="section">
-			<div class="section-title">充值选项</div>
+		<SettingsSection title="充值选项">
 			<div class="section-grid">
 				<AFormItem label="充值金额选项" help="JSON 数组，预设充值面额" class="field-full">
 					<ATextarea
@@ -82,11 +80,10 @@ function updateCnyToUsd(usdToCny: number | undefined) {
 					/>
 				</AFormItem>
 			</div>
-		</div>
+		</SettingsSection>
 
 		<!-- 支付说明 -->
-		<div class="section">
-			<div class="section-title">支付说明</div>
+		<SettingsSection title="支付说明">
 			<div class="section-grid">
 				<AFormItem
 					label="钱包页说明"
@@ -100,10 +97,15 @@ function updateCnyToUsd(usdToCny: number | undefined) {
 					/>
 				</AFormItem>
 			</div>
-		</div>
+		</SettingsSection>
 	</div>
 </template>
 
 <style scoped>
 @import './common.css';
+.exchange-hint {
+	font-size: 12px;
+	color: var(--ta-text-tertiary);
+	line-height: 1.6;
+}
 </style>

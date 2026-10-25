@@ -2,6 +2,7 @@ package billing
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -186,5 +187,47 @@ func TestBuildPricingBlob_TieredPerTierCachePrices(t *testing.T) {
 	legacy := ParsePricingBlob(`{"tiers":[{"min_tokens":0,"input_price":15,"output_price":75}],"cache_read_price":1.5}`)
 	if legacy == nil || legacy.Tiers[0].CacheReadPrice != nil || legacy.CacheReadPrice == nil || *legacy.CacheReadPrice != 1.5 {
 		t.Fatalf("legacy blob parse broken: %+v", legacy)
+	}
+}
+
+// TestBuildPricingBlob_CacheCreation1h 1h TTL 价键：显式正值写入（token 锚点与 tiered
+// 顶层），0 省略（omitempty，计费侧回落基准 ×1.6 推导，与存量数据语义一致）
+func TestBuildPricingBlob_CacheCreation1h(t *testing.T) {
+	blob, err := BuildPricingBlob([]PricingItemInput{{
+		BillingMode:          "token",
+		InputPrice:           3,
+		OutputPrice:          15,
+		CacheCreationPrice:   3.75,
+		CacheCreation1hPrice: 6.0,
+	}})
+	if err != nil {
+		t.Fatalf("build token: %v", err)
+	}
+	if blob.CacheCreation1hPrice == nil || *blob.CacheCreation1hPrice != 6.0 {
+		t.Fatalf("token blob 1h price = %v, want 6.0", blob.CacheCreation1hPrice)
+	}
+
+	max := int64(100000)
+	blob, err = BuildPricingBlob([]PricingItemInput{
+		{BillingMode: "tiered", MinTokens: 0, MaxTokens: &max, CacheCreationPrice: 3.75, CacheCreation1hPrice: 6.0},
+		{BillingMode: "tiered", MinTokens: 100000, CacheCreation1hPrice: 9.9}, // 非锚点行不生效
+	})
+	if err != nil {
+		t.Fatalf("build tiered: %v", err)
+	}
+	if blob.CacheCreation1hPrice == nil || *blob.CacheCreation1hPrice != 6.0 {
+		t.Fatalf("tiered blob 1h price = %v, want anchor 6.0 (not 9.9)", blob.CacheCreation1hPrice)
+	}
+
+	// 未配置（0）时省略键：JSON 无 cache_creation_1h_price，读取侧按推导处理
+	blob, err = BuildPricingBlob([]PricingItemInput{{
+		BillingMode: "token", InputPrice: 3, OutputPrice: 15, CacheCreationPrice: 3.75,
+	}})
+	if err != nil {
+		t.Fatalf("build unconfigured: %v", err)
+	}
+	raw, _ := json.Marshal(blob)
+	if strings.Contains(string(raw), "cache_creation_1h_price") {
+		t.Fatalf("unconfigured 1h price should be omitted, got %s", raw)
 	}
 }

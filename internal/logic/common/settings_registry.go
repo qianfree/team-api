@@ -243,6 +243,17 @@ var Registry = []SettingDef{
 		Label: "路径前缀", Description: "存储路径前缀，用于隔离不同环境"},
 	{Key: "storage_local_dir", Type: SettingTypeString, Default: "./data/files", Category: "storage",
 		Label: "本地存储目录", Description: "本地磁盘存储根目录，仅 provider=local（或对象存储未配置降级）时生效。相对路径基于可执行文件目录。仅适合单实例部署；多实例需改用对象存储或挂载共享卷（PVC/NFS），否则不同副本间文件不互通"},
+	{Key: "relay_files_url_ttl_minutes", Type: SettingTypeInt, Default: "60", Category: "storage",
+		Label: "Files签名URL有效期(分钟)", Validation: "min:5,max:10080",
+		Description: "/v1/files 上传响应及查询返回的预签名 URL 有效期（分钟）。URL 会被客户端持有并可能转交上游拉取，过期后需重新查询获取新 URL；file_id 引用由网关在转发时实时签发不受影响"},
+	{Key: "relay_files_max_tenant_mb", Type: SettingTypeInt, Default: "1024", Category: "storage",
+		Label: "Files每租户上传上限(MB)", Validation: "min:0,max:1048576",
+		Description: "/v1/files 每租户累计上传总量上限（MB），超出后拒绝新上传；0 表示不限制。文件删除后配额即时释放"},
+	{Key: "relay_files_allowed_types", Type: SettingTypeString, Default: "image/*", Category: "storage",
+		Label: "Files允许的文件类型", Description: "/v1/files 上传类型白名单，逗号分隔，支持 MIME 前缀（image/*、application/pdf）与扩展名（jpg、.png）两种写法，扩展名或声明的 MIME 任一命中即放行；留空 = 不限制类型"},
+	{Key: "relay_files_max_size_mb", Type: SettingTypeInt, Default: "32", Category: "storage",
+		Label: "Files单文件大小上限(MB)", Validation: "min:1,max:2048",
+		Description: "/v1/files 单个文件上传上限（MB）；实际生效上限为该值与全局请求体上限 clientMaxBodySize 的较小者"},
 
 	// Data Governance
 	{Key: "data_retention_api_logs_days", Type: SettingTypeInt, Default: "90", Category: "data_governance",

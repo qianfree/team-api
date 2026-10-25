@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
+import SettingsSection from './SettingsSection.vue'
 import { useFormValues } from './useSettings'
 const values = useFormValues()
 
@@ -33,8 +34,7 @@ watch(ipBlacklistTags, (tags) => {
 <template>
 	<div class="tab-content">
 		<!-- 登录安全 -->
-		<div class="section">
-			<div class="section-title">登录安全</div>
+		<SettingsSection title="登录安全" size="half">
 			<div class="section-grid">
 				<AFormItem label="登录最大尝试次数">
 					<AInputNumber
@@ -51,12 +51,10 @@ watch(ipBlacklistTags, (tags) => {
 					/>
 				</AFormItem>
 			</div>
-		</div>
+		</SettingsSection>
 
-		<!-- 验证码有效期 -->
-		<div class="section">
-			<div class="section-title">滑块验证码</div>
-			<div class="section-desc">登录、注册、重置密码时必须完成滑块验证</div>
+		<!-- 滑块验证码 -->
+		<SettingsSection title="滑块验证码" desc="登录、注册、重置密码时必须完成滑块验证" size="half">
 			<div class="section-grid">
 				<AFormItem label="验证码有效期(秒)">
 					<AInputNumber
@@ -66,19 +64,20 @@ watch(ipBlacklistTags, (tags) => {
 					/>
 				</AFormItem>
 			</div>
-		</div>
+		</SettingsSection>
 
 		<!-- Turnstile 人机验证 -->
-		<div class="section">
-			<div class="section-title">Turnstile 人机验证</div>
-			<div class="section-desc">集成 Cloudflare Turnstile，防止自动化攻击和暴力破解</div>
-			<div class="section-grid">
-				<AFormItem label="启用 Turnstile">
+		<SettingsSection title="Turnstile 人机验证" desc="集成 Cloudflare Turnstile，防止自动化攻击和暴力破解">
+			<div class="switch-list">
+				<div class="switch-item">
+					<div class="switch-item__text">
+						<div class="switch-item__label">启用 Turnstile</div>
+					</div>
 					<ASwitch
 						:model-value="!!values['turnstile_enabled']"
 						@change="(v: string | number | boolean) => values['turnstile_enabled'] = v"
 					/>
-				</AFormItem>
+				</div>
 			</div>
 			<div class="section-grid">
 				<AFormItem label="Site Key">
@@ -96,13 +95,15 @@ watch(ipBlacklistTags, (tags) => {
 					/>
 				</AFormItem>
 			</div>
-		</div>
+		</SettingsSection>
+
 		<!-- 注册禁用词 -->
-		<div class="section">
-			<div class="section-title">注册禁用词</div>
-			<div class="section-desc">组织名称、组织代码、用户名中包含这些词时禁止注册（不区分大小写），多个禁用词用英文逗号分隔</div>
-			<div class="section-grid" style="grid-template-columns: 1fr">
-				<AFormItem label="禁用词列表">
+		<SettingsSection
+			title="注册禁用词"
+			desc="组织名称、组织代码、用户名中包含这些词时禁止注册（不区分大小写），多个禁用词用英文逗号分隔"
+		>
+			<div class="section-grid">
+				<AFormItem label="禁用词列表" class="field-full">
 					<ATextarea
 						:model-value="values['register_forbidden_words'] ?? ''"
 						@update:model-value="(v: string) => values['register_forbidden_words'] = v"
@@ -111,28 +112,28 @@ watch(ipBlacklistTags, (tags) => {
 					/>
 				</AFormItem>
 			</div>
-		</div>
+		</SettingsSection>
 
 		<!-- IP 黑名单 -->
-		<div class="section">
-			<div class="section-title">IP 黑名单</div>
-			<div class="section-desc">
-				开启后，命中黑名单的 IP 访问任何端点（管理后台 / 租户控制台 / AI 代理）都会被直接拒绝，保存后即时生效。
-				拦截次数统计在仪表盘展示（存于缓存，不落库）
-			</div>
-			<div class="section-grid">
-				<AFormItem label="启用 IP 黑名单">
+		<SettingsSection
+			title="IP 黑名单"
+			desc="开启后，命中黑名单的 IP 访问任何端点（管理后台 / 租户控制台 / AI 代理）都会被直接拒绝，保存后即时生效。拦截次数统计在仪表盘展示（存于缓存，不落库）"
+		>
+			<div class="switch-list">
+				<div class="switch-item">
+					<div class="switch-item__text">
+						<div class="switch-item__label">启用 IP 黑名单</div>
+					</div>
 					<ASwitch
 						:model-value="!!values['ip_blacklist_enabled']"
 						@change="(v: string | number | boolean) => values['ip_blacklist_enabled'] = v"
 					/>
-				</AFormItem>
+				</div>
 			</div>
-			<div class="section-grid" style="grid-template-columns: 1fr">
-				<AFormItem label="黑名单列表">
+			<div class="section-grid">
+				<AFormItem label="黑名单列表" class="field-full">
 					<AInputTag
 						v-model="ipBlacklistTags"
-						class="w-full"
 						placeholder="输入 IP 或网段后回车添加，如 1.2.3.4、10.0.0.0/8"
 						unique-value
 						allow-clear
@@ -142,19 +143,10 @@ watch(ipBlacklistTags, (tags) => {
 					</template>
 				</AFormItem>
 			</div>
-		</div>
+		</SettingsSection>
 	</div>
 </template>
 
 <style scoped>
-@import "./common.css";
-.section-desc {
-	font-size: 12px;
-	color: var(--color-text-3);
-	margin-bottom: 12px;
-}
-.field-help {
-	color: var(--color-text-3);
-	font-size: 12px;
-}
+@import './common.css';
 </style>

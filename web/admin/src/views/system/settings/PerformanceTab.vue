@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SettingsSection from './SettingsSection.vue'
 import { useFormValues } from './useSettings'
 const values = useFormValues()
 
@@ -13,8 +14,7 @@ function set(key: string, v: number | undefined): void {
 <template>
 	<div class="perf-grid">
 		<!-- QPS 限制 -->
-		<div class="group">
-			<div class="group-title">QPS 限制</div>
+		<SettingsSection title="QPS 限制">
 			<div class="compact-row">
 				<label>系统级</label>
 				<AInputNumber :model-value="num('global_qps_limit')" @change="(v: number | undefined) => set('global_qps_limit', v)" :min="0" />
@@ -31,11 +31,10 @@ function set(key: string, v: number | undefined): void {
 				<label>Key 级</label>
 				<AInputNumber :model-value="num('key_qps_limit')" @change="(v: number | undefined) => set('key_qps_limit', v)" :min="0" />
 			</div>
-		</div>
+		</SettingsSection>
 
 		<!-- 并发限制 -->
-		<div class="group">
-			<div class="group-title">并发限制</div>
+		<SettingsSection title="并发限制">
 			<div class="compact-row">
 				<label>系统级上限</label>
 				<AInputNumber :model-value="num('global_concurrency_limit')" @change="(v: number | undefined) => set('global_concurrency_limit', v)" :min="0" />
@@ -44,11 +43,10 @@ function set(key: string, v: number | undefined): void {
 				<label>租户级上限</label>
 				<AInputNumber :model-value="num('tenant_concurrency_limit')" @change="(v: number | undefined) => set('tenant_concurrency_limit', v)" :min="0" />
 			</div>
-		</div>
+		</SettingsSection>
 
 		<!-- 超时设置 -->
-		<div class="group">
-			<div class="group-title">超时设置</div>
+		<SettingsSection title="超时设置">
 			<div class="compact-row">
 				<label>请求超时(秒)</label>
 				<AInputNumber :model-value="num('request_timeout_seconds')" @change="(v: number | undefined) => set('request_timeout_seconds', v)" :min="5" :max="600" />
@@ -57,11 +55,10 @@ function set(key: string, v: number | undefined): void {
 				<label>流式空闲超时(秒)</label>
 				<AInputNumber :model-value="num('streaming_timeout_seconds')" @change="(v: number | undefined) => set('streaming_timeout_seconds', v)" :min="30" :max="3600" />
 			</div>
-		</div>
+		</SettingsSection>
 
 		<!-- 批量写入 -->
-		<div class="group">
-			<div class="group-title">批量写入</div>
+		<SettingsSection title="批量写入">
 			<div class="compact-row">
 				<label>写入大小</label>
 				<AInputNumber :model-value="num('batch_write_size')" @change="(v: number | undefined) => set('batch_write_size', v)" :min="1" :max="1000" />
@@ -70,11 +67,10 @@ function set(key: string, v: number | undefined): void {
 				<label>写入间隔(ms)</label>
 				<AInputNumber :model-value="num('batch_write_interval_ms')" @change="(v: number | undefined) => set('batch_write_interval_ms', v)" :min="100" :max="30000" />
 			</div>
-		</div>
+		</SettingsSection>
 
 		<!-- 服务器资源保护 -->
-		<div class="group">
-			<div class="group-title">服务器资源保护</div>
+		<SettingsSection title="服务器资源保护">
 			<div class="compact-row">
 				<label>内存占用上限(%)</label>
 				<AInputNumber :model-value="num('resource_memory_limit_percent')" @change="(v: number | undefined) => set('resource_memory_limit_percent', v)" :min="0" :max="100" />
@@ -83,16 +79,15 @@ function set(key: string, v: number | undefined): void {
 				<label>磁盘占用上限(%)</label>
 				<AInputNumber :model-value="num('resource_disk_limit_percent')" @change="(v: number | undefined) => set('resource_disk_limit_percent', v)" :min="0" :max="100" />
 			</div>
-		</div>
+		</SettingsSection>
 
 		<!-- 调试 -->
-		<div class="group">
-			<div class="group-title">调试</div>
+		<SettingsSection title="调试">
 			<div class="compact-row">
 				<label>pprof 端口</label>
 				<AInputNumber :model-value="num('pprof_port')" @change="(v: number | undefined) => set('pprof_port', v)" :min="0" :max="65535" />
 			</div>
-		</div>
+		</SettingsSection>
 	</div>
 </template>
 
@@ -100,29 +95,29 @@ function set(key: string, v: number | undefined): void {
 .perf-grid {
 	display: grid;
 	grid-template-columns: repeat(3, 1fr);
-	gap: 20px;
+	gap: 16px;
+	align-items: start;
 }
-.group {
-	border: 1px solid var(--color-fill-2);
-	border-radius: 6px;
-	padding: 14px 16px 10px;
+/* 紧凑数字行卡片：减小内边距与标题间距，保持信息密度 */
+.perf-grid :deep(.settings-section) {
+	padding: 16px 20px 12px;
 }
-.group-title {
-	font-size: 13px;
-	font-weight: 600;
-	color: var(--color-text-2);
-	margin-bottom: 10px;
+.perf-grid :deep(.settings-section__header) {
+	margin-bottom: 8px;
+}
+.perf-grid :deep(.settings-section__body) {
+	gap: 2px;
 }
 .compact-row {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
 	gap: 12px;
-	padding: 4px 0;
+	padding: 5px 0;
 }
 .compact-row label {
 	font-size: 13px;
-	color: var(--color-text-1);
+	color: var(--ta-text-primary);
 	white-space: nowrap;
 	flex-shrink: 0;
 }
@@ -130,8 +125,13 @@ function set(key: string, v: number | undefined): void {
 	width: 160px;
 }
 
-/* 移动端：3 列分组降为单列，行内输入框收窄并允许换行，避免横向溢出 */
-@media (max-width: 768px) {
+/* 宽屏三列、中屏两列、窄屏单列；行内输入框在窄屏收窄并允许换行，避免横向溢出 */
+@media (max-width: 1280px) {
+	.perf-grid {
+		grid-template-columns: repeat(2, 1fr);
+	}
+}
+@media (max-width: 1024px) {
 	.perf-grid {
 		grid-template-columns: 1fr;
 		gap: 12px;

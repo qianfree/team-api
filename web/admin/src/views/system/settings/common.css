@@ -1,51 +1,99 @@
+/* 系统设置各分类 Tab 共享的布局规则：
+   分区卡片由 SettingsSection.vue 承担，这里只定义卡片流与卡片内部的网格、开关行 */
+
+/* 卡片流：双列网格，full 卡整行、half 小卡片两两并排；窄屏回落单列 */
 .tab-content {
-	display: flex;
-	flex-direction: column;
-	gap: 28px;
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 16px;
+	align-items: start;
 }
 
-.section-title {
-	font-size: 14px;
-	font-weight: 600;
-	color: var(--color-text-1);
-	margin-bottom: 14px;
-	padding-bottom: 8px;
-	border-bottom: 1px solid var(--color-fill-2);
+@media (max-width: 1024px) {
+	.tab-content {
+		grid-template-columns: 1fr;
+	}
 }
 
+/* 字段网格按卡片实际宽度自适应（容器查询，锚点在卡片 body）：
+   窄卡自动降列，整行大卡恢复双列；不支持容器查询时回落单列 */
 .section-grid {
 	display: grid;
-	grid-template-columns: repeat(2, 1fr);
-	gap: 16px 28px;
+	grid-template-columns: 1fr;
+	gap: 16px 24px;
+}
+
+/* 同质短数字字段（频控阈值等）：宽卡三列、窄卡两列 */
+.grid-3 {
+	display: grid;
+	grid-template-columns: 1fr;
+	gap: 16px 24px;
+}
+
+@container (min-width: 460px) {
+	.section-grid {
+		grid-template-columns: repeat(2, 1fr);
+	}
+	.grid-3 {
+		grid-template-columns: repeat(2, 1fr);
+	}
+}
+
+@container (min-width: 720px) {
+	.grid-3 {
+		grid-template-columns: repeat(3, 1fr);
+	}
+}
+
+/* 小卡片内字段一律单列（一行一个），覆盖上面的容器查询多列规则 */
+.settings-section--half .section-grid,
+.settings-section--half .grid-3 {
+	grid-template-columns: 1fr;
 }
 
 .field-full {
 	grid-column: 1 / -1;
 }
 
-/* 移动端：表单字段单列堆叠，避免双列在窄屏被挤压 */
-@media (max-width: 768px) {
-	.section-grid {
-		grid-template-columns: 1fr;
-		gap: 12px;
-	}
+/* 开关项列表：上行 label+开关、下行灰色描述，行间细分隔线 */
+.switch-list {
+	display: flex;
+	flex-direction: column;
 }
-
-.switch-row {
+.switch-item {
 	display: flex;
 	align-items: center;
-	gap: 12px;
-	padding: 10px 0;
+	gap: 16px;
+	padding: 12px 0;
 }
-
-.switch-label {
-	font-size: 14px;
-	color: var(--color-text-1);
-	font-weight: 500;
+.switch-item:first-child {
+	padding-top: 4px;
 }
-
-.switch-desc {
-	font-size: 12px;
-	color: var(--color-text-3);
+.switch-item:last-child {
+	padding-bottom: 4px;
+}
+.switch-item + .switch-item {
+	border-top: 1px solid var(--ta-border-light);
+}
+.switch-item__text {
 	flex: 1;
+	min-width: 0;
+}
+.switch-item__label {
+	font-size: 14px;
+	font-weight: 500;
+	color: var(--ta-text-primary);
+	line-height: 1.4;
+}
+.switch-item__desc {
+	margin-top: 2px;
+	font-size: 12px;
+	color: var(--ta-text-tertiary);
+	line-height: 1.6;
+}
+
+.field-help {
+	color: var(--ta-text-tertiary);
+	font-size: 12px;
+	line-height: 1.6;
 }

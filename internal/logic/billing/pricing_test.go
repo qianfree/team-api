@@ -1199,3 +1199,67 @@ func TestComputeCost_PerRequestImageCount(t *testing.T) {
 		t.Errorf("token mode must ignore count: %f != %f", cb1.TotalCost, cb4.TotalCost)
 	}
 }
+
+// ─── 缓存创建 TTL 分桶：1h 价显式配置与推导 ──────────────────────────────
+
+func TestResolveCacheCreation1hPrice(t *testing.T) {
+	base := 3.75 // 5m 基准价（官方 1.25× 输入价锚定语义）
+	// 缺省：按基准 ×1.6 推导（官方 1h=2× ÷ 5m=1.25× = 1.6）
+	assertFloat(t, resolveCacheCreation1hPrice(base, nil), 6.0, "derived 1h price")
+	// 显式配置优先（第三方渠道非 1.25× 结构的自主定价场景）
+	explicit := 5.0
+	assertFloat(t, resolveCacheCreation1hPrice(base, &explicit), 5.0, "explicit 1h price")
+	// 非正值视为未配置，回落推导
+	zero := 0.0
+	assertFloat(t, resolveCacheCreation1hPrice(base, &zero), 6.0, "zero explicit falls back to derived")
+}
+
+func TestComputeCost_CacheTTLBuckets(t *testing.T) {
+	pricing := &PricingResult{
+		InputPrice:           3.0,
+		OutputPrice:          15.0,
+		BillingMode:          "token",
+		TenantMultiplier:     1.0,
+		Currency:             "USD",
+		CacheReadPrice:       0.3,
+		CacheCreationPrice:   3.75,
+		CacheCreation5mPrice: 3.75,
+		CacheCreation1hPrice: 6.0, // 显式配置价
+	}
+	usage := &rcommon.Usage{
+		PromptTokens:     1000,
+		CompletionTokens: 200,
+		PromptTokensDetails: &rcommon.TokenDetails{
+			CachedTokens:           5000,
+			CachedCreation5mTokens: 100_000,
+			CachedCreation1hTokens: 200_000,
+		},
+	}
+
+	cb := computeCost(pricing, 1000, 200, usage, 1)
+
+	// 5m: 100000/1M × 3.75 = 0.375；1h: 200000/1M × 6.0 = 1.2；合并桶 = 两者之和
+	assertFloat(t, cb.CacheCreation5mCost, 0.375, "5m bucket cost")
+	assertFloat(t, cb.CacheCreation1hCost, 1.2, "1h bucket cost")
+	assertFloat(t, cb.CacheCreationCost, 1.575, "merged creation cost")
+	if cb.CacheCreation5mTokens != 100_000 || cb.CacheCreation1hTokens != 200_000 {
+		t.Errorf("TTL tokens = 5m:%d 1h:%d, want 100000/200000", cb.CacheCreation5mTokens, cb.CacheCreation1hTokens)
+	}
+	if cb.CacheCreationTokens != 300_000 {
+		t.Errorf("merged creation tokens = %d, want 300000", cb.CacheCreationTokens)
+	}
+
+	// 无 TTL 细分（OpenAI cache_write / Claude 旧协议）：全落 5m 桶，按基准价计
+	usageNoTTL := &rcommon.Usage{
+		PromptTokens:        1000,
+		CompletionTokens:    200,
+		PromptTokensDetails: &rcommon.TokenDetails{CachedTokens: 5000, CacheWriteTokens: 80_000},
+	}
+	cb2 := computeCost(pricing, 1000, 200, usageNoTTL, 1)
+	// 80000/1M × 3.75 = 0.3
+	assertFloat(t, cb2.CacheCreation5mCost, 0.3, "fallback 5m bucket cost")
+	assertFloat(t, cb2.CacheCreation1hCost, 0, "fallback 1h bucket cost")
+	if cb2.CacheCreation5mTokens != 80_000 || cb2.CacheCreation1hTokens != 0 {
+		t.Errorf("fallback TTL tokens = 5m:%d 1h:%d, want 80000/0", cb2.CacheCreation5mTokens, cb2.CacheCreation1hTokens)
+	}
+}
