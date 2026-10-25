@@ -1,7 +1,11 @@
 <script setup lang="ts">
-import { ref, onMounted, type Component } from 'vue'
+import { ref, computed, onMounted, type Component } from 'vue'
 import { useRoute } from 'vue-router'
 import { Message } from '@arco-design/web-vue'
+import {
+	IconSettings, IconLock, IconEmail, IconSafe, IconHistory, IconSwap,
+	IconThunderbolt, IconFilter, IconShareInternal, IconCloud, IconStorage, IconFile,
+} from '@arco-design/web-vue/es/icon'
 import PageHeader from '@/components/PageHeader.vue'
 import { useSettings } from './settings/useSettings'
 
@@ -40,11 +44,41 @@ const categoryMap: Record<string, Component> = {
 	agreement: AgreementTab,
 }
 
+// 后端下发的分类 icon 名 → Arco 图标（未匹配时回落齿轮）
+const iconMap: Record<string, Component> = {
+	settings: IconSettings,
+	lock: IconLock,
+	email: IconEmail,
+	shield: IconSafe,
+	audit: IconHistory,
+	payment: IconSwap,
+	speed: IconThunderbolt,
+	filter: IconFilter,
+	channel: IconShareInternal,
+	cloud: IconCloud,
+	database: IconStorage,
+	document: IconFile,
+}
+
 const categories = ref<SettingCategory[]>([])
 const activeTab = ref('')
 const route = useRoute()
 
 const { formValues, loading, saving, refresh, save } = useSettings(() => activeTab.value)
+
+// 未保存更改检测：refresh 后对表单值拍快照，任意修改即偏离快照
+let snapshot = ''
+const dirty = computed(() => snapshot !== '' && JSON.stringify(formValues) !== snapshot)
+
+async function reload() {
+	await refresh()
+	snapshot = JSON.stringify(formValues)
+}
+
+async function handleSave() {
+	const ok = await save()
+	if (ok) snapshot = JSON.stringify(formValues)
+}
 
 // 存储配置：测试对象存储连通性（上传→下载→删除一张测试图片）
 const testing = ref(false)
@@ -85,6 +119,10 @@ async function testEmail(): Promise<boolean> {
 	}
 }
 
+const activeLabel = computed(
+	() => categories.value.find(c => c.key === activeTab.value)?.label || ''
+)
+
 async function fetchCategories() {
 	try {
 		const { default: request } = await import('@/utils/request')
@@ -94,7 +132,7 @@ async function fetchCategories() {
 			// 支持 ?tab=xxx 直达指定分类（如支付渠道页引导跳转支付分类）
 			const fromQuery = String(route.query.tab || '')
 			activeTab.value = categories.value.some(c => c.key === fromQuery) ? fromQuery : categories.value[0].key
-			await refresh()
+			await reload()
 		}
 	} catch {
 		// silently fail
@@ -103,7 +141,7 @@ async function fetchCategories() {
 
 async function handleTabChange(key: string | number) {
 	activeTab.value = String(key)
-	await refresh()
+	await reload()
 }
 
 onMounted(() => {
@@ -112,37 +150,48 @@ onMounted(() => {
 </script>
 
 <template>
-	<div>
+	<div class="settings-page">
 		<PageHeader title="系统设置" description="管理平台全局配置，按分类查看和编辑" />
 
 		<div class="settings-layout">
-			<!-- 左侧分类菜单 -->
+			<!-- 左侧分类菜单（吸顶） -->
 			<div class="settings-sidebar">
 				<AMenu :selected-keys="[activeTab]" @menu-item-click="handleTabChange">
-					<AMenuItem v-for="cat in categories" :key="cat.key">{{ cat.label }}</AMenuItem>
+					<AMenuItem v-for="cat in categories" :key="cat.key">
+						<template #icon>
+							<component :is="iconMap[cat.icon] || IconSettings" />
+						</template>
+						{{ cat.label }}
+					</AMenuItem>
 				</AMenu>
 			</div>
 
-			<!-- 右侧内容区域 -->
+			<!-- 右侧内容区域：分区卡片流 + 吸底保存栏 -->
 			<div class="settings-content">
-				<ACard :bordered="false">
-					<ASpin :loading="loading">
-						<component :is="categoryMap[activeTab]" v-if="categoryMap[activeTab]" />
+				<ASpin :loading="loading" class="settings-spin">
+					<component :is="categoryMap[activeTab]" v-if="categoryMap[activeTab]" />
+				</ASpin>
 
-						<div class="settings-footer">
-							<AButton
-								v-if="activeTab === 'storage'"
-								:loading="testing"
-								@click="testStorage"
-							>测试连接</AButton>
-							<AButton
-								v-if="activeTab === 'email'"
-								@click="emailTestVisible = true"
-							>发送测试邮件</AButton>
-							<AButton type="primary" :loading="saving" @click="save">保存设置</AButton>
-						</div>
-					</ASpin>
-				</ACard>
+				<div class="settings-footer">
+					<div class="footer-status">
+						<span class="footer-dot" :class="{ 'footer-dot--dirty': dirty }" />
+						<span class="footer-label">
+							{{ activeLabel }}{{ dirty ? ' · 有未保存的更改' : '' }}
+						</span>
+					</div>
+					<div class="footer-actions">
+						<AButton
+							v-if="activeTab === 'storage'"
+							:loading="testing"
+							@click="testStorage"
+						>测试连接</AButton>
+						<AButton
+							v-if="activeTab === 'email'"
+							@click="emailTestVisible = true"
+						>发送测试邮件</AButton>
+						<AButton type="primary" :loading="saving" @click="handleSave">保存设置</AButton>
+					</div>
+				</div>
 			</div>
 		</div>
 
@@ -177,16 +226,21 @@ onMounted(() => {
 .settings-sidebar {
 	width: 200px;
 	flex-shrink: 0;
-	background: var(--color-bg-2);
-	border-radius: 4px;
-	border: 1px solid var(--color-border);
+	/* 滚动容器 .admin-content 有 24px padding，sticky top:0 会钉在 padding 之后，
+	   导致滚动内容从菜单上方 24px 缝隙穿过；负偏移贴住可视区真正顶边 */
+	position: sticky;
+	top: -24px;
+	background: var(--ta-bg-card);
+	border-radius: var(--ta-radius);
+	box-shadow: var(--ta-shadow-card);
+	padding: 8px;
 }
 .settings-sidebar :deep(.arco-menu) {
-	border-radius: 4px;
+	border-radius: calc(var(--ta-radius) - 4px);
 	padding: 4px 0;
 }
 .settings-sidebar :deep(.arco-menu-item) {
-	border-radius: 4px;
+	border-radius: 8px;
 	margin: 2px 4px;
 }
 .settings-content {
@@ -194,11 +248,59 @@ onMounted(() => {
 	min-width: 0;
 	max-width: 1200px;
 }
+.settings-spin {
+	display: block;
+	width: 100%;
+}
+
+/* 吸底保存栏：滚动长表单时始终可见。负 margin 抵消滚动容器 24px padding，
+   拉通满宽贴住可视区底边，避免滚动内容从底部缝隙穿过；
+   底边贴视口边缘，仅上两角做小圆角（下角做圆角会漏出底层滚动内容） */
 .settings-footer {
+	position: sticky;
+	bottom: -24px;
+	z-index: 4;
 	display: flex;
-	justify-content: flex-end;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	margin: 16px -24px -24px;
+	padding: 12px 24px;
+	background: var(--ta-bg-glass);
+	backdrop-filter: blur(var(--ta-glass-blur));
+	-webkit-backdrop-filter: blur(var(--ta-glass-blur));
+	border-top: 1px solid var(--ta-border);
+	border-radius: 8px 8px 0 0;
+	box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.04);
+}
+.footer-status {
+	display: flex;
+	align-items: center;
 	gap: 8px;
-	margin-top: 16px;
+	min-width: 0;
+}
+.footer-dot {
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	flex-shrink: 0;
+	background: var(--ta-success);
+	transition: background var(--ta-duration-normal) var(--ta-ease);
+}
+.footer-dot--dirty {
+	background: var(--ta-warning);
+}
+.footer-label {
+	font-size: 13px;
+	color: var(--ta-text-secondary);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.footer-actions {
+	display: flex;
+	gap: 8px;
+	flex-shrink: 0;
 }
 
 /* 移动端：左侧分类菜单转为顶部横向滚动条，内容区下沉为单列，避免 200px 固定侧栏挤压内容 */
@@ -210,8 +312,14 @@ onMounted(() => {
 	.settings-sidebar {
 		width: 100%;
 		position: sticky;
-		top: 0;
+		/* 同桌面：-24px 抵消滚动容器 padding，贴住顶栏下缘 */
+		top: -24px;
 		z-index: 5;
+	}
+	/* 布局是 align-items:flex-start（桌面端 sidebar sticky 需要），column 方向下
+	   子项不会自动拉伸满宽，内容区必须显式占满整行 */
+	.settings-content {
+		width: 100%;
 	}
 	.settings-sidebar :deep(.arco-menu-inner) {
 		display: flex;
@@ -230,10 +338,19 @@ onMounted(() => {
 		margin: 0 2px;
 	}
 	.settings-footer {
-		/* 底部按钮在移动端填满整行，便于拇指触达 */
-		justify-content: flex-start;
+		flex-direction: column;
+		align-items: stretch;
+		gap: 10px;
+		border-radius: 0;
 	}
-	.settings-footer :deep(.arco-btn) {
+	.footer-label {
+		display: none;
+	}
+	.footer-actions {
+		/* 底部按钮在移动端填满整行，便于拇指触达 */
+		width: 100%;
+	}
+	.footer-actions :deep(.arco-btn) {
 		flex: 1;
 	}
 }

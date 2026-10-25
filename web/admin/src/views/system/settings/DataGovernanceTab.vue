@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SettingsSection from './SettingsSection.vue'
 import { useFormValues } from './useSettings'
 const values = useFormValues()
 
@@ -13,9 +14,8 @@ function set(key: string, v: number | undefined): void {
 <template>
 	<div class="tab-content">
 		<!-- 日志保留 -->
-		<div class="section">
-			<div class="section-title">日志保留</div>
-			<div class="section-grid">
+		<SettingsSection title="日志保留">
+			<div class="grid-3">
 				<AFormItem label="API 调用日志保留天数">
 					<AInputNumber :model-value="num('data_retention_api_logs_days')" @change="(v: number | undefined) => set('data_retention_api_logs_days', v)" :min="7" :max="3650" style="width: 100%" />
 				</AFormItem>
@@ -26,29 +26,31 @@ function set(key: string, v: number | undefined): void {
 					<AInputNumber :model-value="num('data_retention_temp_data_days')" @change="(v: number | undefined) => set('data_retention_temp_data_days', v)" :min="1" :max="30" style="width: 100%" />
 				</AFormItem>
 			</div>
-		</div>
+		</SettingsSection>
 
 		<!-- 数据导出 -->
-		<div class="section">
-			<div class="section-title">数据导出</div>
+		<SettingsSection title="数据导出" size="half">
 			<div class="section-grid">
 				<AFormItem label="导出文件保留天数">
 					<AInputNumber :model-value="num('data_export_expiry_days')" @change="(v: number | undefined) => set('data_export_expiry_days', v)" :min="1" :max="30" style="width: 100%" />
 				</AFormItem>
 			</div>
-		</div>
+		</SettingsSection>
 
 		<!-- 文件保留 -->
-		<div class="section">
-			<div class="section-title">文件保留</div>
-			<div class="switch-row">
-				<span class="switch-label">启用文件保留期检查</span>
-				<ASwitch
-					:model-value="!!values['file_retention_enabled']"
-					@change="(v: string | number | boolean) => values['file_retention_enabled'] = v"
-				/>
+		<SettingsSection title="文件保留" size="half">
+			<div class="switch-list">
+				<div class="switch-item">
+					<div class="switch-item__text">
+						<div class="switch-item__label">启用文件保留期检查</div>
+					</div>
+					<ASwitch
+						:model-value="!!values['file_retention_enabled']"
+						@change="(v: string | number | boolean) => values['file_retention_enabled'] = v"
+					/>
+				</div>
 			</div>
-		</div>
+		</SettingsSection>
 	</div>
 </template>
 

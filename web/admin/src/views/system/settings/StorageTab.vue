@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue'
 import { IconCheck } from '@arco-design/web-vue/es/icon'
+import SettingsSection from './SettingsSection.vue'
 import { useFormValues } from './useSettings'
 const values = useFormValues()
 
@@ -49,8 +50,7 @@ function togglePreset(entries: string[]): void {
 <template>
 	<div class="tab-content">
 		<!-- 连接配置 -->
-		<div class="section">
-			<div class="section-title">连接配置</div>
+		<SettingsSection title="连接配置">
 			<div class="section-grid">
 				<AFormItem label="存储供应商">
 					<ASelect v-model="values['storage_provider']">
@@ -75,11 +75,10 @@ function togglePreset(entries: string[]): void {
 					<AInput v-model="values['storage_path_prefix']" placeholder="team-api" />
 				</AFormItem>
 			</div>
-		</div>
+		</SettingsSection>
 
 		<!-- 认证 -->
-		<div class="section">
-			<div class="section-title">认证</div>
+		<SettingsSection title="认证">
 			<div class="section-grid">
 				<AFormItem label="Access Key ID">
 					<AInputPassword v-model="values['storage_access_key_id']" placeholder="留空则不修改" />
@@ -88,18 +87,21 @@ function togglePreset(entries: string[]): void {
 					<AInputPassword v-model="values['storage_access_key_secret']" placeholder="留空则不修改" />
 				</AFormItem>
 			</div>
-			<div class="switch-row" style="margin-top: 8px">
-				<span class="switch-label">启用 SSL</span>
-				<ASwitch
-					:model-value="!!values['storage_use_ssl']"
-					@change="(v: string | number | boolean) => values['storage_use_ssl'] = v"
-				/>
+			<div class="switch-list">
+				<div class="switch-item">
+					<div class="switch-item__text">
+						<div class="switch-item__label">启用 SSL</div>
+					</div>
+					<ASwitch
+						:model-value="!!values['storage_use_ssl']"
+						@change="(v: string | number | boolean) => values['storage_use_ssl'] = v"
+					/>
+				</div>
 			</div>
-		</div>
+		</SettingsSection>
 
 		<!-- /v1/files 素材上传 -->
-		<div class="section">
-			<div class="section-title">素材上传（/v1/files）</div>
+		<SettingsSection title="素材上传（/v1/files）">
 			<div class="section-grid">
 				<AFormItem label="允许的文件类型" class="field-full"
 					help="逗号分隔；支持 image/*（MIME 前缀）、application/pdf（完整 MIME）、.txt（扩展名）；留空 = 不限制">
@@ -115,6 +117,8 @@ function togglePreset(entries: string[]): void {
 						</div>
 					</div>
 				</AFormItem>
+			</div>
+			<div class="grid-3">
 				<AFormItem label="单文件大小上限(MB)" help="实际生效上限为该值与全局请求体上限的较小者">
 					<AInputNumber :model-value="Number(values['relay_files_max_size_mb']) || 0"
 						@change="(v: number | undefined) => values['relay_files_max_size_mb'] = v ?? 0"
@@ -131,7 +135,7 @@ function togglePreset(entries: string[]): void {
 						:min="5" :max="10080" style="width: 100%" />
 				</AFormItem>
 			</div>
-		</div>
+		</SettingsSection>
 	</div>
 </template>
 

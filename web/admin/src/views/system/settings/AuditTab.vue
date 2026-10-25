@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SettingsSection from './SettingsSection.vue'
 import { useFormValues } from './useSettings'
 const values = useFormValues()
 </script>
@@ -6,8 +7,7 @@ const values = useFormValues()
 <template>
 	<div class="tab-content">
 		<!-- 审计级别 -->
-		<div class="section">
-			<div class="section-title">审计级别</div>
+		<SettingsSection title="审计级别">
 			<div class="section-grid">
 				<AFormItem label="全局审计级别" help="full=完整记录（含请求头/响应头）, full_text=全量文本, masked=脱敏记录, question_only=仅提问, meta_only=仅留痕（不记内容，出错时记录错误原因）, none=不记录">
 					<ASelect v-model="values['audit_level']">
@@ -20,7 +20,7 @@ const values = useFormValues()
 					</ASelect>
 				</AFormItem>
 			</div>
-		</div>
+		</SettingsSection>
 
 		<!-- 日志保留期在「数据治理」页统一配置（data_retention_api_logs_days / data_retention_operation_logs_days） -->
 	</div>
