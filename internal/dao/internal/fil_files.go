@@ -32,6 +32,8 @@ type FilFilesColumns struct {
 	StoragePath     string // 存储桶中的完整路径
 	VirusScanStatus string // 病毒扫描状态：pending（待扫描）/ scanning（扫描中）/ clean（安全）/ infected（感染）
 	Checksum        string // 文件 SHA-256 校验和
+	ExtId           string // 对外文件 ID（file-xxx，OpenAI 兼容 /v1/files 专用，NULL=非用户上传素材）
+	Purpose         string // OpenAI 上传用途声明（vision/user_data 等），NULL=非 /v1/files 上传
 	CreatedAt       string // 创建时间
 	UpdatedAt       string // 更新时间
 }
@@ -49,6 +51,8 @@ var filFilesColumns = FilFilesColumns{
 	StoragePath:     "storage_path",
 	VirusScanStatus: "virus_scan_status",
 	Checksum:        "checksum",
+	ExtId:           "ext_id",
+	Purpose:         "purpose",
 	CreatedAt:       "created_at",
 	UpdatedAt:       "updated_at",
 }

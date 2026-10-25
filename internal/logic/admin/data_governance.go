@@ -167,7 +167,9 @@ func deleteExpiredFiles(ctx context.Context, fileSvc *common.FileService, cutoff
 			m = m.Where("storage_path LIKE ?", "exports/%")
 		} else {
 			// 只清理图片：按 mime_type 精确限定，不再用「非导出」笼统匹配所有上传文件。
+			// /v1/files 用户上传素材（uploads/ 前缀）生命周期由用户/管理员显式控制，豁免。
 			m = m.Where("storage_path NOT LIKE ?", "exports/%").
+				Where("storage_path NOT LIKE ?", common.UploadsPathPrefix+"%").
 				Where("mime_type LIKE ?", "image/%")
 		}
 

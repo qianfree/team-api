@@ -17,6 +17,7 @@ import (
 	"github.com/qianfree/team-api/internal/dispatchadapter"
 	commonlogic "github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/monitor"
+	relaylogic "github.com/qianfree/team-api/internal/logic/relay"
 	tenantlogic "github.com/qianfree/team-api/internal/logic/tenant"
 	"github.com/qianfree/team-api/relay/channel"
 	"github.com/qianfree/team-api/relay/common"
@@ -584,6 +585,16 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 	v, err := validateRelayRequest(ctx, body, path, headers, rc, provider, billing)
 	if err != nil {
 		return nil, nil, err
+	}
+
+	// /v1/files 引用重写：messages 中 image_url.url 的 file-xxx 在此统一替换为对象
+	// 存储签名 URL（URL/data URI 引用一律透传）。置于重试循环之前：透传/relaykit/
+	// adaptor 三条转换路径共享重写后的 body，且重试不会重复解析。引用不存在按
+	// 客户端错误快速失败，避免 file-xxx 原样送上游后报出难以排查的上游错误。
+	if newBody, changed, ferr := relaylogic.RewriteImageFileRefsInBody(ctx, rc.TenantID, body); ferr != nil {
+		return nil, nil, constant.NewRequestError(ferr.Error(), ferr)
+	} else if changed {
+		body = newBody
 	}
 
 	// 在写入任何响应体之前设置限流/弃用 header（流式响应中 WriteHeader 后无法追加）
