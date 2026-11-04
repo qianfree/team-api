@@ -23,7 +23,7 @@ type stubVideosBillingProvider struct {
 	common.TaskBillingProvider
 }
 
-func (s *stubVideosBillingProvider) EstimateTaskCost(context.Context, int64, string, map[string]any, []byte) (decimal.Decimal, error) {
+func (s *stubVideosBillingProvider) EstimateTaskCost(context.Context, int64, string, map[string]any, []byte, http.Header) (decimal.Decimal, error) {
 	return decimal.NewFromFloat(0.1), nil
 }
 

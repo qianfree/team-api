@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"net/http"
 	"time"
 )
 
@@ -38,7 +39,9 @@ type BillingProvider interface {
 	// PreDeduct 预扣费用
 	// 检查余额 → 冻结预扣金额 → 返回是否成功
 	// count 为按次计费的放大倍数（图片协议顶层 n，一次生成 n 张按 n 次计）；<=1 表示不放大
-	PreDeduct(ctx context.Context, tenantID int64, modelName string, count, inputTokens, maxTokens int, isStream bool, requestID string) (preDeductAmount float64, err error)
+	// headers/body 为客户端原始请求（formula 计费请求规则探测：header()/param()。
+	// 无请求上下文的调用方传 nil，公式探针取空值按默认倍率 1 预扣）
+	PreDeduct(ctx context.Context, tenantID int64, modelName string, count, inputTokens, maxTokens int, isStream bool, requestID string, headers http.Header, body []byte) (preDeductAmount float64, err error)
 
 	// Settle 结算费用（成功请求）。billAt 为请求受理时刻（时段定价按该时刻评估）
 	Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID, relayMode string, usage *Usage, preDeductAmount float64, projectID int64, billAt time.Time) (*SettlementResult, error)
@@ -53,8 +56,9 @@ type BillingProvider interface {
 
 	// SettleStreamInterrupted 流式中断结算。billAt 为请求受理时刻（时段定价按该时刻评估）。
 	// imageCount 为按次计费张数（图片协议顶层 n）：中断结算须与预扣同口径放大，
-	// 否则预扣按 n 张冻结、结算按 1 张计费，多退 (n-1) 张差额；非图片/无张数传 0
-	SettleStreamInterrupted(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID, relayMode string, usage *Usage, preDeductAmount float64, projectID int64, imageCount int, billAt time.Time) (*SettlementResult, error)
+	// 否则预扣按 n 张冻结、结算按 1 张计费，多退 (n-1) 张差额；非图片/无张数传 0。
+	// headers/body 与预扣同源（formula 请求规则探测保持口径一致；无上下文传 nil）
+	SettleStreamInterrupted(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID, relayMode string, usage *Usage, preDeductAmount float64, projectID int64, imageCount int, billAt time.Time, headers http.Header, body []byte) (*SettlementResult, error)
 
 	// CheckRateLimit QPS 限流检查
 	CheckRateLimit(ctx context.Context, tenantID, userID, apiKeyID int64, keyQPS int) (allowed bool, limitLevel string, limit int, remaining int, resetAt int64)

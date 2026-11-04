@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"net/http"
 	"strings"
 	"time"
 
@@ -89,8 +90,15 @@ type PricingResult struct {
 	// 计费公式（billing_mode=formula）：从 usage 归集的变量环境求出
 	// 「每 1M token 口径的价格系数」，金额 = 系数 / 1e6 × 租户乘数 × 时段乘数。
 	// 公式只表达模型基础成本，与折扣/时段乘数正交。旧缓存条目无此字段（空串），
-	// 仅 formula 模式消费，不受影响。变量表与语法见 billing/formula 包
+	// 仅 formula 模式消费，不受影响。变量表与语法见 billing/formula 包。
+	// Formula 为「基础公式 × 请求规则」的组合式（FormulaBase × FormulaRules，
+	// 组合见 EffectiveFormula；无规则时等于基础公式原文）
 	Formula string `json:"formula,omitempty"`
+	// FormulaBase 基础公式原文（不含请求规则，快照留痕/管理端回显用）
+	FormulaBase string `json:"formula_base,omitempty"`
+	// FormulaRules 请求规则表达式（header()/param()/时间函数条件倍率，与基础公式
+	// 正交相乘）。空 = 无请求规则。旧缓存条目无此字段
+	FormulaRules string `json:"formula_rules,omitempty"`
 }
 
 // perSecondWildcard 矩阵兜底价键：规格未命中时使用
@@ -422,7 +430,7 @@ func GetModelPriceAt(ctx context.Context, tenantID int64, modelName string, bill
 	var paramMultipliers []ParamRule
 	var schemeName string
 	var schemeConfig json.RawMessage
-	var formulaSrc string
+	var formulaSrc, formulaRulesSrc string
 
 	if pricing != nil {
 		if pricing.BillingMode != "" {
@@ -460,6 +468,9 @@ func GetModelPriceAt(ctx context.Context, tenantID int64, modelName string, bill
 				schemeConfig = blob.SchemeConfig
 				if blob.Formula != nil {
 					formulaSrc = *blob.Formula
+				}
+				if blob.FormulaRules != nil {
+					formulaRulesSrc = *blob.FormulaRules
 				}
 			}
 		}
@@ -585,7 +596,9 @@ func GetModelPriceAt(ctx context.Context, tenantID int64, modelName string, bill
 		ParamMultipliers:     paramMultipliers,
 		Scheme:               schemeName,
 		SchemeConfig:         schemeConfig,
-		Formula:              formulaSrc,
+		Formula:              EffectiveFormula(formulaSrc, formulaRulesSrc),
+		FormulaBase:          formulaSrc,
+		FormulaRules:         formulaRulesSrc,
 	}
 
 	// 时段乘数按定价时刻评估后随缓存存储（缓存命中路径会按 billAt 重评估，存储值仅参考）
@@ -630,6 +643,12 @@ func CalculateCost(ctx context.Context, tenantID int64, modelName string, inputT
 // 提取为独立函数以便单元测试，不依赖数据库或缓存。
 // count 为按次计费放大倍数（图片协议顶层 n），<=1 不放大；token/tiered 计费不受其影响。
 func computeCost(pricing *PricingResult, inputTokens, outputTokens int, usage *rcommon.Usage, count int) *CostBreakdown {
+	return computeCostWithEval(pricing, inputTokens, outputTokens, usage, count, nil)
+}
+
+// computeCostWithEval 带公式求值上下文的 computeCost。ec 携带请求探测值与时间基准
+// （formula 模式消费；nil → 探针取空值、时间取当前时刻，legacy/无请求路径的兜底口径）
+func computeCostWithEval(pricing *PricingResult, inputTokens, outputTokens int, usage *rcommon.Usage, count int, ec *formula.EvalContext) *CostBreakdown {
 	baseInputTokens, outputTokens, cacheReadTokens, cacheCreation5mTokens, cacheCreation1hTokens := resolveTokenCounts(pricing, inputTokens, outputTokens, usage)
 	if count < 1 {
 		count = 1
@@ -684,12 +703,14 @@ func computeCost(pricing *PricingResult, inputTokens, outputTokens int, usage *r
 		}
 		in := formula.FromUsage(baseInputTokens, outputTokens, cacheReadTokens, cacheCreation5mTokens, cacheCreation1hTokens, usage)
 		in.ImageCount = count
-		factor, err := formula.Run(compiled, in.Env(compiled.Vars))
+		in.Eval = ec
+		factor, rules, err := formula.Run(compiled, in)
 		if err != nil {
 			bd.FormulaError = err.Error()
 			return bd
 		}
 		bd.FormulaFactor = factor
+		bd.RequestRules = rules
 		mul := NewFromFloat(pricing.TenantMultiplier).Mul(NewFromFloat(effectiveTimeMultiplier(pricing)))
 		totalD := NewFromFloat(factor).Div(decimal.NewFromInt(1_000_000)).Mul(mul)
 		bd.BaseCost = InexactFloat64(RoundMoney(NewFromFloat(factor).Div(decimal.NewFromInt(1_000_000))))
@@ -864,13 +885,18 @@ type CostBreakdown struct {
 	FormulaFactor float64
 	// 公式求值失败原因（非空 = TotalCost 无效，调用方须 fail-safe 按预扣额结算）
 	FormulaError string
+	// 请求规则命中表（formula 模式：header()/param()/时间条件倍率的埋点结果，
+	// 随快照留痕供账单解释「本次请求命中了哪些倍率规则」）
+	RequestRules []formula.RequestRuleTrace
 }
 
 // EstimatePreDeductAmount 估算预扣金额
 // 输出 token 估算：用户指定 max_tokens 时按其值（截断到模型上限）；未指定时按模型 max_output_tokens 的 80%。
 // 按估算全额冻结（无上限封顶），下限 $0.001；未配置定价的模型 fail-closed 返回错误拒绝请求。
 // count 为按次计费放大倍数（图片协议顶层 n），<=1 不放大；token 计费不受其影响（usage 已随 n 放大）。
-func EstimatePreDeductAmount(ctx context.Context, tenantID int64, modelName string, count, inputTokens, requestedMaxTokens int, isStream bool) (float64, error) {
+// headers/body 为客户端原始请求（formula 模式请求规则探测用；时间函数基准取当前时刻，
+// 与结算的 billAt≈受理时刻几乎重合，跨小时边界以结算为准不漂移）。
+func EstimatePreDeductAmount(ctx context.Context, tenantID int64, modelName string, count, inputTokens, requestedMaxTokens int, isStream bool, headers http.Header, body []byte) (float64, error) {
 	_ = isStream // 预留参数：估算逻辑不再区分流式/非流式，接口签名保持兼容
 	if count < 1 {
 		count = 1
@@ -915,8 +941,13 @@ func EstimatePreDeductAmount(ctx context.Context, tenantID int64, modelName stri
 			BaseInputTokens: inputTokens,
 			OutputTokens:    estimatedOutput,
 			ImageCount:      count,
+			Eval: &formula.EvalContext{
+				At:       time.Now(),
+				Location: pricingTimeLocation(ctx),
+				Request:  ResolveFormulaRequest(compiled, headers, body),
+			},
 		}
-		factor, err := formula.Run(compiled, in.Env(compiled.Vars))
+		factor, _, err := formula.Run(compiled, in)
 		if err != nil {
 			return 0, gerror.Wrapf(err, "estimate pre-deduct: run formula (model=%s)", modelName)
 		}
@@ -1004,6 +1035,7 @@ type PricingItemInput struct {
 	CacheCreation1hPrice float64 // 1h TTL 缓存创建价；0=未配置（计费按基准价 ×1.6 推导）
 	PerSecondPrices      map[string]float64
 	Formula              string // 计费公式原文（仅 formula 模式；保存时强制烟测）
+	FormulaRules         string // 请求规则表达式（仅 formula 模式；与基础公式正交相乘）
 }
 
 // BuildPricingBlob 从全量替换语义的定价项列表构造 pricing JSONB（按 billing_mode 单模式存储）。
@@ -1019,7 +1051,8 @@ func BuildPricingBlob(items []PricingItemInput) (*PricingBlob, error) {
 	switch mode {
 	case BillingModeFormula:
 		// 表达式计费：单锚点行 + 公式烟测（编译 + 预置向量非负有限），
-		// 防错配公式上线后全站该模型计费异常
+		// 防错配公式上线后全站该模型计费异常。基础公式与请求规则分别烟测后
+		// 再组合烟测（组合后的乘法结构/三目嵌套是新语法形态，须独立验证）
 		if len(items) > 1 {
 			return nil, gerror.Newf("formula 计费模式只允许一行定价（公式）")
 		}
@@ -1033,7 +1066,21 @@ func BuildPricingBlob(items []PricingItemInput) (*PricingBlob, error) {
 			return nil, gerror.Wrapf(err, "计费公式烟测未通过")
 		}
 		f := strings.TrimSpace(anchor.Formula)
-		return &PricingBlob{Formula: &f}, nil
+		r := strings.TrimSpace(anchor.FormulaRules)
+		if r != "" {
+			// 请求规则单独烟测：空请求/任意时刻向量下非负（规则本身是完整可求值表达式）
+			if err := formula.SmokeTest(r); err != nil {
+				return nil, gerror.Wrapf(err, "请求规则烟测未通过")
+			}
+			if err := formula.SmokeTest(EffectiveFormula(f, r)); err != nil {
+				return nil, gerror.Wrapf(err, "公式 × 请求规则组合烟测未通过")
+			}
+		}
+		blob := &PricingBlob{Formula: &f}
+		if r != "" {
+			blob.FormulaRules = &r
+		}
+		return blob, nil
 
 	case BillingModeSpecial, "per_second":
 		if len(items) > 1 {
@@ -1162,6 +1209,9 @@ type PricingBlob struct {
 	SchemeConfig json.RawMessage `json:"scheme_config,omitempty"`
 	// formula 模式：计费公式原文（billing/formula 包语法）。保存时强制烟测
 	Formula *string `json:"formula,omitempty"`
+	// formula 模式：请求规则表达式（header()/param()/时间条件倍率，与基础公式
+	// 正交相乘，组合见 EffectiveFormula）。保存时与基础公式分别烟测后再组合烟测
+	FormulaRules *string `json:"formula_rules,omitempty"`
 }
 
 // tiersHavePrice 阶梯数组中是否存在任一档正价（输入或输出）。

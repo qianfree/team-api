@@ -3,6 +3,7 @@ package billing
 import (
 	"encoding/json"
 	"sync"
+	"time"
 
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/shopspring/decimal"
@@ -148,7 +149,29 @@ func taskFormulaInput(ratios map[string]any, usage *rcommon.TaskMaterialUsage) f
 	if c, ok := ratioFloat(ratios, "count"); ok && c > 0 {
 		count = int(c)
 	}
-	return formula.FormulaInput{Seconds: seconds, ImageCount: count}
+	return formula.FormulaInput{Seconds: seconds, ImageCount: count, Eval: taskFormulaEvalContext(ratios)}
+}
+
+// taskFormulaEvalContext 从 ratios 还原公式求值上下文：提交时冻结的请求探测值与
+// 时间基准（见 EstimateTaskCost 的 ratioKeyFormulaRequest 注入）。预扣（注入后
+// 内存形态）与结算（billing_context JSONB 反序列化形态）走同一提取逻辑，
+// 保证两次求值对 header()/param()/时间函数的取值完全一致；无冻结值（公式不含
+// 请求探测，或存量任务）返回 nil → 探针取空值
+func taskFormulaEvalContext(ratios map[string]any) *formula.EvalContext {
+	if ratios == nil {
+		return nil
+	}
+	freeze, ok := ratios[ratioKeyFormulaRequest].(map[string]any)
+	if !ok {
+		return nil
+	}
+	ec := &formula.EvalContext{Request: formula.RequestInputFromMap(freeze)}
+	if at, ok := freeze["at"].(string); ok {
+		if t, err := time.Parse(time.RFC3339Nano, at); err == nil {
+			ec.At = t
+		}
+	}
+	return ec
 }
 
 // runFormulaCost 任务路径公式求值：系数 / 1e6 × 租户乘数 × 时段乘数（decimal）。
@@ -161,7 +184,7 @@ func runFormulaCost(pricing *PricingResult, in formula.FormulaInput) (decimal.De
 	if err != nil {
 		return decimal.Zero, err
 	}
-	factor, err := formula.Run(compiled, in.Env(compiled.Vars))
+	factor, _, err := formula.Run(compiled, in)
 	if err != nil {
 		return decimal.Zero, err
 	}

@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net/http"
 	"testing"
 	"time"
 
@@ -73,7 +74,7 @@ func TestFormulaPricingE2E(t *testing.T) {
 
 	// 4. 预扣估算：p=10000、估算输出 = max_output(0→4096 兜底)×0.8 = 3276 →
 	//    公式走低档分支（ctx=10000 ≤ 128000），金额 = 系数/1e6 × 租户乘数（真实库租户可能带等级折扣）
-	preDeduct, err := billing.EstimatePreDeductAmount(ctx, tenantID, modelName, 1, 10000, 0, false)
+	preDeduct, err := billing.EstimatePreDeductAmount(ctx, tenantID, modelName, 1, 10000, 0, false, nil, nil)
 	if err != nil {
 		t.Fatalf("预扣估算失败: %v", err)
 	}
@@ -149,7 +150,7 @@ func TestFormulaPricingE2E(t *testing.T) {
 		t.Fatalf("u() 公式结算金额异常: %v（期望 %v = 36×乘数）", bd2.TotalCost, 36*mul)
 	}
 	// 预扣：无 facts → u 取 0 → 0.001 钳制
-	preDeduct2, err := billing.EstimatePreDeductAmount(ctx, tenantID, modelName, 1, 150, 0, false)
+	preDeduct2, err := billing.EstimatePreDeductAmount(ctx, tenantID, modelName, 1, 150, 0, false, nil, nil)
 	if err != nil {
 		t.Fatalf("u() 公式预扣失败: %v", err)
 	}
@@ -182,12 +183,67 @@ func TestFormulaPricingE2E(t *testing.T) {
 	}
 	ratios := map[string]any{"spec.duration": 5.0, "spec.resolution": "720p"}
 	taskProvider := billing.NewTaskBillingProvider()
-	preTaskD, err := taskProvider.EstimateTaskCost(ctx, tenantID, modelName, ratios, nil)
+	preTaskD, err := taskProvider.EstimateTaskCost(ctx, tenantID, modelName, ratios, nil, nil)
 	if err != nil {
 		t.Fatalf("任务公式预扣失败: %v", err)
 	}
 	// 预扣 = fixed(0.4)×400000×5/1e6 × 租户乘数 = 2×mul（wrapSchemeCost 的 minCost 0.01 钳制不影响）
 	if math.Abs(preTaskD.InexactFloat64()-2*mul) > 1e-9 {
 		t.Fatalf("任务公式预扣异常: %v（期望 %v = 2×乘数）", preTaskD, 2*mul)
+	}
+
+	// 10. 请求规则链路：基础公式 + formula_rules 分离存储 → 取价组合展开 →
+	//     预扣按请求头/请求体探测放大 → 未命中走默认 1 → 任务路径探测值冻结进 ratios
+	const reqRules = `(header("tier") == "pro" ? 2 : 1) * (param("service_tier") == "priority" ? 3 : 1)`
+	_, err = service.Admin().SetModelPricing(ctx, &v1.PricingSetReq{
+		ModelID: modelDBID,
+		Items: []v1.PricingItem{{
+			BillingMode:  "formula",
+			Formula:      "p * 5 + c * 10",
+			FormulaRules: reqRules,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("保存带请求规则的 formula 定价失败: %v", err)
+	}
+	pricing2, err := billing.GetModelPrice(ctx, tenantID, modelName)
+	if err != nil {
+		t.Fatalf("读取带规则定价失败: %v", err)
+	}
+	combined := billing.EffectiveFormula("p * 5 + c * 10", reqRules)
+	if pricing2.Formula != combined || pricing2.FormulaRules != reqRules || pricing2.FormulaBase != "p * 5 + c * 10" {
+		t.Fatalf("组合式展开异常: formula=%q base=%q rules=%q", pricing2.Formula, pricing2.FormulaBase, pricing2.FormulaRules)
+	}
+
+	// 命中路径：header tier=pro ×2 + service_tier=priority ×3 → 预扣 = 基础 × 6
+	preHit, err := billing.EstimatePreDeductAmount(ctx, tenantID, modelName, 1, 10000, 0, false,
+		http.Header{"Tier": []string{"pro"}}, []byte(`{"service_tier":"priority"}`))
+	if err != nil {
+		t.Fatalf("带请求预扣失败: %v", err)
+	}
+	basePre, err := billing.EstimatePreDeductAmount(ctx, tenantID, modelName, 1, 10000, 0, false, nil, nil)
+	if err != nil {
+		t.Fatalf("无请求预扣失败: %v", err)
+	}
+	if math.Abs(preHit-basePre*6) > 1e-6 {
+		t.Fatalf("请求规则预扣异常: hit=%v base=%v（期望 ×6）", preHit, basePre)
+	}
+
+	// 任务路径：探测值随 ratios 冻结（billing_context 持久化口径）
+	taskRatios := map[string]any{"spec.duration": 5.0}
+	if _, err := taskProvider.EstimateTaskCost(ctx, tenantID, modelName, taskRatios, nil,
+		http.Header{"Tier": []string{"pro"}}); err != nil {
+		t.Fatalf("任务带 header 估算失败: %v", err)
+	}
+	frozen, ok := taskRatios["formula_request"].(map[string]any)
+	if !ok {
+		t.Fatalf("formula_request 未冻结进 ratios: %v", taskRatios)
+	}
+	// 内存形态 headers 为 map[string]string；JSONB 往返后的还原由单测覆盖
+	if frozen["headers"].(map[string]string)["tier"] != "pro" {
+		t.Fatalf("冻结的 header 探测值异常: %v", frozen)
+	}
+	if _, ok := frozen["at"]; !ok {
+		t.Fatalf("冻结的时间基准缺失: %v", frozen)
 	}
 }

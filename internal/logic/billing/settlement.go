@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/billing/formula"
 	rcommon "github.com/qianfree/team-api/relay/common"
 )
 
@@ -269,11 +271,17 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 	// 此前 CalculateCostWithUsage 与第 4 步各取一次定价，两次结果可能不一致（缓存刷新窗口），已合并。
 	var billAt time.Time
 	var perRequestCount int
+	var evalCtx *formula.EvalContext
 	if relayInfo != nil {
 		billAt = relayInfo.StartTime
 		perRequestCount = relayInfo.ImageCount
 	}
 	pricingResult, pricingErr := GetModelPriceAt(ctx, tenantID, modelName, billAt)
+	if pricingErr == nil && pricingResult.BillingMode == BillingModeFormula && relayInfo != nil {
+		// 公式求值上下文：请求探测值（headers+body）+ 时间基准 = 受理时刻 billAt
+		// （与预扣探测同一请求，预扣/结算口径一致；跨小时边界以受理时刻为准）
+		evalCtx = NewFormulaEvalContext(ctx, pricingResult, relayInfo.RequestHeaders, relayInfo.RequestBody, billAt)
+	}
 	var breakdown *CostBreakdown
 	if pricingErr != nil || usage == nil {
 		// A4 修复：计价失败 fail-closed 兜底按预扣额计费，而非零费用（免费请求）。见 Settle 同段说明。
@@ -295,7 +303,7 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 		}
 		breakdown = fb
 	} else {
-		breakdown = computeCost(pricingResult, usage.PromptTokens, usage.CompletionTokens, usage, perRequestCount)
+		breakdown = computeCostWithEval(pricingResult, usage.PromptTokens, usage.CompletionTokens, usage, perRequestCount, evalCtx)
 		// 表达式计费求值失败 fail-safe：公式在真实 usage 环境上求值出错时按预扣额结算
 		// （公式保存时已烟测，此处失败属防御性兜底），错误记入快照供排查
 		if breakdown.FormulaError != "" {
@@ -398,7 +406,7 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 
 	var snapshotJSON, summaryText string
 	if pricingResult != nil {
-		snapshot := GenerateBillingSnapshot(pricingResult, breakdown, usage, settlementResult, relayInfo)
+		snapshot := GenerateBillingSnapshot(pricingResult, breakdown, usage, settlementResult, relayInfo, evalCtx)
 		snapshotJSON = SnapshotToJSON(snapshot)
 		summaryText = GenerateBillingSummary(ctx, snapshot)
 		settlementResult.BillingMode = pricingResult.BillingMode
@@ -433,7 +441,8 @@ func SettleFailed(ctx context.Context, tenantID int64, requestID string, preDedu
 // 中断结算与预扣同口径按张数放大，防止「预扣冻 n 张、结算按 1 张计」多退差额。
 func SettleStreamInterrupted(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 	modelName, requestID, relayMode string,
-	usage *rcommon.Usage, preDeductAmount float64, projectID int64, imageCount int, billAt time.Time) (*SettlementResult, error) {
+	usage *rcommon.Usage, preDeductAmount float64, projectID int64, imageCount int, billAt time.Time,
+	headers http.Header, body []byte) (*SettlementResult, error) {
 
 	// usage 为 nil 必须兜换空 Usage：SettleWithUsage 对 nil usage 会 fail-closed 按预扣全额计费，
 	// 而中断且无任何 usage 的正确语义是 0 token 结算（成本 0，全额退差）
@@ -446,6 +455,9 @@ func SettleStreamInterrupted(ctx context.Context, tenantID, userID, apiKeyID, ch
 		IsStream:        true,
 		StartTime:       billAt,
 		ImageCount:      imageCount,
+		// 公式请求规则探测：与预扣同一份请求（调用方作用域常驻），口径一致
+		RequestHeaders: headers,
+		RequestBody:    body,
 	}
 	return SettleWithUsage(ctx, tenantID, userID, apiKeyID, channelID,
 		modelName, requestID, relayMode, usage, preDeductAmount, relayInfo)

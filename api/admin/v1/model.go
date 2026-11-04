@@ -131,6 +131,9 @@ type PricingItem struct {
 	CacheCreation1hPrice float64            `json:"cache_creation_1h_price" dc:"1 小时 TTL 缓存创建价（仅 Claude ephemeral_1h；0=未配置，自动按 5 分钟价 ×1.6 推导）"`
 	PerSecondPrices      map[string]float64 `json:"per_second_prices" dc:"按秒单价矩阵（仅 per_second）：分辨率规格→每秒单价（本位币），\"*\"为兜底价，如 {\"480p\":0.25,\"720p\":0.5,\"*\":0.5}"`
 	Formula              string             `json:"formula" dc:"计费公式原文（仅 formula 模式）：如 ctx <= 128000 ? p*5+c*20 : p*10+c*40；系数=每 1M token 本位币，fixed(x)=每次 x 本位币；保存前强制烟测"`
+	// FormulaRules 请求规则表达式（仅 formula 模式，可选）：header()/param()/时间条件倍率
+	// 因子相乘，与基础公式正交，如 (header("tier") == "pro" ? 2 : 1) * (hour("Asia/Shanghai") >= 23 ? 0.8 : 1)
+	FormulaRules string `json:"formula_rules" dc:"请求规则表达式（仅 formula 模式，可选）：请求头/请求体参数/时间条件倍率因子，与基础公式正交相乘"`
 }
 
 // TimeSegmentItem 时段定价项（mdl_pricing.pricing JSONB 顶层 time_segments 数组元素）。
@@ -223,6 +226,11 @@ type PricingFormulaValidateReq struct {
 	// 系数单位 = 每 1M token 本位币，金额 = 系数 / 1e6 × 租户乘数 × 时段乘数；
 	// 任务路径同一系数语义（如视频每秒 0.4 写 fixed(0.4) * seconds，图片按张 fixed(0.04) * image_count）
 	Formula string `json:"formula" v:"required" dc:"计费公式原文"`
+	// FormulaRules 请求规则表达式（与基础公式正交相乘，组合为 (formula) * (formula_rules)）：
+	// header("key") 请求头、param("path") 请求体路径（点分语法）、has(v,"s") 子串、
+	// hour("tz")/minute/weekday/month/day 时间函数（时区参数可省略，默认平台计费时区）。
+	// 规则三目形状「条件 ? 乘数 : 1」会被静态提取并随响应/快照留痕命中状态
+	FormulaRules string `json:"formula_rules,omitempty" dc:"请求规则表达式（可选）"`
 	// Samples 自定义试算样例（空 = 使用预置样例向量：空请求/常规对话/多模态满配/长上下文/多张图片/音频计量）
 	Samples []PricingFormulaSample `json:"samples" dc:"自定义试算样例（可选）"`
 }
@@ -244,6 +252,12 @@ type PricingFormulaSample struct {
 	Facts map[string]float64 `json:"facts" dc:"usage 旁路计量事实（公式 u(key) 取值）"`
 	// OpenAISemantics 标记 prompt 是否含全部模态（决定引用 img/ai 时是否从 p 扣除）
 	OpenAISemantics bool `json:"openai_semantics" dc:"OpenAI 原生口径（prompt_tokens 含缓存与全部模态）时为 true"`
+	// Headers 试算请求头（公式 header() 探测取值；键大小写不敏感）
+	Headers map[string]string `json:"headers,omitempty" dc:"试算请求头（header() 探测用）"`
+	// Body 试算请求体 JSON（公式 param() 探测按点分路径从中取值）
+	Body json.RawMessage `json:"body,omitempty" dc:"试算请求体 JSON（param() 探测用）"`
+	// EvalAt 试算时间基准（RFC3339；时间函数在该时刻求值，默认当前时刻）
+	EvalAt string `json:"eval_at,omitempty" dc:"时间函数基准时刻（RFC3339，可选）"`
 }
 
 type PricingFormulaValidateRes struct {
@@ -265,12 +279,25 @@ type PricingFormulaValidateRes struct {
 type PricingFormulaEvalResult struct {
 	// 样例名（预置向量带名称，自定义样例为「样例 N」）
 	Name string `json:"name"`
-	// 求值时的变量环境快照（仅公式引用的变量，展示排除语义的实际取值）
-	Env map[string]float64 `json:"env,omitempty"`
+	// 求值时的变量环境快照（仅公式引用的变量，展示排除语义的实际取值；
+	// u:key/header:key/param:path 为探针实际取值，header/param 值可能为字符串）
+	Env map[string]any `json:"env,omitempty"`
 	// 命中的价格系数（每 1M token 口径）；金额 = 系数 / 1e6（× 租户乘数 × 时段乘数）
 	Factor float64 `json:"factor"`
+	// 请求规则命中表（条件原文、乘数、是否命中）
+	Rules []PricingFormulaRuleTrace `json:"rules,omitempty"`
 	// 按系数换算的每 1M/每次参考金额（本位币，未乘租户/时段乘数）
 	Amount float64 `json:"amount"`
+}
+
+// PricingFormulaRuleTrace 请求规则命中留痕（试算/快照共用结构）
+type PricingFormulaRuleTrace struct {
+	// Cond 条件原文（如 header("tier") == "pro"）
+	Cond string `json:"cond"`
+	// Multiplier 命中时应用的乘数
+	Multiplier float64 `json:"multiplier"`
+	// Matched 本次求值是否命中
+	Matched bool `json:"matched"`
 }
 
 // ModelUpdateRes 更新模型响应

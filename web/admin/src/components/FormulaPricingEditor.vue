@@ -4,36 +4,55 @@ import { Message } from '@arco-design/web-vue'
 import request from '@/utils/request'
 import { currencySymbol } from '@/composables/useCurrency'
 
-// 表达式计费编辑器（billing_mode=formula）：
-// 公式从 usage 变量环境取值求出「每 1M token 口径的价格系数」，
-// 金额 = 系数 / 1e6 × 租户乘数 × 时段乘数（乘数在计费时外挂，公式只表达模型基础价）。
-// 本组件自治校验：保存前父组件调 validate()，未通过中止保存（后端保存链路同口径烟测兜底）
+// 表达式计费编辑器（billing_mode=formula）：价格完全由公式决定——
+// 基础公式从 usage 变量环境求出「每 1M token 口径的价格系数」，金额 = 系数 / 1e6 × 租户乘数；
+// 请求规则（可选）与基础公式相乘，组合为 (公式) * (规则)，用 header()/param()/时间函数
+// 按请求头/请求体参数/时段调倍率（formula 模型不再单独配置时段定价与参数倍率，全部在公式内表达），
+// 命中状态随账单留痕。本组件自治校验：保存前父组件调 validate()，未通过中止保存
+// （后端保存链路同口径烟测兜底）
 
 const props = defineProps<{
 	modelValue: string
+	modelValueRules?: string
 }>()
 
 const emit = defineEmits<{
 	'update:modelValue': [value: string]
+	'update:modelValueRules': [value: string]
 }>()
 
 const formulaText = ref(props.modelValue)
+const rulesText = ref(props.modelValueRules || '')
 watch(
 	() => props.modelValue,
 	(v) => {
 		formulaText.value = v
 	},
 )
+watch(
+	() => props.modelValueRules,
+	(v) => {
+		rulesText.value = v || ''
+	},
+)
 watch(formulaText, (v) => {
 	emit('update:modelValue', v)
 	// 公式变更后上次校验结果失效
+	invalidateValidation()
+})
+watch(rulesText, (v) => {
+	emit('update:modelValueRules', v)
+	invalidateValidation()
+})
+
+function invalidateValidation() {
 	validatedMark.value = ''
 	validateError.value = ''
 	validateResults.value = null
 	usedVars.value = []
-})
+}
 
-// 校验状态：validatedMark 记录「已通过校验的公式文本」，保存时公式与标记不一致须重新校验
+// 校验状态：validatedMark 记录「已通过校验的公式+规则文本」，保存时不一致须重新校验
 const validating = ref(false)
 const validatedMark = ref('')
 const validateError = ref('')
@@ -71,14 +90,106 @@ const formulaTemplates: Array<{ label: string; expr: string }> = [
 	{ label: '视频任务按秒', expr: 'fixed(0.4) * seconds' },
 ]
 
+// 请求规则模板（填充到规则输入框，多个因子直接相乘）
+const ruleTemplates: Array<{ label: string; expr: string }> = [
+	{ label: '服务档位加价', expr: 'param("service_tier") == "priority" ? 2 : 1' },
+	{ label: 'beta 头加价', expr: 'header("anthropic-beta") has "fast-mode" ? 6 : 1' },
+	{ label: '夜间折扣', expr: 'hour("Asia/Shanghai") >= 23 || hour("Asia/Shanghai") < 8 ? 0.8 : 1' },
+	{ label: '周末折扣', expr: 'weekday("Asia/Shanghai") == 0 || weekday("Asia/Shanghai") == 6 ? 0.9 : 1' },
+	{ label: '长视频档位加价', expr: 'param("duration") >= 10 ? 1.5 : 1' },
+	{ label: '分辨率加价', expr: 'param("resolution") == "1080p" ? 2 : 1' },
+]
+
 function applyTemplate(expr: string | number | boolean | Record<string, any> | Array<string | number | boolean | Record<string, any>>) {
 	if (typeof expr !== 'string') return
 	formulaText.value = expr
 	Message.info('模板已填充，可编辑后点「校验并试算」')
 }
 
+function applyRuleTemplate(expr: string | number | boolean | Record<string, any> | Array<string | number | boolean | Record<string, any>>) {
+	if (typeof expr !== 'string') return
+	rulesText.value = rulesText.value.trim() ? `${rulesText.value.trim()} * ${expr}` : expr
+	Message.info('规则因子已追加')
+}
+
+// ============ 请求规则可视化构建器（生成因子追加到规则表达式，textarea 为唯一真相） ============
+type RuleSource = 'param' | 'header' | 'hour' | 'weekday'
+type RuleRow = {
+	source: RuleSource
+	key: string // param 路径 / header 键 / 时间函数时区（可空 = 平台默认）
+	mode: string // eq / contains / gt / gte / lt / lte
+	value: string
+	multiplier: number
+}
+
+const sourceOptions = [
+	{ label: '请求体参数 param()', value: 'param' },
+	{ label: '请求头 header()', value: 'header' },
+	{ label: '小时 hour()', value: 'hour' },
+	{ label: '星期 weekday()', value: 'weekday' },
+]
+const modeOptionsText = [
+	{ label: '等于', value: 'eq' },
+	{ label: '包含', value: 'contains' },
+]
+const modeOptionsAll = [...modeOptionsText, { label: '大于', value: 'gt' }, { label: '大于等于', value: 'gte' }, { label: '小于', value: 'lt' }, { label: '小于等于', value: 'lte' }]
+
+function rowModes(_row: RuleRow) {
+	// param 值可能是字符串或数字，全量提供；时间函数仅数值比较有意义但保持一致选项
+	return modeOptionsAll
+}
+
+function newRuleRow(): RuleRow {
+	return { source: 'param', key: '', mode: 'eq', value: '', multiplier: 2 }
+}
+
+// 生成单行因子表达式（与后端引擎语法一致；数值比较不带引号）
+function buildRowExpr(row: RuleRow): string | null {
+	const probe =
+		row.source === 'param'
+			? `param(${JSON.stringify(row.key)})`
+			: row.source === 'header'
+				? `header(${JSON.stringify(row.key)})`
+				: `${row.source}(${JSON.stringify(row.key || '')})`
+	let cond: string | null = null
+	const isNumeric = ['gt', 'gte', 'lt', 'lte'].includes(row.mode)
+	const valueStr = isNumeric ? row.value.trim() : JSON.stringify(row.value)
+	if (row.source === 'param' && !row.key) return null
+	if (row.source === 'header' && !row.key) return null
+	if (row.value === '' && row.mode !== 'contains') return null
+	switch (row.mode) {
+		case 'eq':
+			cond = `${probe} == ${valueStr}`
+			break
+		case 'contains':
+			if (!row.value) return null
+			cond = `has(${probe}, ${JSON.stringify(row.value)})`
+			break
+		case 'gt':
+		case 'gte':
+		case 'lt':
+		case 'lte':
+			if (!/^-?\d+(\.\d+)?$/.test(row.value.trim())) return null
+			cond = `${probe} ${ { gt: '>', gte: '>=', lt: '<', lte: '<=' }[row.mode] } ${row.value.trim()}`
+			break
+	}
+	if (!cond) return null
+	return `(${cond} ? ${row.multiplier} : 1)`
+}
+
+function appendRuleRow(row: RuleRow) {
+	const expr = buildRowExpr(row)
+	if (!expr) {
+		Message.warning('规则行填写不完整（路径/键、比对值、乘数均需有效）')
+		return
+	}
+	rulesText.value = rulesText.value.trim() ? `${rulesText.value.trim()} * ${expr}` : expr
+	Message.success('因子已生成并追加到规则表达式')
+}
+
 async function doValidate(): Promise<boolean> {
 	const src = formulaText.value.trim()
+	const rules = rulesText.value.trim()
 	if (!src) {
 		validateError.value = '计费公式不能为空'
 		Message.warning('计费公式不能为空')
@@ -86,7 +197,10 @@ async function doValidate(): Promise<boolean> {
 	}
 	validating.value = true
 	try {
-		const res: any = await request.post('/admin/models/pricing/validate-formula', { formula: src })
+		const res: any = await request.post('/admin/models/pricing/validate-formula', {
+			formula: src,
+			formula_rules: rules || undefined,
+		})
 		const data = res.data?.data
 		if (!data?.valid) {
 			validateError.value = data?.error || '公式校验未通过'
@@ -99,7 +213,7 @@ async function doValidate(): Promise<boolean> {
 		validateResults.value = data?.results || []
 		usedVars.value = data?.vars || []
 		knownFactKeys.value = data?.known_fact_keys || {}
-		validatedMark.value = src
+		validatedMark.value = `${src}|||${rules}`
 		Message.success('公式校验通过')
 		return true
 	} catch {
@@ -110,9 +224,10 @@ async function doValidate(): Promise<boolean> {
 	}
 }
 
-// 保存前置校验入口：公式未变更且已通过 → 直接放行；否则重新校验
+// 保存前置校验入口：公式/规则未变更且已通过 → 直接放行；否则重新校验
 async function validate(): Promise<boolean> {
-	if (formulaText.value.trim() && validatedMark.value === formulaText.value.trim()) {
+	const mark = `${formulaText.value.trim()}|||${rulesText.value.trim()}`
+	if (formulaText.value.trim() && validatedMark.value === mark) {
 		return true
 	}
 	return await doValidate()
@@ -120,10 +235,18 @@ async function validate(): Promise<boolean> {
 
 defineExpose({ validate })
 
-// 环境快照展示：只显示公式引用的变量（与后端返回一致，空环境不渲染行）
-function envEntries(env: Record<string, number> | undefined): Array<[string, number]> {
+// 环境快照展示：只显示公式引用的变量（与后端返回一致，空环境不渲染行）。
+// header:/param: 值可能是字符串（请求探测值），数字才做千分位
+function envEntries(env: Record<string, any> | undefined): Array<[string, string]> {
 	if (!env) return []
-	return Object.entries(env).filter(([, v]) => Number(v) > 0)
+	return Object.entries(env)
+		.filter(([, v]) => (typeof v === 'number' ? v > 0 : v !== '' && v != null))
+		.map(([k, v]) => [k, typeof v === 'number' ? v.toLocaleString() : String(v)])
+}
+
+// 命中规则展示
+function matchedRules(rules: any[] | undefined): any[] {
+	return rules || []
 }
 
 function fmtAmount(v: number): string {
@@ -139,42 +262,90 @@ const factKeyEntries = computed<Array<[string, string]>>(() => {
 	const src = Object.keys(knownFactKeys.value).length > 0 ? knownFactKeys.value : localFactKeys
 	return Object.entries(src).sort(([a], [b]) => a.localeCompare(b))
 })
+
+const currentRow = ref<RuleRow>(newRuleRow())
 </script>
 
 <template>
 	<div class="formula-pricing-editor">
-		<div class="editor-section-header">
-			<h3>表达式计费</h3>
-			<span class="section-hint">
-				系数单位 = {{ currencySymbol }} / 1M Token，金额 = 系数 ÷ 1M × 租户乘数 × 时段乘数；
-				<code>fixed(x)</code> = 每次请求 x {{ currencySymbol }}；支持三目/比较/加减乘除与 min/max/abs/ceil/floor
-			</span>
-		</div>
-
-		<AFormItem label="计费公式" required>
-			<div class="formula-input-row">
-				<ASelect size="small" placeholder="示例模板…" class="formula-template-select" @change="applyTemplate">
+		<!-- 头部：标题/徽标与 模板+校验 同行，口径说明收敛为浅底一行（细节进速查） -->
+		<div class="fx-header">
+			<div class="fx-title">
+				<h3>表达式计费</h3>
+				<ATag color="purple" size="small">价格完全由公式决定</ATag>
+			</div>
+			<div class="fx-actions">
+				<ASelect size="small" placeholder="示例模板…" class="fx-template-select" @change="applyTemplate">
 					<AOption v-for="tpl in formulaTemplates" :key="tpl.expr" :value="tpl.expr">{{ tpl.label }}</AOption>
 				</ASelect>
 				<AButton size="small" type="primary" :loading="validating" @click="doValidate">校验并试算</AButton>
+			</div>
+		</div>
+		<div class="fx-hint">
+			金额 = 系数 ÷ 1M × 租户乘数；<code>fixed(x)</code> = 每次请求 x {{ currencySymbol }}；
+			时段 / 请求参数条件写在下方「请求规则」（hour()/param()），不再单独配置时段定价与参数倍率
+		</div>
+
+		<!-- 基础公式 -->
+		<div class="fx-block">
+			<div class="fx-block-head">
+				<span class="fx-block-label">基础公式<em class="fx-req">*</em></span>
+				<span class="fx-block-sub">token 系数 / 按次 / 按秒 / 长上下文档位</span>
 			</div>
 			<ATextarea
 				v-model="formulaText"
 				:auto-size="{ minRows: 3, maxRows: 8 }"
 				placeholder="例如：ctx <= 128000 ? p * 5 + c * 20 : p * 10 + c * 40"
-				class="formula-textarea"
+				class="fx-textarea"
 			/>
-		</AFormItem>
+		</div>
+
+		<!-- 请求规则（可选） -->
+		<div class="fx-block">
+			<div class="fx-block-head">
+				<span class="fx-block-label">
+					请求规则
+					<ATag size="small" class="fx-optional">可选</ATag>
+				</span>
+				<div class="fx-block-tools">
+					<ASelect size="small" placeholder="规则模板追加…" class="fx-template-select" @change="applyRuleTemplate">
+						<AOption v-for="tpl in ruleTemplates" :key="tpl.expr" :value="tpl.expr">{{ tpl.label }}</AOption>
+					</ASelect>
+				</div>
+			</div>
+			<ATextarea
+				v-model="rulesText"
+				:auto-size="{ minRows: 2, maxRows: 6 }"
+				placeholder='按请求头/请求体参数/时间调倍率，多个因子用 * 相乘，如 param("service_tier") == "priority" ? 2 : 1；留空 = 无请求规则'
+				class="fx-textarea"
+			/>
+			<!-- 可视化构建器：生成因子追加到上方表达式（表达式框为唯一真相） -->
+			<div class="fx-builder">
+				<div class="fx-builder-grid">
+					<ASelect v-model="currentRow.source" size="small" :options="sourceOptions" />
+					<AInput
+						v-model="currentRow.key"
+						size="small"
+						:placeholder="currentRow.source === 'param' ? '参数路径 service_tier' : currentRow.source === 'header' ? '请求头名' : '时区（可空）'"
+					/>
+					<ASelect v-model="currentRow.mode" size="small" :options="rowModes(currentRow)" />
+					<AInput v-model="currentRow.value" size="small" placeholder="比对值" />
+					<AInputNumber v-model="currentRow.multiplier" size="small" :step="0.1" :min="0" />
+					<AButton size="small" type="outline" @click="appendRuleRow(currentRow)">追加因子</AButton>
+				</div>
+				<div class="fx-builder-hint">构建器生成的 <code>(条件 ? 乘数 : 1)</code> 因子会在账单详情留痕命中状态</div>
+			</div>
+		</div>
 
 		<!-- 校验错误（行内红字，可直接展示后端中文报错） -->
-		<div v-if="validateError" class="formula-error">
+		<div v-if="validateError" class="fx-error">
 			<ATag color="red">校验未通过</ATag>
 			<span>{{ validateError }}</span>
 		</div>
 
 		<!-- 引用变量 chips -->
-		<div v-if="usedVars.length > 0" class="formula-vars">
-			<span class="formula-vars-label">引用变量：</span>
+		<div v-if="usedVars.length > 0" class="fx-vars">
+			<span class="fx-vars-label">引用变量：</span>
 			<ATag v-for="v in usedVars" :key="v" color="arcoblue" size="small">{{ v }}</ATag>
 		</div>
 
@@ -184,26 +355,39 @@ const factKeyEntries = computed<Array<[string, string]>>(() => {
 			:data="validateResults"
 			:pagination="false"
 			size="small"
-			class="formula-results"
+			class="fx-results"
 		>
 			<template #columns>
-				<ATableColumn title="样例" data-index="name" :width="110" />
-				<ATableColumn title="变量取值（非零）" :width="320">
+				<ATableColumn title="样例" data-index="name" :width="96" />
+				<ATableColumn title="变量取值（非零）" :width="280">
 					<template #cell="{ record }">
 						<template v-if="envEntries(record.env).length > 0">
 							<ATag v-for="[k, v] in envEntries(record.env)" :key="k" size="small" class="env-tag">
-								{{ k }}={{ v.toLocaleString() }}
+								{{ k }}={{ v }}
 							</ATag>
 						</template>
 						<span v-else class="env-empty">（全零）</span>
 					</template>
 				</ATableColumn>
-				<ATableColumn title="系数" :width="130">
+				<ATableColumn title="系数" :width="110">
 					<template #cell="{ record }">
 						<span class="mono">{{ record.factor.toLocaleString() }}</span>
 					</template>
 				</ATableColumn>
-				<ATableColumn title="试算金额（未乘折扣）" :width="170">
+				<ATableColumn title="命中规则" :width="230">
+					<template #cell="{ record }">
+						<template v-if="matchedRules(record.rules).length > 0">
+							<div v-for="(rule, i) in matchedRules(record.rules)" :key="i" class="rule-trace">
+								<ATag :color="rule.matched ? 'green' : 'gray'" size="small">
+									{{ rule.matched ? `×${rule.multiplier}` : '×1' }}
+								</ATag>
+								<span class="rule-cond">{{ rule.cond }}</span>
+							</div>
+						</template>
+						<span v-else class="env-empty">（无规则）</span>
+					</template>
+				</ATableColumn>
+				<ATableColumn title="试算金额（未乘折扣）" :width="160">
 					<template #cell="{ record }">
 						<span class="mono">{{ fmtAmount(record.amount) }}</span>
 					</template>
@@ -212,7 +396,7 @@ const factKeyEntries = computed<Array<[string, string]>>(() => {
 		</ATable>
 
 		<!-- 变量速查（默认折叠） -->
-		<ACollapse :default-active-key="[]" class="formula-docs">
+		<ACollapse :default-active-key="[]" class="fx-docs">
 			<ACollapseItem key="vars" header="变量与函数速查">
 				<table class="vars-table">
 					<tbody>
@@ -235,6 +419,34 @@ const factKeyEntries = computed<Array<[string, string]>>(() => {
 						<tr>
 							<td class="mono vars-name">min/max/abs/ceil/floor</td>
 							<td>数值辅助函数，如 max(ctx - 128000, 0)</td>
+						</tr>
+						<tr>
+							<td class="mono vars-name">header("key")</td>
+							<td>
+								请求感知：读客户端请求头值（键大小写不敏感，缺失为空串）。
+								仅限请求规则区使用；key 须为字符串字面量。
+								例：header("anthropic-beta") has "fast-mode" ? 6 : 1
+							</td>
+						</tr>
+						<tr>
+							<td class="mono vars-name">param("path")</td>
+							<td>
+								请求感知：按点分路径读请求体 JSON 值（如 param("service_tier")，支持
+								metadata.image 嵌套与 content[*].type 通配；缺失为 nil）。
+								仅限请求规则区；路径须为字符串字面量。异步任务在提交时冻结探测值，结算重放
+							</td>
+						</tr>
+						<tr>
+							<td class="mono vars-name">has(v, "s")</td>
+							<td>子串包含（header 值非精确匹配时用），如 has(header("x-beta"), "fast")</td>
+						</tr>
+						<tr>
+							<td class="mono vars-name">hour("tz") / minute / weekday / month / day</td>
+							<td>
+								时间感知：请求受理时刻在指定时区的钟表时间（weekday 0=周日）。时区省略或非法
+								取平台计费时区。预扣与结算同为受理时刻，跨小时边界不漂移。
+								例：hour("Asia/Shanghai") >= 23 || hour("Asia/Shanghai") &lt; 8 ? 0.8 : 1
+							</td>
 						</tr>
 					</tbody>
 				</table>
@@ -259,43 +471,133 @@ const factKeyEntries = computed<Array<[string, string]>>(() => {
 .formula-pricing-editor {
 	display: flex;
 	flex-direction: column;
-	gap: 12px;
-}
-
-.editor-section-header {
-	display: flex;
-	align-items: baseline;
 	gap: 10px;
 }
 
-.editor-section-header h3 {
+/* 头部：标题/徽标 与 模板+校验 同行 */
+.fx-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+	flex-wrap: wrap;
+}
+
+.fx-title {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.fx-title h3 {
 	margin: 0;
 	font-size: 15px;
 	font-weight: 600;
 }
 
-.section-hint {
+.fx-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.fx-template-select {
+	width: 168px;
+}
+
+/* 口径说明：浅底单行收敛 */
+.fx-hint {
 	font-size: 12px;
 	color: var(--color-text-3);
+	line-height: 1.6;
+	padding: 6px 10px;
+	background: var(--color-fill-1);
+	border-radius: 4px;
 }
 
-.formula-input-row {
+/* 区块：基础公式 / 请求规则 */
+.fx-block {
+	border: 1px solid var(--color-border-2);
+	border-radius: 6px;
+	padding: 10px 12px;
 	display: flex;
-	justify-content: flex-end;
+	flex-direction: column;
 	gap: 8px;
-	margin-bottom: 8px;
+	background: var(--color-bg-2);
 }
 
-.formula-template-select {
-	width: 180px;
+.fx-block-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	flex-wrap: wrap;
 }
 
-.formula-textarea :deep(textarea) {
+.fx-block-label {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--color-text-1);
+}
+
+.fx-req {
+	color: rgb(var(--red-6));
+	font-style: normal;
+	margin-left: 2px;
+}
+
+.fx-optional {
+	font-weight: 400;
+}
+
+.fx-block-sub {
+	font-size: 12px;
+	color: var(--color-text-4);
+}
+
+.fx-block-tools {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.fx-textarea :deep(textarea) {
 	font-family: 'JetBrains Mono', Consolas, Monaco, monospace;
 	font-size: 13px;
 }
 
-.formula-error {
+/* 构建器：网格布局，窄屏自动两列换行 */
+.fx-builder {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding-top: 8px;
+	border-top: 1px dashed var(--color-border-2);
+}
+
+.fx-builder-grid {
+	display: grid;
+	grid-template-columns: 148px minmax(120px, 1fr) 96px minmax(100px, 1fr) 104px auto;
+	gap: 6px;
+	align-items: center;
+}
+
+@media (max-width: 720px) {
+	.fx-builder-grid {
+		grid-template-columns: 1fr 1fr;
+	}
+}
+
+.fx-builder-hint {
+	font-size: 12px;
+	color: var(--color-text-4);
+}
+
+/* 校验反馈 */
+.fx-error {
 	display: flex;
 	align-items: center;
 	gap: 8px;
@@ -303,20 +605,20 @@ const factKeyEntries = computed<Array<[string, string]>>(() => {
 	color: rgb(var(--red-6));
 }
 
-.formula-vars {
+.fx-vars {
 	display: flex;
 	align-items: center;
 	flex-wrap: wrap;
 	gap: 4px;
 }
 
-.formula-vars-label {
+.fx-vars-label {
 	font-size: 12px;
 	color: var(--color-text-3);
 }
 
-.formula-results {
-	margin-top: 4px;
+.fx-results {
+	margin-top: 2px;
 }
 
 .env-tag {
@@ -327,6 +629,28 @@ const factKeyEntries = computed<Array<[string, string]>>(() => {
 .env-empty {
 	font-size: 12px;
 	color: var(--color-text-4);
+}
+
+.rule-trace {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-bottom: 2px;
+}
+
+.rule-cond {
+	font-family: 'JetBrains Mono', Consolas, monospace;
+	font-size: 12px;
+	color: var(--color-text-2);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	max-width: 160px;
+}
+
+.fx-docs {
+	border: none;
+	background: transparent;
 }
 
 .mono {

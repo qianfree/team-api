@@ -63,7 +63,7 @@ func SmokeTest(src string) error {
 		return err
 	}
 	for _, v := range smokeVectors {
-		if _, err := Run(c, v.In.Env(c.Vars)); err != nil {
+		if _, _, err := Run(c, v.In); err != nil {
 			return fmt.Errorf("样例「%s」%w", v.Name, err)
 		}
 	}
@@ -93,12 +93,13 @@ func factKeyNames() []string {
 	return names
 }
 
-// EvaluateResult 单组试算结果：样例名 + 变量环境快照 + 价格系数
+// EvaluateResult 单组试算结果：样例名 + 变量环境快照 + 价格系数 + 请求规则命中表
 // （金额 = 系数 / 1e6 × 租户乘数 × 时段乘数，换算由调用方完成）
 type EvaluateResult struct {
-	Name   string         `json:"name"`
-	Env    map[string]any `json:"env"`
-	Factor float64        `json:"factor"`
+	Name   string             `json:"name"`
+	Env    map[string]any     `json:"env"`
+	Factor float64            `json:"factor"`
+	Rules  []RequestRuleTrace `json:"rules,omitempty"`
 }
 
 // Evaluate 编译并对预置向量试算（管理端「校验并试算」接口用）。
@@ -123,23 +124,18 @@ func Evaluate(src string, custom []FormulaInput) (*Compiled, []EvaluateResult, e
 
 	results := make([]EvaluateResult, 0, len(vectors))
 	for _, v := range vectors {
-		env := v.In.Env(c.Vars)
-		factor, err := Run(c, env)
+		factor, rules, err := Run(c, v.In)
 		if err != nil {
 			return c, results, fmt.Errorf("样例「%s」%w", v.Name, err)
 		}
 		// 环境快照剔除函数项（不可 JSON 序列化为可读值）；
-		// u() 取值以 u:key 形式并入（试算展示与计费快照同一口径）
-		envSnapshot := make(map[string]any, len(knownVars)+len(c.UKeys))
-		for k, val := range env {
-			if knownVars[k] {
-				envSnapshot[k] = val
-			}
+		// u()/header()/param() 取值以 u:key/header:key/param:path 形式并入
+		// （试算展示与计费快照 SnapshotVars 同一口径）
+		envSnapshot := make(map[string]any, len(knownVars)+len(c.UKeys)+len(c.ParamPaths)+len(c.HeaderKeys))
+		for k, val := range SnapshotVars(c, v.In) {
+			envSnapshot[k] = val
 		}
-		for _, key := range c.UKeys {
-			envSnapshot["u:"+key] = v.In.Facts[key]
-		}
-		results = append(results, EvaluateResult{Name: v.Name, Env: envSnapshot, Factor: factor})
+		results = append(results, EvaluateResult{Name: v.Name, Env: envSnapshot, Factor: factor, Rules: rules})
 	}
 	return c, results, nil
 }

@@ -341,9 +341,10 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 			if effectiveBillingMode == "tiered" {
 				item.PricingTiers = buildTiers(pi.CustomPricingTiers, pi.BaseInputPrice, pi.BaseOutputPrice, baseTiersMap[m.ModelDBID])
 			}
-			// 表达式计费：透出平台公式原文（价格透明；租户侧无公式覆盖能力）
+			// 表达式计费：透出平台公式原文与请求规则（价格透明；租户侧无公式覆盖能力）
 			if effectiveBillingMode == billing.BillingModeFormula && pi.BaseBlob != nil {
 				item.Formula = pi.BaseBlob.Formula
+				item.FormulaRules = pi.BaseBlob.FormulaRules
 			}
 			// 按秒/特殊计费：矩阵租户覆盖优先（整体替换），未覆盖走平台定价；
 			// special 的矩阵是输出生成组件的参考单价（素材组件单价在方案配置中）
@@ -406,6 +407,7 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 			}
 			if billingMode == billing.BillingModeFormula && ok && gp.BaseBlob != nil {
 				item.Formula = gp.BaseBlob.Formula
+				item.FormulaRules = gp.BaseBlob.FormulaRules
 			}
 			item.TimePrices = buildTimePrices(timeSegmentsMap[m.ModelDBID], billingMode,
 				inputPrice, outputPrice, perRequestPrice, item.PricingTiers, item.PerSecondPrices)

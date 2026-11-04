@@ -74,8 +74,8 @@ func mustRun(t *testing.T, src string, in FormulaInput) (float64, map[string]any
 	if err != nil {
 		t.Fatalf("编译失败 %q: %v", src, err)
 	}
-	env := in.Env(c.Vars)
-	v, err := Run(c, env)
+	env := in.Env(c.Vars, nil)
+	v, _, err := Run(c, in)
 	if err != nil {
 		t.Fatalf("求值失败 %q: %v", src, err)
 	}
@@ -201,7 +201,7 @@ func TestRunRejectsInvalid(t *testing.T) {
 			}
 			t.Fatalf("编译失败 %q: %v", tc.src, err)
 		}
-		_, err = Run(c, in.Env(c.Vars))
+		_, _, err = Run(c, in)
 		if tc.fail && err == nil {
 			t.Fatalf("公式 %q 应当报错", tc.src)
 		}

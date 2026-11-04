@@ -45,12 +45,18 @@ var KnownFactKeys = map[string]string{
 
 // Compiled 编译产物：字节码程序 + AST 静态分析出的变量引用集合。
 // Vars 驱动排除语义（Env 构建时只扣除公式真正引用的细分类别）；
-// UKeys 是 u() 引用的 facts 字面 key 集合（快照记录与注册表校验用）
+// UKeys 是 u() 引用的 facts 字面 key 集合（快照记录与注册表校验用）；
+// ParamPaths/HeaderKeys 是 param()/header() 引用的字面路径/键集合（计费层据此
+// 从实际请求预解析探测值，任务路径随 ratios 冻结）；Rules 是编译期从
+// 「<探针条件> ? <数字字面量> : 1」形状三目提取的请求规则表（_trace 埋点回填命中）
 type Compiled struct {
-	Program *vm.Program
-	Vars    map[string]bool
-	UKeys   []string
-	Src     string
+	Program    *vm.Program
+	Vars       map[string]bool
+	UKeys      []string
+	ParamPaths []string
+	HeaderKeys []string
+	Rules      []RequestRuleTrace
+	Src        string
 }
 
 // compileCache 编译缓存：key = 公式 SHA-256，FIFO 驱逐，上限 256。
@@ -78,21 +84,34 @@ func Compile(src string) (*Compiled, error) {
 	}
 	compileCacheMu.Unlock()
 
-	program, err := expr.Compile(src)
+	// 请求规则埋点在编译管线内完成（expr.Patch 先于常量折叠执行，短路分支也可静态
+	// 检测）；数值结果不变，仅把「条件 ? 乘数 : 1」改写为 _trace(idx, 条件, 乘数)
+	patcher := &requestRulePatcher{}
+	program, err := expr.Compile(src, expr.Patch(patcher))
 	if err != nil {
 		return nil, fmt.Errorf("公式编译失败: %w", err)
+	}
+	if patcher.restrictedIdentifier != "" {
+		return nil, fmt.Errorf("公式编译失败: 标识符 %q 为内部埋点保留字，不可使用", patcher.restrictedIdentifier)
 	}
 
 	ukeys, err := extractUKeys(program)
 	if err != nil {
 		return nil, fmt.Errorf("公式编译失败: %w", err)
 	}
+	paramPaths, headerKeys, err := extractProbes(program)
+	if err != nil {
+		return nil, fmt.Errorf("公式编译失败: %w", err)
+	}
 
 	c := &Compiled{
-		Program: program,
-		Vars:    extractVars(program),
-		UKeys:   ukeys,
-		Src:     src,
+		Program:    program,
+		Vars:       extractVars(program),
+		UKeys:      ukeys,
+		ParamPaths: paramPaths,
+		HeaderKeys: headerKeys,
+		Rules:      patcher.rules,
+		Src:        src,
 	}
 
 	compileCacheMu.Lock()
@@ -108,28 +127,31 @@ func Compile(src string) (*Compiled, error) {
 	return c, nil
 }
 
-// Run 在变量环境上求值，返回「每 1M token 口径的价格系数」。
+// Run 在公式输入上求值，返回「每 1M token 口径的价格系数」与请求规则命中表。
+// 变量环境由输入内部构建（含 _trace 埋点闭包，命中规则随求值回填 Matched）；
 // 结果必须为有限数且非负（三目可能返回整数类型，统一转 float64）
-func Run(c *Compiled, env map[string]any) (float64, error) {
+func Run(c *Compiled, in FormulaInput) (float64, []RequestRuleTrace, error) {
+	trace := cloneTraces(c.Rules)
+	env := in.Env(c.Vars, trace)
 	raw, err := expr.Run(c.Program, env)
 	if err != nil {
-		return 0, fmt.Errorf("公式求值失败: %w", err)
+		return 0, nil, fmt.Errorf("公式求值失败: %w", err)
 	}
 	v, ok := toFloat64(raw)
 	if !ok {
-		return 0, fmt.Errorf("公式结果不是数值: %T", raw)
+		return 0, nil, fmt.Errorf("公式结果不是数值: %T", raw)
 	}
 	if math.IsNaN(v) || math.IsInf(v, 0) {
-		return 0, fmt.Errorf("公式结果非有限数: %v", v)
+		return 0, nil, fmt.Errorf("公式结果非有限数: %v", v)
 	}
 	if v < 0 {
-		return 0, fmt.Errorf("公式结果为负数: %v", v)
+		return 0, nil, fmt.Errorf("公式结果为负数: %v", v)
 	}
 	if v == 0 {
 		// 负零归一（"-p" 在 p=0 时产生 -0.0，数学上等于 0，按免费档放行）
-		return 0, nil
+		return 0, trace, nil
 	}
-	return v, nil
+	return v, trace, nil
 }
 
 // BuiltinFuncs 公式内置函数（注入每个求值环境）：

@@ -38,10 +38,16 @@ type BillingSnapshot struct {
 
 // BillingSnapshotFormula 表达式计费命中明细
 type BillingSnapshotFormula struct {
-	// Expr 公式原文（超长截断 200 字符，完整原文见 mdl_pricing.pricing）
+	// Expr 求值表达式原文（基础公式 × 请求规则的组合式，超长截断 200 字符，
+	// 完整原文见 mdl_pricing.pricing）
 	Expr string `json:"expr"`
-	// Vars 求值时的变量环境快照（仅公式引用的变量）
-	Vars map[string]float64 `json:"vars,omitempty"`
+	// BaseExpr 基础公式原文（不含请求规则；与 Expr 相同时省略）
+	BaseExpr string `json:"base_expr,omitempty"`
+	// Rules 请求规则命中表（header()/param()/时间条件倍率：条件原文、乘数、是否命中）
+	Rules []formula.RequestRuleTrace `json:"rules,omitempty"`
+	// Vars 求值时的变量环境快照（仅公式引用的变量；u:key/header:key/param:path
+	// 为探针实际取值，header/param 值可能为字符串）
+	Vars map[string]any `json:"vars,omitempty"`
 	// Factor 命中的价格系数（每 1M token 口径），金额 = Factor / 1e6 × 乘数链
 	Factor float64 `json:"factor"`
 	// Error 求值失败原因（fail-safe 按预扣额结算时记录；正常为空）
@@ -145,6 +151,7 @@ func GenerateBillingSnapshot(
 	usage *rcommon.Usage,
 	settlement *SettlementResult,
 	info *rcommon.RelayInfo,
+	evalCtx *formula.EvalContext,
 ) *BillingSnapshot {
 	if pricing == nil || breakdown == nil {
 		return nil
@@ -198,30 +205,26 @@ func GenerateBillingSnapshot(
 
 	// 表达式计费命中明细（仅 formula 模式填充）：变量环境来自 breakdown 求值时
 	// 构建的 Env——此处重新按同一口径构建快照（computeCost 与快照的 usage 一致，
-	// 排除语义确定，重建结果与求值环境相同）
+	// 排除语义确定，重建结果与求值环境相同）。evalCtx 携带求值时的请求探测值与
+	// 时间基准（同步路径 = 结算求值上下文；任务路径 = 冻结重放上下文），nil 时
+	// 探针取空值（legacy 兜底路径）
 	if pricing.BillingMode == BillingModeFormula {
 		snap := &BillingSnapshotFormula{
-			Expr:   truncateFormulaExpr(pricing.Formula),
-			Factor: breakdown.FormulaFactor,
-			Error:  breakdown.FormulaError,
+			Expr:     truncateFormulaExpr(pricing.Formula),
+			BaseExpr: truncateFormulaExpr(pricing.FormulaBase),
+			Rules:    breakdown.RequestRules,
+			Factor:   breakdown.FormulaFactor,
+			Error:    breakdown.FormulaError,
+		}
+		if pricing.FormulaBase == pricing.Formula {
+			snap.BaseExpr = "" // 无请求规则时 Expr 即基础公式，避免冗余
 		}
 		if compiled, err := formula.Compile(pricing.Formula); err == nil {
 			env := formula.FromUsage(breakdown.InputTokens, breakdown.OutputTokens,
 				breakdown.CacheReadTokens, breakdown.CacheCreation5mTokens, breakdown.CacheCreation1hTokens, usage)
 			env.ImageCount = breakdown.PerRequestCount // 与 computeCost 求值环境一致（图片张数）
-			full := env.Env(compiled.Vars)
-			vars := make(map[string]float64, len(compiled.Vars)+len(compiled.UKeys))
-			for name := range compiled.Vars {
-				if v, ok := full[name].(float64); ok {
-					vars[name] = v
-				}
-			}
-			// u() 取值以 u:key 形式并入快照（公式复算时可见 facts 实际取值；
-			// 预扣额兜底结算场景中此处记录求值时点的真实 facts）
-			for _, key := range compiled.UKeys {
-				vars["u:"+key] = env.Facts[key]
-			}
-			snap.Vars = vars
+			env.Eval = evalCtx                         // 与求值同源（header/param/u 探测值进 vars）
+			snap.Vars = formula.SnapshotVars(compiled, env)
 		}
 		snapshot.Formula = snap
 	}
@@ -425,13 +428,21 @@ func GenerateBillingSummary(ctx context.Context, snapshot *BillingSnapshot) stri
 	}
 
 	// 表达式计费命中明细行（仅 formula 模式快照携带）：公式原文 + 命中系数，
-	// 费用 = 系数 / 1e6 × 下方乘数链；变量环境在快照 formula.vars 节供复算
+	// 费用 = 系数 / 1e6 × 下方乘数链；变量环境在快照 formula.vars 节供复算；
+	// 请求规则逐条列出命中状态（×乘数 ✓ / 未命中），解释系数中请求条件倍率的来源
 	if snapshot.Formula != nil {
 		if snapshot.Formula.Error != "" {
 			lines = append(lines, fmt.Sprintf("表达式计费: 求值失败（%s），按预扣额结算", snapshot.Formula.Error))
 		} else {
 			lines = append(lines, fmt.Sprintf("表达式计费: %s → 系数 %s（费用 = 系数/1M × 乘数链）",
 				snapshot.Formula.Expr, formatMultiplier(snapshot.Formula.Factor)))
+		}
+		for _, rule := range snapshot.Formula.Rules {
+			mark := "未命中"
+			if rule.Matched {
+				mark = fmt.Sprintf("命中 ×%s", formatMultiplier(rule.Multiplier))
+			}
+			lines = append(lines, fmt.Sprintf("请求规则: %s → %s", rule.Cond, mark))
 		}
 	}
 

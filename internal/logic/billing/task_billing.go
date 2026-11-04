@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/billing/formula"
 	do "github.com/qianfree/team-api/internal/model/do"
 	"github.com/qianfree/team-api/relay/common"
 )
@@ -27,8 +29,15 @@ func NewTaskBillingProvider() common.TaskBillingProvider {
 
 // EstimateTaskCost 估算任务费用
 // ratios 包含计费上下文（float64 乘数如 video_input 折扣 + spec.* 规格事实值，见 TaskAdaptor.EstimateBilling）；
-// taskBody 为归一化任务体，参数倍率（param_multipliers）命中时就地注入 ratios 随任务持久化
-func (b *TaskBillingProviderImpl) EstimateTaskCost(ctx context.Context, tenantID int64, modelName string, ratios map[string]any, taskBody []byte) (decimal.Decimal, error) {
+// ratioKeyFormulaRequest ratios 中冻结的公式请求探测值键（formula 模式任务路径）：
+// 提交时把 header()/param() 探测值与时间基准解析为小 map 注入 ratios，随任务
+// billing_context 持久化——任务结算滞后数分钟~小时且可能跨进程，不冻结会在结算时
+// 重放走空探测值（请求已不可得）导致错价。非 float 值，applyRatioMultipliers 自动跳过
+const ratioKeyFormulaRequest = "formula_request"
+
+// taskBody 为归一化任务体，参数倍率（param_multipliers）命中时就地注入 ratios 随任务持久化；
+// headers 为提交请求头（formula 模式请求规则探测用，探测值随 ratios 冻结）
+func (b *TaskBillingProviderImpl) EstimateTaskCost(ctx context.Context, tenantID int64, modelName string, ratios map[string]any, taskBody []byte, headers http.Header) (decimal.Decimal, error) {
 	pricing, err := GetModelPrice(ctx, tenantID, modelName)
 	if err != nil {
 		return NewFromFloat(0.01), nil
@@ -51,6 +60,17 @@ func (b *TaskBillingProviderImpl) EstimateTaskCost(ctx context.Context, tenantID
 		if m, matched := EvalParamMultipliers(pricing.ParamMultipliers, taskBody); len(matched) > 0 && m > 0 {
 			ratios[ratioKeyParamMultiplier] = m
 			ratios[ratioKeyParamMatched] = strings.Join(matched, "|")
+		}
+	}
+	// formula 请求探测值冻结：提交时解析 header()/param() 探测值 + 时间基准注入 ratios
+	// （仅公式引用了探测函数时非空），预扣与结算重放同一份，口径恒一致
+	if pricing.BillingMode == BillingModeFormula && ratios != nil {
+		if compiled, err := formula.Compile(pricing.Formula); err == nil {
+			if req := ResolveFormulaRequest(compiled, headers, taskBody); req != nil {
+				freeze := req.ToMap()
+				freeze["at"] = time.Now().Format(time.RFC3339Nano)
+				ratios[ratioKeyFormulaRequest] = freeze
+			}
 		}
 	}
 	return estimateTaskCost(pricing, ratios, taskBody), nil
@@ -294,7 +314,7 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 				SupplementAmount: supplementAmt,
 				DuplicateSkip:    true,
 			}
-			attachTaskSnapshot(ctx, result, pricing, breakdown, modelName)
+			attachTaskSnapshot(ctx, result, pricing, breakdown, modelName, ratios)
 			return result, nil
 		}
 		return nil, err
@@ -325,7 +345,7 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 	} else if diff.LessThan(threshold.Neg()) {
 		result.RefundAmount = InexactFloat64(diff.Neg())
 	}
-	attachTaskSnapshot(ctx, result, pricing, breakdown, modelName)
+	attachTaskSnapshot(ctx, result, pricing, breakdown, modelName, ratios)
 
 	return result, nil
 }
@@ -333,8 +353,9 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 // attachTaskSnapshot 为任务结算结果补充快照/摘要/计费元数据。
 // 正常结算与幂等重放（DuplicateSkip）共用：重放路径可能触发用量日志补写，
 // 两类结果携带的计费信息必须同源，否则补写的日志与首写的口径分叉。
-// pricing 为 nil（取价失败）时不附加，调用方已留痕
-func attachTaskSnapshot(ctx context.Context, result *common.SettlementResult, pricing *PricingResult, breakdown *CostBreakdown, modelName string) {
+// pricing 为 nil（取价失败）时不附加，调用方已留痕。
+// ratios 携带冻结的公式请求探测值（formula 模式快照 vars 复算用）
+func attachTaskSnapshot(ctx context.Context, result *common.SettlementResult, pricing *PricingResult, breakdown *CostBreakdown, modelName string, ratios map[string]any) {
 	if pricing == nil {
 		return
 	}
@@ -345,7 +366,7 @@ func attachTaskSnapshot(ctx context.Context, result *common.SettlementResult, pr
 		RefundAmount:     result.RefundAmount,
 		SupplementAmount: result.SupplementAmount,
 	}
-	snapshot := GenerateBillingSnapshot(pricing, breakdown, nil, internalSettlement, nil)
+	snapshot := GenerateBillingSnapshot(pricing, breakdown, nil, internalSettlement, nil, taskFormulaEvalContext(ratios))
 	snapshot.RequestMeta.RequestedModel = modelName
 	result.BillingSnapshot = SnapshotToJSON(snapshot)
 	result.BillingSummary = GenerateBillingSummary(ctx, snapshot)
@@ -480,6 +501,19 @@ func buildTaskCostBreakdown(ctx context.Context, pricing *PricingResult, actualC
 	if pricing.BillingMode == "per_second" || pricing.BillingMode == BillingModeSpecial || pricing.BillingMode == BillingModeFormula {
 		bd.BaseCost = preMultiplierCost(actualCost, pricing)
 		bd.TotalCost = actualCost
+		if pricing.BillingMode == BillingModeFormula {
+			// 快照复算：与结算求值同输入（冻结 ratios + 素材计量）重跑公式取系数与
+			// 请求规则命中（编译缓存，开销可忽略）；失败时 FactorError 留痕、金额不变
+			in := taskFormulaInput(ratios, usage)
+			if compiled, err := formula.Compile(pricing.Formula); err == nil {
+				if factor, rules, rerr := formula.Run(compiled, in); rerr == nil {
+					bd.FormulaFactor = factor
+					bd.RequestRules = rules
+				} else {
+					bd.FormulaError = rerr.Error()
+				}
+			}
+		}
 		return bd
 	}
 

@@ -181,7 +181,11 @@ type RelayInfo struct {
 	OriginModelName string // 用户请求的模型名
 	RequestURLPath  string
 	RequestHeaders  http.Header
-	StartTime       time.Time
+	// RequestBody 客户端原始请求体（转发改写前的入站 JSON）。formula 计费的
+	// param() 请求规则探测用：预扣与结算共用同一份（RelayHandler 作用域常驻，
+	// GoFrame 请求体已缓存，无重复读取问题）；任务路径不使用（探测值提交时冻结进 ratios）
+	RequestBody []byte
+	StartTime   time.Time
 
 	// ImageCount 图片协议顶层 n（一次生成 n 张，入口已校验为 1~10 的整数，非法值 400 拒绝）。
 	// 按次计费（per_request）按张数放大（预扣与结算同口径）；token 计费不乘——usage 已随 n 放大。

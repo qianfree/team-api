@@ -2,6 +2,8 @@ package formula
 
 import (
 	"fmt"
+	"strings"
+	"time"
 
 	rcommon "github.com/qianfree/team-api/relay/common"
 )
@@ -31,6 +33,11 @@ type FormulaInput struct {
 	// 仅 true 时图片/音频输入 token 才需要从 p 中扣除（三方言渠道口径不明，
 	// 宁可少扣不双扣——与 resolveTokenCounts 对缓存写入「合并取大保守计费」同向）
 	OpenAISemantics bool
+	// Eval 求值上下文：时间函数基准时刻 + 默认时区 + header()/param() 请求探测值。
+	// nil → 探针取空值（header() 空、param() nil）、时间函数取当前时刻 UTC
+	// （烟测与无请求上下文的兜底路径）。预扣取受理时刻、结算取 billAt、
+	// 任务取提交冻结值重放——三口径见 EvalContext 注释
+	Eval *EvalContext
 }
 
 // FromUsage 从 usage 细分构造公式输入。baseInput/cacheRead/cc5m/cc1h 传
@@ -69,7 +76,9 @@ func FromUsage(baseInput, output, cacheRead, cc5m, cc1h int, usage *rcommon.Usag
 //
 // 未被公式引用的细分类别保留在 p/c 中按基础系数计价——管理员写 "p*5+c*10"
 // 时 audio/image token 自动随 p/c 计费，无需显式穷举
-func (in FormulaInput) Env(usedVars map[string]bool) map[string]any {
+// Env 构建求值环境。trace 为请求规则命中表（Run 传入以回填 Matched；nil 时
+// _trace 退化为纯数值函数，供快照展示等不执行求值的场景复用同一构建逻辑）
+func (in FormulaInput) Env(usedVars map[string]bool, trace []RequestRuleTrace) map[string]any {
 	p := in.BaseInputTokens
 	if in.OpenAISemantics {
 		if usedVars["img"] {
@@ -134,5 +143,105 @@ func (in FormulaInput) Env(usedVars map[string]bool) map[string]any {
 		}
 		return facts[key], nil
 	}
+	in.injectRequestFuncs(env, trace)
 	return env
+}
+
+// injectRequestFuncs 注入请求感知函数（new-api Request Rules 对齐）：
+//   - header("key")：请求头值（小写归一；缺失空串）
+//   - param("path")：请求体 JSON 路径值（点分路径，缺失 nil）
+//   - has(v, "s")：子串包含（header 值非精确匹配时用）
+//   - hour("tz")/minute/weekday/month/day：Eval.At 在指定时区的钟表时间
+//     （tz 省略/非法回退 Eval.Location → UTC；基准取受理/冻结时刻而非 now，
+//     预扣与结算跨小时边界不漂移）
+//   - _trace/_trace_int：编译期埋点改写的内部函数（保留字），数值等价 + 命中标记
+func (in FormulaInput) injectRequestFuncs(env map[string]any, trace []RequestRuleTrace) {
+	eval := in.Eval
+	if eval == nil {
+		eval = &EvalContext{}
+	}
+	req := eval.Request
+	evalAt := eval.At
+	location := eval.Location
+	if evalAt.IsZero() {
+		evalAt = time.Now()
+	}
+
+	env["header"] = func(key string) string {
+		return req.GetHeader(key)
+	}
+	env["param"] = func(path string) any {
+		return req.GetParam(path)
+	}
+	env["has"] = func(source any, substr string) bool {
+		if source == nil || substr == "" {
+			return false
+		}
+		return strings.Contains(fmt.Sprint(source), substr)
+	}
+	timeIn := func(tz string) time.Time {
+		tz = strings.TrimSpace(tz)
+		if tz == "" {
+			if location != nil {
+				return evalAt.In(location)
+			}
+			return evalAt.UTC()
+		}
+		loc, err := time.LoadLocation(tz)
+		if err != nil {
+			// 非法时区回退默认（与时段定价对非法配置的容错同向），不中断计费
+			if location != nil {
+				return evalAt.In(location)
+			}
+			return evalAt.UTC()
+		}
+		return evalAt.In(loc)
+	}
+	env["hour"] = func(tz string) int { return timeIn(tz).Hour() }
+	env["minute"] = func(tz string) int { return timeIn(tz).Minute() }
+	env["weekday"] = func(tz string) int { return int(timeIn(tz).Weekday()) }
+	env["month"] = func(tz string) int { return int(timeIn(tz).Month()) }
+	env["day"] = func(tz string) int { return timeIn(tz).Day() }
+
+	env[traceFunction] = func(ruleIndex int, matched bool, multiplier float64) float64 {
+		if matched && ruleIndex >= 0 && ruleIndex < len(trace) {
+			trace[ruleIndex].Matched = true
+			return multiplier
+		}
+		return 1
+	}
+	env[traceIntFunction] = func(ruleIndex int, matched bool, multiplier int) int {
+		if matched && ruleIndex >= 0 && ruleIndex < len(trace) {
+			trace[ruleIndex].Matched = true
+			return multiplier
+		}
+		return 1
+	}
+}
+
+// SnapshotVars 求值环境的变量快照（计费快照留痕用）：已知变量取值 + u:key/header:key/
+// param:path 探测值。与 Run 求值环境同源构建（口径一致），供 bil_usage_logs 的
+// billing_snapshot.formula.vars 消费；header/param 值可能为 string/any，整体 map[string]any
+func SnapshotVars(c *Compiled, in FormulaInput) map[string]any {
+	env := in.Env(c.Vars, nil)
+	out := make(map[string]any, len(c.Vars)+len(c.UKeys)+len(c.ParamPaths)+len(c.HeaderKeys))
+	for name := range c.Vars {
+		if v, ok := env[name]; ok {
+			out[name] = v
+		}
+	}
+	for _, key := range c.UKeys {
+		out["u:"+key] = in.Facts[key]
+	}
+	var req *RequestInput
+	if in.Eval != nil {
+		req = in.Eval.Request
+	}
+	for _, key := range c.HeaderKeys {
+		out["header:"+key] = req.GetHeader(key)
+	}
+	for _, path := range c.ParamPaths {
+		out["param:"+path] = req.GetParam(path)
+	}
+	return out
 }

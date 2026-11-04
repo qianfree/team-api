@@ -147,6 +147,7 @@ const billingModeLabel: Record<string, string> = {
 	tiered: '阶梯',
 	per_second: '按秒',
 	special: '特殊计费',
+	formula: '表达式',
 }
 
 const billingModeColor: Record<string, string> = {
@@ -155,6 +156,7 @@ const billingModeColor: Record<string, string> = {
 	tiered: 'arcoblue',
 	per_second: 'green',
 	special: 'orange',
+	formula: 'purple',
 }
 
 const billingSourceLabel: Record<string, string> = {
@@ -1070,6 +1072,19 @@ const { exporting, exportFile } = useExport({
 										<span class="snapshot-label">按次单价</span>
 										<span class="snapshot-value">{{ formatBilling(snapshot.pricing.effective_input_price, 6) }}/次</span>
 									</div>
+									<!-- 表达式计费：命中系数 + 命中规则（完整变量环境见下方计算过程文本） -->
+									<template v-else-if="snapshot.formula">
+										<div class="snapshot-row">
+											<span class="snapshot-label">命中系数</span>
+											<span class="snapshot-value">{{ (snapshot.formula.factor || 0).toLocaleString() }} / 1M</span>
+										</div>
+										<div v-if="snapshot.formula.rules && snapshot.formula.rules.length > 0" class="snapshot-formula-rules">
+											<div v-for="(rule, i) in snapshot.formula.rules" :key="i" class="snapshot-rule-row">
+												<ATag :color="rule.matched ? 'green' : 'gray'" size="small">{{ rule.matched ? `×${rule.multiplier}` : '×1 未命中' }}</ATag>
+												<span class="snapshot-rule-cond">{{ rule.cond }}</span>
+											</div>
+										</div>
+									</template>
 									<div v-if="snapshot.cache_prices && snapshot.cache_prices.cache_creation_price > 0" class="snapshot-row">
 										<span class="snapshot-label">缓存创建单价(5分钟)</span>
 										<span class="snapshot-value">{{ formatBilling(snapshot.cache_prices.cache_creation_price || 0, 6) }}/1M</span>
@@ -1553,6 +1568,26 @@ const { exporting, exportFile } = useExport({
 	color: #1d2129;
 	text-align: right;
 }
+.snapshot-formula-rules {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin-top: 4px;
+}
+
+.snapshot-rule-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.snapshot-rule-cond {
+	font-family: 'JetBrains Mono', Consolas, monospace;
+	font-size: 12px;
+	color: var(--color-text-2);
+	word-break: break-all;
+}
+
 .snapshot-text-title {
 	font-size: 12px;
 	font-weight: 600;
