@@ -425,6 +425,10 @@ func (s *sTenant) convertToMarketplaceItem(ctx context.Context, model *entity.Md
 	if (billingMode == "per_second" || billingMode == billing.BillingModeSpecial) && blob != nil {
 		item.PerSecondPrices = blob.Prices
 	}
+	// 表达式计费：透出公式原文（价格透明展示）
+	if billingMode == billing.BillingModeFormula && blob != nil && blob.Formula != nil {
+		item.Formula = *blob.Formula
+	}
 	if pricing.DiscountLabel != nil {
 		item.DiscountLabel = *pricing.DiscountLabel
 	}

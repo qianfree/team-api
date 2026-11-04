@@ -7,8 +7,17 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/qianfree/team-api/internal/logic/billing/formula"
 	rcommon "github.com/qianfree/team-api/relay/common"
 )
+
+// truncateFormulaExpr 公式原文截断（快照留痕用，完整原文以 mdl_pricing.pricing 为准）
+func truncateFormulaExpr(src string) string {
+	if len(src) > 200 {
+		return src[:200] + "..."
+	}
+	return src
+}
 
 // BillingSnapshot 计费快照（写入 JSONB）
 type BillingSnapshot struct {
@@ -22,6 +31,21 @@ type BillingSnapshot struct {
 	// 记录实际计费秒数、命中档位与单价，配合 multipliers 使
 	// 「秒数 × 档位单价 × 乘数链 ≈ 实际费用」可复算；特殊方案含素材组件时该节描述输出生成组件
 	PerSecond *BillingSnapshotPerSecond `json:"per_second,omitempty"`
+	// Formula 表达式计费命中明细（仅 billing_mode=formula 填充）：公式原文（截断）、
+	// 变量环境快照与命中系数，配合 multipliers 使「系数 / 1e6 × 乘数链 = 实际费用」可复算
+	Formula *BillingSnapshotFormula `json:"formula,omitempty"`
+}
+
+// BillingSnapshotFormula 表达式计费命中明细
+type BillingSnapshotFormula struct {
+	// Expr 公式原文（超长截断 200 字符，完整原文见 mdl_pricing.pricing）
+	Expr string `json:"expr"`
+	// Vars 求值时的变量环境快照（仅公式引用的变量）
+	Vars map[string]float64 `json:"vars,omitempty"`
+	// Factor 命中的价格系数（每 1M token 口径），金额 = Factor / 1e6 × 乘数链
+	Factor float64 `json:"factor"`
+	// Error 求值失败原因（fail-safe 按预扣额结算时记录；正常为空）
+	Error string `json:"error,omitempty"`
 }
 
 // BillingSnapshotPerSecond 按秒计费命中明细
@@ -172,6 +196,36 @@ func GenerateBillingSnapshot(
 		}
 	}
 
+	// 表达式计费命中明细（仅 formula 模式填充）：变量环境来自 breakdown 求值时
+	// 构建的 Env——此处重新按同一口径构建快照（computeCost 与快照的 usage 一致，
+	// 排除语义确定，重建结果与求值环境相同）
+	if pricing.BillingMode == BillingModeFormula {
+		snap := &BillingSnapshotFormula{
+			Expr:   truncateFormulaExpr(pricing.Formula),
+			Factor: breakdown.FormulaFactor,
+			Error:  breakdown.FormulaError,
+		}
+		if compiled, err := formula.Compile(pricing.Formula); err == nil {
+			env := formula.FromUsage(breakdown.InputTokens, breakdown.OutputTokens,
+				breakdown.CacheReadTokens, breakdown.CacheCreation5mTokens, breakdown.CacheCreation1hTokens, usage)
+			env.ImageCount = breakdown.PerRequestCount // 与 computeCost 求值环境一致（图片张数）
+			full := env.Env(compiled.Vars)
+			vars := make(map[string]float64, len(compiled.Vars)+len(compiled.UKeys))
+			for name := range compiled.Vars {
+				if v, ok := full[name].(float64); ok {
+					vars[name] = v
+				}
+			}
+			// u() 取值以 u:key 形式并入快照（公式复算时可见 facts 实际取值；
+			// 预扣额兜底结算场景中此处记录求值时点的真实 facts）
+			for _, key := range compiled.UKeys {
+				vars["u:"+key] = env.Facts[key]
+			}
+			snap.Vars = vars
+		}
+		snapshot.Formula = snap
+	}
+
 	// 结算信息
 	if settlement != nil {
 		snapshot.Settlement = BillingSnapshotSettlement{
@@ -282,6 +336,7 @@ func GenerateBillingSummary(ctx context.Context, snapshot *BillingSnapshot) stri
 		"tiered":           "阶梯计费",
 		"per_second":       "按秒计费",
 		BillingModeSpecial: "特殊计费",
+		BillingModeFormula: "表达式计费",
 	}
 	mode := modeMap[snapshot.Pricing.BillingMode]
 	if mode == "" {
@@ -367,6 +422,17 @@ func GenerateBillingSummary(ctx context.Context, snapshot *BillingSnapshot) stri
 		}
 		lines = append(lines, fmt.Sprintf("按秒计费: %s 秒 × %s/秒%s",
 			formatMultiplier(snapshot.PerSecond.Seconds), money(snapshot.PerSecond.UnitPrice), specPart))
+	}
+
+	// 表达式计费命中明细行（仅 formula 模式快照携带）：公式原文 + 命中系数，
+	// 费用 = 系数 / 1e6 × 下方乘数链；变量环境在快照 formula.vars 节供复算
+	if snapshot.Formula != nil {
+		if snapshot.Formula.Error != "" {
+			lines = append(lines, fmt.Sprintf("表达式计费: 求值失败（%s），按预扣额结算", snapshot.Formula.Error))
+		} else {
+			lines = append(lines, fmt.Sprintf("表达式计费: %s → 系数 %s（费用 = 系数/1M × 乘数链）",
+				snapshot.Formula.Expr, formatMultiplier(snapshot.Formula.Factor)))
+		}
 	}
 
 	// 倍率说明行（所有计费模式通用）：租户/时段/附加乘数逐项列出，任一 ≠ 1 或存在附加乘数时展示。

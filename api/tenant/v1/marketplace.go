@@ -53,6 +53,7 @@ type MarketplaceModelItem struct {
 	OutputPrice        float64            `json:"output_price"`                // 输出价格（每百万 token，USD；tiered=首档）
 	PerRequestPrice    float64            `json:"per_request_price"`           // 按次单价（USD/次，仅 per_request）
 	PerSecondPrices    map[string]float64 `json:"per_second_prices,omitempty"` // 按秒单价矩阵（规格→USD/秒，仅 per_second），"*"为兜底价
+	Formula            string             `json:"formula,omitempty"`           // 计费公式原文（仅 formula 模式，系数=每 1M token 本位币；金额=系数/1e6×乘数链）
 	CacheReadPrice     float64            `json:"cache_read_price"`            // 缓存读取价格（每百万 token，USD）
 	CacheCreationPrice float64            `json:"cache_creation_price"`        // 缓存创建/写入价格（每百万 token，USD；Claude creation 与 OpenAI write 合并）
 	DiscountLabel      string             `json:"discount_label"`              // 折扣标签（营销展示，空=不展示）

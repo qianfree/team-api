@@ -18,6 +18,7 @@ import PerSecondMatrixEditor, {
 	perSecondPayloadFrom,
 	perSecondBasePriceOf,
 } from './PerSecondMatrixEditor.vue'
+import FormulaPricingEditor from './FormulaPricingEditor.vue'
 import { availableSchemeOptions, resolvePricingSchemeEditor } from './pricingSchemeEditors'
 
 // 本位币符号：定价输入控件后缀跟随本位币，输入值仍为 bil 层存储原值不折算
@@ -65,7 +66,12 @@ const billingModeOptions = [
 	{ label: '按次计费', value: 'per_request' },
 	{ label: '阶梯计费', value: 'tiered' },
 	{ label: '按秒计费 (视频)', value: 'per_second' },
+	{ label: '表达式计费', value: 'formula' },
 ]
+
+// 表达式计费（formula）：公式文本与编辑器引用（保存前调编辑器自治校验）
+const formulaText = ref('')
+const formulaEditorRef = ref<InstanceType<typeof FormulaPricingEditor>>()
 
 function createEmptyItem(mode: string) {
 	return {
@@ -113,6 +119,7 @@ function resetEditorDefaults() {
 	editorBillingMode.value = 'token'
 	editorItems.length = 0
 	editorItems.push(createEmptyItem('token'))
+	formulaText.value = ''
 	perSecondRows.length = 0
 	paramRules.length = 0
 	editorTimeSegments.length = 0
@@ -760,8 +767,11 @@ async function loadPricing() {
 					cache_creation_price: item.cache_creation_price ?? 0,
 					cache_creation_1h_price: item.cache_creation_1h_price ?? 0,
 					per_second_prices: item.per_second_prices ?? null,
+					formula: item.formula || '',
 				})
 			}
+			// 表达式计费回显：公式原文进编辑器（切其他模式再切回不丢失）
+			formulaText.value = list[0].formula || ''
 			loadPerSecondPrices(list[0].per_second_prices)
 		} else {
 			resetEditorDefaults()
@@ -783,14 +793,18 @@ const timePricingEnabled = ref(false)
 const editorTimeSegments = reactive<TimeSegmentRow[]>([])
 const timeSegEditorRef = ref<InstanceType<typeof PricingTimeSegmentsEditor>>()
 
-// 组合预览基础价：随计费模式取当前编辑中的价格（tiered 用首档价）
-const previewBase = computed<SegmentPreviewBase>(() => {
+// 组合预览基础价：随计费模式取当前编辑中的价格（tiered 用首档价）；
+// formula 模式无单一基准价（公式输出整体系数），时段组合预览不展示
+const previewBase = computed<SegmentPreviewBase | null>(() => {
 	const first: any = editorItems[0] || {}
 	if (editorBillingMode.value === 'per_second') {
 		return { kind: 'per_second', perSecond: perSecondBasePrice() }
 	}
 	if (editorBillingMode.value === 'per_request') {
 		return { kind: 'per_request', perRequest: Number(first.per_request_price) || 0 }
+	}
+	if (editorBillingMode.value === 'formula') {
+		return null
 	}
 	const kind = editorBillingMode.value === 'tiered' ? 'tiered' : 'token'
 	return { kind, input: Number(first.input_price) || 0, output: Number(first.output_price) || 0 }
@@ -864,6 +878,14 @@ async function savePricing() {
 				return
 			}
 		}
+		// 表达式模式：公式编辑器自治校验（编译 + 试算，未通过中止保存；后端保存链路同口径烟测兜底）
+		if (editorBillingMode.value === 'formula') {
+			const formulaOk = await formulaEditorRef.value?.validate()
+			if (!formulaOk) {
+				editorSaving.value = false
+				return
+			}
+		}
 		// 时段定价：编辑器组件校验并生成载荷（校验失败中止保存）
 		const timeSegments = timeSegEditorRef.value?.buildTimeSegmentsPayload()
 		if (timeSegments === null || timeSegments === undefined) {
@@ -900,14 +922,16 @@ async function savePricing() {
 			billing_mode: editorBillingMode.value,
 			min_tokens: editorBillingMode.value === 'tiered' ? item.min_tokens : 0,
 			max_tokens: editorBillingMode.value === 'tiered' ? (index < editorItems.length - 1 ? item.max_tokens : null) : null,
-			input_price: item.input_price,
-			output_price: item.output_price,
+			input_price: editorBillingMode.value === 'formula' ? 0 : item.input_price,
+			output_price: editorBillingMode.value === 'formula' ? 0 : item.output_price,
 			per_request_price: editorBillingMode.value === 'per_request' ? (item.per_request_price ?? null) : null,
-			cache_read_price: item.cache_read_price,
-			cache_creation_price: item.cache_creation_price,
+			cache_read_price: editorBillingMode.value === 'formula' ? 0 : item.cache_read_price,
+			cache_creation_price: editorBillingMode.value === 'formula' ? 0 : item.cache_creation_price,
 			// 1h TTL 价：0=未配置（后端按 5m 基准 ×1.6 推导）；tiered 仅首档生效（后端取锚点）
-			cache_creation_1h_price: item.cache_creation_1h_price ?? 0,
+			cache_creation_1h_price: editorBillingMode.value === 'formula' ? 0 : (item.cache_creation_1h_price ?? 0),
 			per_second_prices: editorBillingMode.value === 'per_second' ? perSecondPrices : null,
+			// 表达式计费：公式原文（仅 formula 模式提交，其余模式置空清除）
+			formula: editorBillingMode.value === 'formula' ? formulaText.value.trim() : '',
 		}))
 		await request.put(`/admin/models/${props.modelId}/pricing`, {
 			items,
@@ -1091,6 +1115,13 @@ watch(() => props.visible, (val) => {
 							<span class="section-hint">按视频时长（秒）计费，费用 = 命中规格单价 × 秒数；<code>*</code> 为兜底价（请求规格未命中时使用）</span>
 						</div>
 						<PerSecondMatrixEditor :rows="perSecondRows" />
+					</div>
+				</template>
+
+				<!-- Formula Mode（表达式计费：公式从 usage 变量取值，适配表单模式难以表达的复杂定价） -->
+				<template v-else-if="editorBillingMode === 'formula'">
+					<div class="editor-section">
+						<FormulaPricingEditor ref="formulaEditorRef" v-model="formulaText" />
 					</div>
 				</template>
 

@@ -296,6 +296,14 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 		breakdown = fb
 	} else {
 		breakdown = computeCost(pricingResult, usage.PromptTokens, usage.CompletionTokens, usage, perRequestCount)
+		// 表达式计费求值失败 fail-safe：公式在真实 usage 环境上求值出错时按预扣额结算
+		// （公式保存时已烟测，此处失败属防御性兜底），错误记入快照供排查
+		if breakdown.FormulaError != "" {
+			g.Log().Errorf(ctx, "settle_with_usage: formula eval failed for %s (model=%s), fallback to pre-deduct estimate %.6f: %s",
+				requestID, modelName, preDeductAmount, breakdown.FormulaError)
+			breakdown.TotalCost = preDeductAmount
+			breakdown.BaseCost = preDeductAmount
+		}
 	}
 	actualCost := breakdown.TotalCost
 
