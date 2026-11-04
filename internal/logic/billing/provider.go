@@ -2,6 +2,7 @@ package billing
 
 import (
 	"context"
+	"net/http"
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
@@ -17,8 +18,8 @@ func NewBillingProvider() common.BillingProvider {
 	return &BillingProviderImpl{}
 }
 
-func (b *BillingProviderImpl) PreDeduct(ctx context.Context, tenantID int64, modelName string, count, inputTokens, maxTokens int, isStream bool, requestID string) (float64, error) {
-	amount, err := EstimatePreDeductAmount(ctx, tenantID, modelName, count, inputTokens, maxTokens, isStream)
+func (b *BillingProviderImpl) PreDeduct(ctx context.Context, tenantID int64, modelName string, count, inputTokens, maxTokens int, isStream bool, requestID string, headers http.Header, body []byte) (float64, error) {
+	amount, err := EstimatePreDeductAmount(ctx, tenantID, modelName, count, inputTokens, maxTokens, isStream, headers, body)
 	if err != nil {
 		return 0, err
 	}
@@ -61,9 +62,9 @@ func (b *BillingProviderImpl) SettleFailed(ctx context.Context, tenantID int64, 
 	return SettleFailed(ctx, tenantID, requestID, preDeductAmount)
 }
 
-func (b *BillingProviderImpl) SettleStreamInterrupted(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID, relayMode string, usage *common.Usage, preDeductAmount float64, projectID int64, imageCount int, billAt time.Time) (*common.SettlementResult, error) {
+func (b *BillingProviderImpl) SettleStreamInterrupted(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID, relayMode string, usage *common.Usage, preDeductAmount float64, projectID int64, imageCount int, billAt time.Time, headers http.Header, body []byte) (*common.SettlementResult, error) {
 	// 直接透传完整 usage：流中断结算需计入 cache token（拆成 input/output 两数会丢 cache 明细）
-	result, err := SettleStreamInterrupted(ctx, tenantID, userID, apiKeyID, channelID, modelName, requestID, relayMode, usage, preDeductAmount, projectID, imageCount, billAt)
+	result, err := SettleStreamInterrupted(ctx, tenantID, userID, apiKeyID, channelID, modelName, requestID, relayMode, usage, preDeductAmount, projectID, imageCount, billAt, headers, body)
 	return toCommonSettlementResult(result), err
 }
 

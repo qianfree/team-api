@@ -627,7 +627,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 
 	var preDeductAmount float64
 	if billing != nil {
-		amt, err := billing.PreDeduct(ctx, rc.TenantID, v.modelName, v.imageCount, v.estimatedTokens, v.maxTokens, v.isStream, rc.RequestID)
+		amt, err := billing.PreDeduct(ctx, rc.TenantID, v.modelName, v.imageCount, v.estimatedTokens, v.maxTokens, v.isStream, rc.RequestID, headers, body)
 		if err != nil {
 			// 未配价模型 fail-closed：返回明确的请求错误，而非误导性的"余额不足"
 			if errors.Is(err, common.ErrModelPricingNotConfigured) {
@@ -788,7 +788,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			attemptCtx = common.WithDebugAttempt(ctx, dbgAttempt.Capture)
 		}
 
-		info := buildRelayInfo(attemptCtx, rc, v, selection, path, headers, attempt)
+		info := buildRelayInfo(attemptCtx, rc, v, selection, path, headers, body, attempt)
 		dbgAttempt.CaptureProtocol(info)
 
 		if tr := monitor.GetTrackedRequest(rc.RequestID); tr != nil {
@@ -919,7 +919,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 				var interruptSettle *common.SettlementResult
 				if billing != nil && preDeductAmount > 0 {
 					settleResult, err := billing.SettleStreamInterrupted(settleCtx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
-						v.modelName, rc.RequestID, v.relayModeStr, streamUsage, preDeductAmount, rc.ProjectID, info.ImageCount, info.StartTime)
+						v.modelName, rc.RequestID, v.relayModeStr, streamUsage, preDeductAmount, rc.ProjectID, info.ImageCount, info.StartTime, headers, body)
 					if err != nil {
 						g.Log().Warningf(settleCtx, "[RelayHandler] Stream interrupted settlement failed: tenant=%d project=%d request=%s err=%v",
 							rc.TenantID, rc.ProjectID, rc.RequestID, err)
@@ -1015,7 +1015,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 
 // buildRelayInfo 从渠道选择结果构建 RelayInfo
 // attempt 为当前重试轮次（0=首次），写入 RetryIndex 供 ParamOverride「是否重试」规则与 bil_usage_logs.retry_index 使用（C3）。
-func buildRelayInfo(ctx context.Context, rc *RelayContext, v *relayValidation, selection *common.ChannelSelection, path string, headers http.Header, attempt int) *common.RelayInfo {
+func buildRelayInfo(ctx context.Context, rc *RelayContext, v *relayValidation, selection *common.ChannelSelection, path string, headers http.Header, body []byte, attempt int) *common.RelayInfo {
 	info := &common.RelayInfo{
 		Context:         ctx,
 		TenantID:        rc.TenantID,
@@ -1031,6 +1031,7 @@ func buildRelayInfo(ctx context.Context, rc *RelayContext, v *relayValidation, s
 		BaseModelName:   v.lookupModel,
 		RequestURLPath:  path,
 		RequestHeaders:  headers,
+		RequestBody:     body,
 		StartTime:       time.Now(),
 		StreamStatus:    common.NewStreamStatus(),
 		InboundFormat:   relayModeToInboundFormat(v.relayMode),

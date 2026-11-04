@@ -76,6 +76,8 @@ var adminPermissionRules = []permissionRule{
 	{method: "POST", path: "/api/admin/models/export-json", perm: "model:view"},
 	{method: "POST", path: "/api/admin/models/import-preview", perm: "model:create"},
 	{method: "POST", path: "/api/admin/models/import", perm: "model:create"},
+	// 计费公式校验试算（dry-run）：定价编辑能力，与保存定价同权限
+	{method: "POST", path: "/api/admin/models/pricing/validate-formula", perm: "model:edit"},
 	{method: "PUT", prefix: "/api/admin/models/", perm: "model:edit"},
 	{method: "DELETE", prefix: "/api/admin/models/", perm: "model:delete"},
 	// Model groups

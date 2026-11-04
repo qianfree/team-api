@@ -195,7 +195,7 @@ func TestGenerateBillingSnapshot_RatioMultipliersAndPerSecond(t *testing.T) {
 			PerSecond:     &PerSecondFacts{Resolution: "720P", Seconds: 4, UnitPrice: 0.5},
 		},
 	}
-	snap := GenerateBillingSnapshot(pricing, breakdown, nil, &SettlementResult{ActualCost: 1.19}, nil)
+	snap := GenerateBillingSnapshot(pricing, breakdown, nil, &SettlementResult{ActualCost: 1.19}, nil, nil)
 	if snap == nil {
 		t.Fatal("expected non-nil snapshot")
 	}
@@ -218,7 +218,7 @@ func TestGenerateBillingSnapshot_RatioMultipliersAndPerSecond(t *testing.T) {
 	}
 
 	// 无要素（同步链路/旧调用）快照不带新字段，结构零变化
-	plain := GenerateBillingSnapshot(pricing, &CostBreakdown{TotalCost: 1.19}, nil, nil, nil)
+	plain := GenerateBillingSnapshot(pricing, &CostBreakdown{TotalCost: 1.19}, nil, nil, nil, nil)
 	if plain.Multipliers.RatioMultipliers != nil || plain.PerSecond != nil {
 		t.Error("snapshot without TaskFacts should omit new fields")
 	}
@@ -333,7 +333,7 @@ func TestSnapshotEquation_TaskVideoEndToEnd(t *testing.T) {
 	cost = applyRatioMultipliers(cost, ratios, "duration", "resolution")
 	cost = RoundMoney(cost)
 	breakdown := buildTaskCostBreakdown(context.Background(), pricing, InexactFloat64(cost), 112500, 50000, ratios, nil)
-	snap := GenerateBillingSnapshot(pricing, breakdown, nil, &SettlementResult{ActualCost: InexactFloat64(cost)}, nil)
+	snap := GenerateBillingSnapshot(pricing, breakdown, nil, &SettlementResult{ActualCost: InexactFloat64(cost)}, nil, nil)
 	text := GenerateBillingSummary(context.Background(), snap)
 
 	// 行算式：112500 × $30/1M × 0.4(=0.8×0.5) = $1.35
@@ -369,7 +369,7 @@ func TestAttachTaskSnapshot(t *testing.T) {
 		RefundAmount:    0.3,
 		DuplicateSkip:   true,
 	}
-	attachTaskSnapshot(context.Background(), result, pricing, breakdown, "wan3.0")
+	attachTaskSnapshot(context.Background(), result, pricing, breakdown, "wan3.0", nil)
 
 	if result.BillingSnapshot == "" || result.BillingSnapshot == "null" {
 		t.Fatalf("BillingSnapshot should be attached, got %q", result.BillingSnapshot)
@@ -403,7 +403,7 @@ func TestAttachTaskSnapshot(t *testing.T) {
 
 	// pricing nil（取价失败）：不附加任何字段，不 panic
 	bare := &rcommon.SettlementResult{ActualCost: 1.7, DuplicateSkip: true}
-	attachTaskSnapshot(context.Background(), bare, nil, breakdown, "wan3.0")
+	attachTaskSnapshot(context.Background(), bare, nil, breakdown, "wan3.0", nil)
 	if bare.BillingSnapshot != "" || bare.BillingSummary != "" || bare.BillingMode != "" {
 		t.Errorf("nil pricing should attach nothing, got %+v", bare)
 	}

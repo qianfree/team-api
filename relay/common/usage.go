@@ -42,6 +42,10 @@ type Usage struct {
 	// true: PromptTokens 是总量，cache 是其子集，计费时需扣减避免重复计费（OpenAI 原生 API）
 	// false（默认）: PromptTokens 与 cache 独立，不扣减（Claude API、第三方兼容 API）
 	CacheIncludedInPrompt bool `json:"-"`
+	// Facts 旁路计量事实（非 token 计量：音频秒数、响应字节数等），渠道 adaptor
+	// 按需填充，公式计费经 u("key") 消费；key 注册表见 billing/formula.KnownFactKeys。
+	// 新增填充点必须同步注册 key（保存烟测强校验），值单位随 key 语义固定
+	Facts map[string]float64 `json:"-"`
 }
 
 // TotalInputTokens 返回「含缓存的总输入 token」：口径未包含缓存（Claude）时补加缓存读/写，

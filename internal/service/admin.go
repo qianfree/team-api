@@ -353,6 +353,10 @@ type (
 		GetModelPricing(ctx context.Context, req *v1.PricingGetReq) (*v1.PricingGetRes, error)
 		// SetModelPricing 设置模型定价（全量替换）
 		SetModelPricing(ctx context.Context, req *v1.PricingSetReq) (*v1.PricingSetRes, error)
+		// ValidateModelPricingFormula 校验计费公式并试算（dry-run，不落库不触发缓存失效）。
+		// 管理端「表达式计费」编辑器的「校验并试算」按钮与保存前置校验共用；
+		// 与保存链路的强制烟测（BuildPricingBlob formula 分支）同口径
+		ValidateModelPricingFormula(ctx context.Context, req *v1.PricingFormulaValidateReq) (*v1.PricingFormulaValidateRes, error)
 		// FetchOfficialPricing 拉取模型官方定价（来自 LiteLLM + models.dev 双数据源）
 		FetchOfficialPricing(ctx context.Context, req *v1.PricingFetchOfficialReq) (*v1.PricingFetchOfficialRes, error)
 		// FetchOfficialModelInfo 按模型名称拉取官方模型信息（上下文长度+能力特性）
@@ -441,6 +445,10 @@ type (
 		//
 		// 同时返回权限点分组（高级模式用）与「模块 × 档位」元数据（默认配置界面用）：
 		// 二者是同一份数据的两个视图，由后端统一给出，避免前端复刻一份档位定义造成漂移。
+		//
+		// 已启用插件声明的分组与模块档位（PermissionProvider）一并合并下发：
+		// 前端零改动即可在角色配置界面看到插件模块。只合并「已启用」的插件——
+		// 未启用插件的路由被默认拒绝，把它的模块摆上授权界面只会造成「授了权却不生效」的困惑。
 		GetAllPermissions(ctx context.Context, _ *v1.AdminAllPermissionsReq) (*v1.AdminAllPermissionsRes, error)
 		// ListPlans 获取套餐列表
 		ListPlans(ctx context.Context, req *v1.PlanListReq) (*v1.PlanListRes, error)

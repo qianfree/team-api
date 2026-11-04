@@ -3,10 +3,12 @@ package billing
 import (
 	"encoding/json"
 	"sync"
+	"time"
 
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/shopspring/decimal"
 
+	"github.com/qianfree/team-api/internal/logic/billing/formula"
 	rcommon "github.com/qianfree/team-api/relay/common"
 )
 
@@ -135,12 +137,72 @@ func resolvePerSecondFacts(ratios map[string]any, usage *rcommon.TaskMaterialUsa
 	return spec, seconds
 }
 
+// taskFormulaInput 构建任务路径的公式变量环境：
+//   - seconds：时长信号（素材计量 OutputSeconds 优先 → spec.duration → 默认 5s，均钳制 120s），
+//     与 resolvePerSecondFacts 同口径（含 usage 非空时的实际输出秒数）
+//   - image_count：图片张数（任务 ratios 的 count 信号；公式按张计费时消费，
+//     wrapSchemeCost 对 formula 模式同步 skip count 防双重放大）
+//   - p/c 等同步 token 变量恒 0（任务无 token usage 传入；token 重算路径不适用 formula）
+func taskFormulaInput(ratios map[string]any, usage *rcommon.TaskMaterialUsage) formula.FormulaInput {
+	_, seconds := resolvePerSecondFacts(ratios, usage)
+	count := 1
+	if c, ok := ratioFloat(ratios, "count"); ok && c > 0 {
+		count = int(c)
+	}
+	return formula.FormulaInput{Seconds: seconds, ImageCount: count, Eval: taskFormulaEvalContext(ratios)}
+}
+
+// taskFormulaEvalContext 从 ratios 还原公式求值上下文：提交时冻结的请求探测值与
+// 时间基准（见 EstimateTaskCost 的 ratioKeyFormulaRequest 注入）。预扣（注入后
+// 内存形态）与结算（billing_context JSONB 反序列化形态）走同一提取逻辑，
+// 保证两次求值对 header()/param()/时间函数的取值完全一致；无冻结值（公式不含
+// 请求探测，或存量任务）返回 nil → 探针取空值
+func taskFormulaEvalContext(ratios map[string]any) *formula.EvalContext {
+	if ratios == nil {
+		return nil
+	}
+	freeze, ok := ratios[ratioKeyFormulaRequest].(map[string]any)
+	if !ok {
+		return nil
+	}
+	ec := &formula.EvalContext{Request: formula.RequestInputFromMap(freeze)}
+	if at, ok := freeze["at"].(string); ok {
+		if t, err := time.Parse(time.RFC3339Nano, at); err == nil {
+			ec.At = t
+		}
+	}
+	return ec
+}
+
+// runFormulaCost 任务路径公式求值：系数 / 1e6 × 租户乘数 × 时段乘数（decimal）。
+// 与同步 computeCost 的 formula 分支同口径——统一 /1e6 系数语义，任务公式用
+// fixed(x) 表达「每次/每秒 x 本位币」（如 fixed(0.4) * seconds = 每秒 0.4 本位币），
+// 同一公式在同步/任务两条路径的金额语义保持一致，不引入双语义错价窗口。
+// 求值失败返回错误（调用方按预扣口径/占位兜底，fail-safe 不中断任务结算）
+func runFormulaCost(pricing *PricingResult, in formula.FormulaInput) (decimal.Decimal, error) {
+	compiled, err := formula.Compile(pricing.Formula)
+	if err != nil {
+		return decimal.Zero, err
+	}
+	factor, _, err := formula.Run(compiled, in)
+	if err != nil {
+		return decimal.Zero, err
+	}
+	return NewFromFloat(factor).
+		Div(decimal.NewFromInt(1_000_000)).
+		Mul(NewFromFloat(pricing.TenantMultiplier)).
+		Mul(NewFromFloat(effectiveTimeMultiplier(pricing))), nil
+}
+
 // SettleTaskCost 通用引擎的结算口径：
 //   - per_second（按秒计费）：上游返回实际输出秒数（usage.OutputSeconds > 0）时按
 //     「实际秒数 × 矩阵单价 × 租户乘数 × 时段乘数」结算，多退少补——查价键优先
 //     usage.Resolution（实际输出分辨率，如阿里 wan3.0 usage.SR），回退 ratios 的
 //     spec.resolution（提交时请求档位）。实际时长与请求时长不一致（智能时长模式、
 //     上游按内容微调）时以官方计量为准；usage 缺失回退预扣口径。
+//   - formula（表达式计费）：官方素材计量 OutputSeconds > 0 时按「真实秒数」重跑公式
+//     多退少补（图片按张等无时长信号的任务：张数在预扣时已按请求侧精确计量，
+//     回退预扣即终价）；求值失败回退预扣口径（fail-safe）。
 //   - 其余模式（token / per_request / tiered）无素材计量语义：忽略 usage，回退预扣口径
 //     （与 estimateTaskCost 的估算公式一致，结算保持「预扣即终价，token 重算另走 RecalculateByTokens」）。
 func (g GenericScheme) SettleTaskCost(pricing *PricingResult, ratios map[string]any, usage *rcommon.TaskMaterialUsage) decimal.Decimal {
@@ -154,6 +216,12 @@ func (g GenericScheme) SettleTaskCost(pricing *PricingResult, ratios map[string]
 		}
 		// 矩阵为空/全零：落到下方回退（占位/预扣口径），与预扣分支的兜底行为一致
 	}
+	if pricing.BillingMode == BillingModeFormula && usage != nil && usage.OutputSeconds > 0 {
+		if costD, err := runFormulaCost(pricing, taskFormulaInput(ratios, usage)); err == nil {
+			return costD
+		}
+		// 求值失败回退预扣口径（公式保存时已烟测，此处为防御性兜底）
+	}
 	return g.EstimateTaskCost(pricing, ratios, nil)
 }
 
@@ -163,7 +231,14 @@ func (g GenericScheme) SettleTaskCost(pricing *PricingResult, ratios map[string]
 func wrapSchemeCost(pricing *PricingResult, ratios map[string]any, cost decimal.Decimal) decimal.Decimal {
 	// 应用附加比率（video_input 折扣等）：只乘 float 乘数值，
 	// 跳过 duration/resolution（已在时长类分支消费）与 spec.*（规格事实值非乘数）
-	cost = applyRatioMultipliers(cost, ratios, "duration", "resolution")
+	skips := []string{"duration", "resolution"}
+	// formula 模式跳过 count：张数已作为公式变量 image_count 计价（预扣时按请求侧
+	// 张数、公式 fixed(x) * image_count 形态），再连乘会双重放大（与 collectTaskBillingFacts
+	// 的 skip 口径一致，保证快照复算等式成立）
+	if pricing.BillingMode == BillingModeFormula {
+		skips = append(skips, "count")
+	}
+	cost = applyRatioMultipliers(cost, ratios, skips...)
 
 	minCost := NewFromFloat(0.01)
 	if cost.LessThan(minCost) {
@@ -173,6 +248,10 @@ func wrapSchemeCost(pricing *PricingResult, ratios map[string]any, cost decimal.
 }
 
 // EstimateTaskCost 通用引擎的任务预扣估算。计费口径按任务类型分流：
+//   - formula（表达式计费）：公式从任务变量环境（seconds 时长信号 / image_count 张数 /
+//     u() 旁路计量）求出系数，金额 = 系数/1e6 × 租户乘数 × 时段乘数（与同步路径统一
+//     /1e6 系数语义）。求值失败 fail-safe 占位预扣（同 per_second 矩阵为空兜底），
+//     结算阶段按官方素材计量多退少补；
 //   - per_second（按秒计费，视频生成）：矩阵查价（spec.resolution 未命中回退 "*"）×
 //     spec.duration 秒 × 租户乘数 × 时段乘数；
 //   - per_request（按次计费，图片/音乐等）：直接取按次单价；
@@ -184,6 +263,15 @@ func wrapSchemeCost(pricing *PricingResult, ratios map[string]any, cost decimal.
 func (GenericScheme) EstimateTaskCost(pricing *PricingResult, ratios map[string]any, _ []byte) decimal.Decimal {
 	var costD decimal.Decimal
 	switch {
+	case pricing.BillingMode == BillingModeFormula:
+		// 表达式计费：任务变量环境（seconds=spec.duration 请求时长信号、image_count=请求张数），
+		// 系数语义与同步路径一致（fixed(x) = 每次/每秒 x 本位币）
+		if cost, err := runFormulaCost(pricing, taskFormulaInput(ratios, nil)); err == nil {
+			costD = cost
+		} else {
+			// 求值失败占位预扣（公式保存时已烟测，运行时失败属环境异常，fail-safe 不阻断提交）
+			costD = NewFromFloat(imagePlaceholderPreDeduct)
+		}
 	case pricing.BillingMode == "per_second":
 		// 按秒计费：矩阵查价 × 时长 × 租户乘数 × 时段乘数。
 		// 要素解析（时长钳制/档位回退）与结算、快照共用 resolvePerSecondFacts，预扣传 usage=nil

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"net/http"
 	"strings"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/qianfree/team-api/internal/consts"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/billing"
+	"github.com/qianfree/team-api/internal/logic/billing/formula"
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/relay"
 	do "github.com/qianfree/team-api/internal/model/do"
@@ -672,6 +674,12 @@ func expandPricingBlob(mode string, blob *billing.PricingBlob) ([]v1.PricingItem
 		if len(blob.Prices) > 0 {
 			item.PerSecondPrices = blob.Prices
 		}
+		if blob.Formula != nil {
+			item.Formula = *blob.Formula
+		}
+		if blob.FormulaRules != nil {
+			item.FormulaRules = *blob.FormulaRules
+		}
 		items = append(items, item)
 	}
 	// 时段与倍率横切所有计费模式（含 tiered），随 blob 顶层还原
@@ -793,6 +801,8 @@ func pricingItemsToInput(items []v1.PricingItem) []billing.PricingItemInput {
 			CacheCreationPrice:   item.CacheCreationPrice,
 			CacheCreation1hPrice: item.CacheCreation1hPrice,
 			PerSecondPrices:      item.PerSecondPrices,
+			Formula:              item.Formula,
+			FormulaRules:         item.FormulaRules,
 		})
 	}
 	return result
@@ -851,7 +861,8 @@ func writePricingForModel(ctx context.Context, modelDBID int64, items []v1.Prici
 
 // pricingSortPrice 从 pricing JSONB 派生排序基准价：token=输入价，tiered=首档输入价，
 // per_request=按次单价，per_second/special=最低档每秒单价；无正价返回 nil（排序落尾部）。
-// 取值优先级与迁移 000025 的存量回填 COALESCE 口径一致
+// 取值优先级与迁移 000025 的存量回填 COALESCE 口径一致。
+// formula 无单一基准价：取常规对话参考向量（10K 输入 / 2K 输出）的试算金额做排序基准
 func pricingSortPrice(blob *billing.PricingBlob) *float64 {
 	if blob == nil {
 		return nil
@@ -871,6 +882,23 @@ func pricingSortPrice(blob *billing.PricingBlob) *float64 {
 		if value > 0 && (minPrice == 0 || value < minPrice) {
 			minPrice = value
 		}
+	}
+	if minPrice == 0 && blob.Formula != nil {
+		// 公式模型：常规对话向量试算金额（系数/1e6），失败返回 nil 落排序尾部
+		compiled, err := formula.Compile(*blob.Formula)
+		if err != nil {
+			return nil
+		}
+		in := formula.FormulaInput{BaseInputTokens: 10000, OutputTokens: 2000, ImageCount: 1}
+		factor, _, err := formula.Run(compiled, in)
+		if err != nil || factor <= 0 {
+			return nil
+		}
+		price := billing.InexactFloat64(billing.NewFromFloat(factor).Div(decimal.NewFromInt(1_000_000)))
+		if price > 0 {
+			return &price
+		}
+		return nil
 	}
 	if minPrice == 0 {
 		return nil
@@ -904,6 +932,10 @@ func buildOfficialBlob(items []v1.PricingItem, segments []v1.TimeSegmentItem, ru
 	var blob *billing.PricingBlob
 	if len(input) > 0 && (input[0].BillingMode == "per_second" || input[0].BillingMode == billing.BillingModeSpecial) && !perSecondMatrixHasPositivePrice(input[0].PerSecondPrices) {
 		blob = &billing.PricingBlob{}
+	} else if len(input) > 0 && input[0].BillingMode == billing.BillingModeFormula {
+		// 官方参考定价不支持公式模式：官方价来源是结构化价目（litellm/models.dev 等），
+		// 无公式语义；「按官方价填入」折扣换算也无从作用于整体系数。显式拒绝防口径错位
+		return nil, gerror.New("官方参考定价不支持表达式计费模式（formula）")
 	} else {
 		blob, err = billing.BuildPricingBlob(input)
 		if err != nil {
@@ -1070,6 +1102,14 @@ func (s *sAdmin) SetModelPricing(ctx context.Context, req *v1.PricingSetReq) (*v
 		if !isSpecial && req.Scheme != "" {
 			return nil, gerror.New("声明计费方案的模型必须使用特殊计费模式（billing_mode=special）")
 		}
+		// formula（表达式计费）：价格完全由公式（含请求规则）决定——时段/参数条件改用
+		// hour()/param() 在公式内表达。此时段定价与参数倍率不接受提交（前端已隐藏编辑器
+		// 并传空数组，此处兜底 API 直调：存量配置随保存清除，不会与公式叠加错价）
+		if req.Items[0].BillingMode == billing.BillingModeFormula {
+			if len(req.TimeSegments) > 0 || len(req.ParamMultipliers) > 0 {
+				return nil, gerror.New("表达式计费（formula）不支持时段定价与参数倍率：时段/请求参数条件请用请求规则（hour()/param()）在公式内表达")
+			}
+		}
 	}
 
 	// 先查模型编码，供事务提交后按模型清除所有租户的价格缓存
@@ -1121,6 +1161,98 @@ func (s *sAdmin) SetModelPricing(ctx context.Context, req *v1.PricingSetReq) (*v
 	}
 
 	return nil, nil
+}
+
+// ValidateModelPricingFormula 校验计费公式并试算（dry-run，不落库不触发缓存失效）。
+// 管理端「表达式计费」编辑器的「校验并试算」按钮与保存前置校验共用；
+// 与保存链路的强制烟测（BuildPricingBlob formula 分支）同口径。
+// 基础公式与请求规则分别接收，按 EffectiveFormula 组合后求值（与线上计费同口径）；
+// 样例可携带 headers/body/eval_at 模拟请求上下文（header()/param()/时间函数探测）
+func (s *sAdmin) ValidateModelPricingFormula(ctx context.Context, req *v1.PricingFormulaValidateReq) (*v1.PricingFormulaValidateRes, error) {
+	res := &v1.PricingFormulaValidateRes{}
+	combined := billing.EffectiveFormula(req.Formula, req.FormulaRules)
+
+	custom := make([]formula.FormulaInput, 0, len(req.Samples))
+	for _, s := range req.Samples {
+		in := formula.FormulaInput{
+			BaseInputTokens:   s.BaseInputTokens,
+			OutputTokens:      s.OutputTokens,
+			CacheReadTokens:   s.CacheReadTokens,
+			CacheCreation5m:   s.CacheCreation5m,
+			CacheCreation1h:   s.CacheCreation1h,
+			InputImageTokens:  s.InputImageTokens,
+			InputAudioTokens:  s.InputAudioTokens,
+			OutputImageTokens: s.OutputImageTokens,
+			OutputAudioTokens: s.OutputAudioTokens,
+			ReasoningTokens:   s.ReasoningTokens,
+			ImageCount:        s.ImageCount,
+			Facts:             s.Facts,
+			OpenAISemantics:   s.OpenAISemantics,
+		}
+		// 样例请求上下文：header()/param() 探测值 + 时间函数基准（与线上 resolve 同一实现）
+		ec := &formula.EvalContext{}
+		if c, err := formula.Compile(combined); err == nil {
+			ec.Request = billing.ResolveFormulaRequest(c, sampleHeaders(s.Headers), s.Body)
+		}
+		if s.EvalAt != "" {
+			if t, err := time.Parse(time.RFC3339, s.EvalAt); err == nil {
+				ec.At = t
+			}
+		}
+		in.Eval = ec
+		custom = append(custom, in)
+	}
+
+	// facts key 注册表恒随响应下发（前端速查展示；Evaluate 内含 SmokeTest 的注册校验）
+	res.KnownFactKeys = formula.KnownFactKeys
+
+	compiled, results, err := formula.Evaluate(combined, custom)
+	if err != nil {
+		res.Valid = false
+		res.Error = err.Error()
+		// 编译失败时无引用变量/结果可返回；样例求值中途失败时返回已完成部分供前端对照
+		if compiled != nil {
+			res.Vars = formula.VarNames(compiled.Vars)
+			res.FactKeys = compiled.UKeys
+		}
+		return res, nil
+	}
+
+	res.Valid = true
+	res.Vars = formula.VarNames(compiled.Vars)
+	res.FactKeys = compiled.UKeys
+	res.Results = make([]v1.PricingFormulaEvalResult, 0, len(results))
+	for _, r := range results {
+		rules := make([]v1.PricingFormulaRuleTrace, 0, len(r.Rules))
+		for _, rule := range r.Rules {
+			rules = append(rules, v1.PricingFormulaRuleTrace{
+				Cond:       rule.Cond,
+				Multiplier: rule.Multiplier,
+				Matched:    rule.Matched,
+			})
+		}
+		res.Results = append(res.Results, v1.PricingFormulaEvalResult{
+			Name:   r.Name,
+			Env:    r.Env,
+			Factor: r.Factor,
+			Rules:  rules,
+			// 参考金额 = 系数 / 1e6（未乘租户/时段乘数，前端按平台原价口径展示）
+			Amount: billing.InexactFloat64(billing.NewFromFloat(r.Factor).Div(decimal.NewFromInt(1_000_000))),
+		})
+	}
+	return res, nil
+}
+
+// sampleHeaders 试算样例请求头 → http.Header（键大小写归一由 Header.Get 处理）
+func sampleHeaders(m map[string]string) http.Header {
+	if len(m) == 0 {
+		return nil
+	}
+	h := make(http.Header, len(m))
+	for k, v := range m {
+		h.Set(k, v)
+	}
+	return h
 }
 
 // FetchOfficialPricing 拉取模型官方定价（来自 LiteLLM + models.dev 双数据源）

@@ -46,3 +46,6 @@ func (c *ControllerV1) ModelImportPreview(ctx context.Context, req *v1.ModelImpo
 func (c *ControllerV1) ModelImport(ctx context.Context, req *v1.ModelImportReq) (res *v1.ModelImportRes, err error) {
 	return service.Admin().ImportModels(ctx, req)
 }
+func (c *ControllerV1) PricingFormulaValidate(ctx context.Context, req *v1.PricingFormulaValidateReq) (res *v1.PricingFormulaValidateRes, err error) {
+	return service.Admin().ValidateModelPricingFormula(ctx, req)
+}

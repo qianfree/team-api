@@ -92,7 +92,7 @@ func HandleSyncImageSubmit(r *ghttp.Request, body []byte, rc *relay_handler.Task
 	if imageCount > 1 {
 		estimateRatios = map[string]any{"base": 1.0, "count": float64(imageCount)}
 	}
-	estimatedCost, err := taskBillingProvider.EstimateTaskCost(ctx, rc.TenantID, modelName, estimateRatios, nil)
+	estimatedCost, err := taskBillingProvider.EstimateTaskCost(ctx, rc.TenantID, modelName, estimateRatios, cleanBody, r.Header)
 	if err != nil {
 		writeSyncImageError(w, http.StatusInternalServerError, "estimate cost failed: "+err.Error())
 		return

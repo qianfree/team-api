@@ -118,9 +118,9 @@ type ModelDeleteReq struct {
 	ID     int64 `json:"id" in:"path" v:"required" dc:"模型ID"`
 }
 
-// PricingItem 定价项（支持按次/按量/阶梯/按秒/特殊方案）
+// PricingItem 定价项（支持按次/按量/阶梯/按秒/表达式/特殊方案）
 type PricingItem struct {
-	BillingMode          string             `json:"billing_mode" v:"required|in:token,per_request,tiered,per_second,special" dc:"计费模式（special 仅由特殊计费方案编辑器提交，不进通用模式下拉）"`
+	BillingMode          string             `json:"billing_mode" v:"required|in:token,per_request,tiered,per_second,special,formula" dc:"计费模式（special 仅由特殊计费方案编辑器提交；formula 为表达式计费，公式存 formula 字段）"`
 	MinTokens            int64              `json:"min_tokens" dc:"阶梯起始 token 数"`
 	MaxTokens            *int64             `json:"max_tokens" dc:"阶梯结束 token 数（NULL=无上限）"`
 	InputPrice           float64            `json:"input_price" dc:"每 1M input token 价格"`
@@ -130,6 +130,10 @@ type PricingItem struct {
 	CacheCreationPrice   float64            `json:"cache_creation_price" dc:"缓存创建/写入每 1M token 价格（即 5 分钟 TTL 价；Claude cache_creation 与 OpenAI cache_write 合并计费）"`
 	CacheCreation1hPrice float64            `json:"cache_creation_1h_price" dc:"1 小时 TTL 缓存创建价（仅 Claude ephemeral_1h；0=未配置，自动按 5 分钟价 ×1.6 推导）"`
 	PerSecondPrices      map[string]float64 `json:"per_second_prices" dc:"按秒单价矩阵（仅 per_second）：分辨率规格→每秒单价（本位币），\"*\"为兜底价，如 {\"480p\":0.25,\"720p\":0.5,\"*\":0.5}"`
+	Formula              string             `json:"formula" dc:"计费公式原文（仅 formula 模式）：如 ctx <= 128000 ? p*5+c*20 : p*10+c*40；系数=每 1M token 本位币，fixed(x)=每次 x 本位币；保存前强制烟测"`
+	// FormulaRules 请求规则表达式（仅 formula 模式，可选）：header()/param()/时间条件倍率
+	// 因子相乘，与基础公式正交，如 (header("tier") == "pro" ? 2 : 1) * (hour("Asia/Shanghai") >= 23 ? 0.8 : 1)
+	FormulaRules string `json:"formula_rules" dc:"请求规则表达式（仅 formula 模式，可选）：请求头/请求体参数/时间条件倍率因子，与基础公式正交相乘"`
 }
 
 // TimeSegmentItem 时段定价项（mdl_pricing.pricing JSONB 顶层 time_segments 数组元素）。
@@ -210,6 +214,91 @@ type PricingSetReq struct {
 }
 
 type PricingSetRes struct{}
+
+// PricingFormulaValidateReq 计费公式校验并试算（dry-run，不落库）
+type PricingFormulaValidateReq struct {
+	g.Meta `path:"/models/pricing/validate-formula" method:"post" mime:"json" tags:"管理后台-模型" summary:"校验计费公式并试算"`
+	// 公式语法：变量 p/c（纯文本输入/输出 token，ctx 完整上下文，cr/cc/cc1h 缓存读/写，
+	// img/img_o 图片输入/输出，ai/ao 音频输入/输出，rt 推理，image_count 张数，
+	// seconds 任务计费秒数——视频等时长类任务，同步请求恒 0）；
+	// 函数 fixed(x)=每次 x 本位币、u("key") 取 usage 旁路计量（音频秒数等，key 见 known_fact_keys）、
+	// min/max/abs/ceil/floor；三目/比较/逻辑运算原生支持。
+	// 系数单位 = 每 1M token 本位币，金额 = 系数 / 1e6 × 租户乘数 × 时段乘数；
+	// 任务路径同一系数语义（如视频每秒 0.4 写 fixed(0.4) * seconds，图片按张 fixed(0.04) * image_count）
+	Formula string `json:"formula" v:"required" dc:"计费公式原文"`
+	// FormulaRules 请求规则表达式（与基础公式正交相乘，组合为 (formula) * (formula_rules)）：
+	// header("key") 请求头、param("path") 请求体路径（点分语法）、has(v,"s") 子串、
+	// hour("tz")/minute/weekday/month/day 时间函数（时区参数可省略，默认平台计费时区）。
+	// 规则三目形状「条件 ? 乘数 : 1」会被静态提取并随响应/快照留痕命中状态
+	FormulaRules string `json:"formula_rules,omitempty" dc:"请求规则表达式（可选）"`
+	// Samples 自定义试算样例（空 = 使用预置样例向量：空请求/常规对话/多模态满配/长上下文/多张图片/音频计量）
+	Samples []PricingFormulaSample `json:"samples" dc:"自定义试算样例（可选）"`
+}
+
+// PricingFormulaSample 试算样例（公式变量取值；0 值字段按未上报处理）
+type PricingFormulaSample struct {
+	BaseInputTokens   int `json:"base_input_tokens" dc:"纯文本输入 token（不含缓存）"`
+	OutputTokens      int `json:"output_tokens" dc:"输出 token（含推理/多模态）"`
+	CacheReadTokens   int `json:"cache_read_tokens" dc:"缓存读取 token"`
+	CacheCreation5m   int `json:"cache_creation_5m" dc:"缓存写入 5m token"`
+	CacheCreation1h   int `json:"cache_creation_1h" dc:"缓存写入 1h token"`
+	InputImageTokens  int `json:"input_image_tokens" dc:"图片输入 token"`
+	InputAudioTokens  int `json:"input_audio_tokens" dc:"音频输入 token"`
+	OutputImageTokens int `json:"output_image_tokens" dc:"图片输出 token"`
+	OutputAudioTokens int `json:"output_audio_tokens" dc:"音频输出 token"`
+	ReasoningTokens   int `json:"reasoning_tokens" dc:"推理输出 token"`
+	ImageCount        int `json:"image_count" dc:"图片张数（默认 1）"`
+	// Facts 旁路计量事实（公式 u() 取值，如 {"audio_seconds": 60}；key 见响应 known_fact_keys）
+	Facts map[string]float64 `json:"facts" dc:"usage 旁路计量事实（公式 u(key) 取值）"`
+	// OpenAISemantics 标记 prompt 是否含全部模态（决定引用 img/ai 时是否从 p 扣除）
+	OpenAISemantics bool `json:"openai_semantics" dc:"OpenAI 原生口径（prompt_tokens 含缓存与全部模态）时为 true"`
+	// Headers 试算请求头（公式 header() 探测取值；键大小写不敏感）
+	Headers map[string]string `json:"headers,omitempty" dc:"试算请求头（header() 探测用）"`
+	// Body 试算请求体 JSON（公式 param() 探测按点分路径从中取值）
+	Body json.RawMessage `json:"body,omitempty" dc:"试算请求体 JSON（param() 探测用）"`
+	// EvalAt 试算时间基准（RFC3339；时间函数在该时刻求值，默认当前时刻）
+	EvalAt string `json:"eval_at,omitempty" dc:"时间函数基准时刻（RFC3339，可选）"`
+}
+
+type PricingFormulaValidateRes struct {
+	// 编译是否通过且全部样例求值成功（false 时 error 带原因）
+	Valid bool `json:"valid"`
+	// 编译/求值错误原因（中文，可直接展示；Valid=true 时为空）
+	Error string `json:"error,omitempty"`
+	// 公式引用的变量列表（前端高亮提示）
+	Vars []string `json:"vars,omitempty"`
+	// 各样例试算结果（变量环境快照 + 命中系数；u() 取值以 u:key 键呈现）
+	Results []PricingFormulaEvalResult `json:"results,omitempty"`
+	// 公式引用的 u() facts key 列表（均须已注册，未注册时 Valid=false）
+	FactKeys []string `json:"fact_keys,omitempty"`
+	// 已注册的 usage facts key 注册表（key → 中文说明），前端速查展示
+	KnownFactKeys map[string]string `json:"known_fact_keys,omitempty"`
+}
+
+// PricingFormulaEvalResult 单组试算结果
+type PricingFormulaEvalResult struct {
+	// 样例名（预置向量带名称，自定义样例为「样例 N」）
+	Name string `json:"name"`
+	// 求值时的变量环境快照（仅公式引用的变量，展示排除语义的实际取值；
+	// u:key/header:key/param:path 为探针实际取值，header/param 值可能为字符串）
+	Env map[string]any `json:"env,omitempty"`
+	// 命中的价格系数（每 1M token 口径）；金额 = 系数 / 1e6（× 租户乘数 × 时段乘数）
+	Factor float64 `json:"factor"`
+	// 请求规则命中表（条件原文、乘数、是否命中）
+	Rules []PricingFormulaRuleTrace `json:"rules,omitempty"`
+	// 按系数换算的每 1M/每次参考金额（本位币，未乘租户/时段乘数）
+	Amount float64 `json:"amount"`
+}
+
+// PricingFormulaRuleTrace 请求规则命中留痕（试算/快照共用结构）
+type PricingFormulaRuleTrace struct {
+	// Cond 条件原文（如 header("tier") == "pro"）
+	Cond string `json:"cond"`
+	// Multiplier 命中时应用的乘数
+	Multiplier float64 `json:"multiplier"`
+	// Matched 本次求值是否命中
+	Matched bool `json:"matched"`
+}
 
 // ModelUpdateRes 更新模型响应
 type ModelUpdateRes struct{}
