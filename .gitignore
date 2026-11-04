@@ -53,3 +53,8 @@ relaykit/relayconvert/register/golden/real_inputs/
 relaykit/relayconvert/register/golden/real_stream_inputs/
 relaykit/relayconvert/register/golden/real_responses/
 relaykit/relayconvert/register/golden/corpus_manifest.json
+
+
+# AI生成文档
+docs/prototype/
+docs/prototypes/
