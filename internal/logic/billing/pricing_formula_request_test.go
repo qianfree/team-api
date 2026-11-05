@@ -53,7 +53,7 @@ func TestComputeCostFormulaRequestRules(t *testing.T) {
 	// 单测无 DB（pricingTimeLocation 的 GetOption 需要数据库），手工构造等价上下文
 	ec := testEvalContext(pricing, headers, body, time.Now())
 
-	bd := computeCostWithEval(pricing, usage.PromptTokens, usage.CompletionTokens, usage, 1, ec)
+	bd := computeCostWithEval(pricing, usage.PromptTokens, usage.CompletionTokens, usage, 1, ec, nil)
 	if bd.FormulaError != "" {
 		t.Fatalf("求值失败: %s", bd.FormulaError)
 	}
@@ -70,7 +70,7 @@ func TestComputeCostFormulaRequestRules(t *testing.T) {
 
 	// 未命中路径：无 header、param 缺失 → 双默认 1
 	ec2 := testEvalContext(pricing, nil, []byte(`{}`), time.Now())
-	bd2 := computeCostWithEval(pricing, usage.PromptTokens, usage.CompletionTokens, usage, 1, ec2)
+	bd2 := computeCostWithEval(pricing, usage.PromptTokens, usage.CompletionTokens, usage, 1, ec2, nil)
 	if bd2.FormulaFactor != 7000 {
 		t.Fatalf("未命中系数 = %v, want 7000", bd2.FormulaFactor)
 	}
@@ -99,7 +99,7 @@ func TestFormulaTimeRuleBillAtConsistency(t *testing.T) {
 	billAt := time.Date(2026, 11, 4, 15, 59, 0, 0, time.UTC) // = 北京 23:59
 	ec := &formula.EvalContext{At: billAt, Location: shanghai}
 
-	bd := computeCostWithEval(pricing, 1000, 0, nil, 1, ec)
+	bd := computeCostWithEval(pricing, 1000, 0, nil, 1, ec, nil)
 	if bd.FormulaError != "" {
 		t.Fatalf("求值失败: %s", bd.FormulaError)
 	}
@@ -108,7 +108,7 @@ func TestFormulaTimeRuleBillAtConsistency(t *testing.T) {
 		t.Fatalf("夜间系数 = %v, want 4000", bd.FormulaFactor)
 	}
 	// 半小时后结算（进程时刻已过零点），同一 billAt 求值结果不变
-	bdLate := computeCostWithEval(pricing, 1000, 0, nil, 1, ec)
+	bdLate := computeCostWithEval(pricing, 1000, 0, nil, 1, ec, nil)
 	if bdLate.FormulaFactor != bd.FormulaFactor {
 		t.Fatalf("跨零点结算漂移: %v vs %v", bdLate.FormulaFactor, bd.FormulaFactor)
 	}
@@ -168,7 +168,7 @@ func TestSnapshotFormulaRules(t *testing.T) {
 	headers.Set("tier", "pro")
 	ec := testEvalContext(pricing, headers, []byte(`{"service_tier":"std"}`), time.Now())
 
-	bd := computeCostWithEval(pricing, usage.PromptTokens, usage.CompletionTokens, usage, 1, ec)
+	bd := computeCostWithEval(pricing, usage.PromptTokens, usage.CompletionTokens, usage, 1, ec, nil)
 	snap := GenerateBillingSnapshot(pricing, bd, usage, &SettlementResult{ActualCost: bd.TotalCost}, nil, ec)
 	if snap.Formula == nil {
 		t.Fatalf("formula 节缺失")

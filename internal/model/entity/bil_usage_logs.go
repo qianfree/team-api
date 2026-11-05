@@ -70,4 +70,6 @@ type BilUsageLogs struct {
 	TaskId                string          `json:"task_id"                  orm:"task_id"                  description:"异步任务公开ID（task_xxxxx），关联 tsk_model_tasks.public_task_id，普通请求为空"`                           // 异步任务公开ID（task_xxxxx），关联 tsk_model_tasks.public_task_id，普通请求为空
 	DurationSeconds       int             `json:"duration_seconds"         orm:"duration_seconds"         description:"按秒计费任务的视频时长（秒），来自任务提交时的 spec.duration；非时长类任务为 NULL"`                                      // 按秒计费任务的视频时长（秒），来自任务提交时的 spec.duration；非时长类任务为 NULL
 	UpstreamRequestId     string          `json:"upstream_request_id"      orm:"upstream_request_id"      description:"上游请求ID：对话=上游响应头请求ID，任务=上游任务ID；排障反查用"`                                                     // 上游请求ID：对话=上游响应头请求ID，任务=上游任务ID；排障反查用
+	ToolUsage             string          `json:"tool_usage"               orm:"tool_usage"               description:"服务端/云端工具调用计数（工具名→次数，如 {\"web_search\": 3}）；无工具调用为 NULL"`                                  // 服务端/云端工具调用计数（工具名→次数，如 {"web_search": 3}）；无工具调用为 NULL
+	ToolSurchargeCost     decimal.Decimal `json:"tool_surcharge_cost"      orm:"tool_surcharge_cost"      description:"工具调用附加费合计（按次收费，已乘租户/时段乘数，已含在 total_cost/actual_cost 中）"`                                  // 工具调用附加费合计（按次收费，已乘租户/时段乘数，已含在 total_cost/actual_cost 中）
 }

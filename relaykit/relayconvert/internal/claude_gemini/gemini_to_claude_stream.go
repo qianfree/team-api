@@ -186,6 +186,16 @@ func (c *GeminiToClaudeStreamConverter) ConvertStreamResponse(
 		}, billing); err != nil {
 			return err
 		}
+		// grounding 搜索次数随收尾侧信道透出（Claude 协议事件无承载字段，
+		// 经 StreamEvent.ToolCalls 交宿主桥接层捕获，供按次附加费计费）。
+		// 与 billing usage 同门控：安全过滤路径不携带计费数据
+		if attachUsage {
+			if calls := shared.GeminiSearchToolCalls(citations); len(calls) > 0 {
+				if err := chunkWriter(&relayconvert.StreamEvent{ToolCalls: calls}); err != nil {
+					return err
+				}
+			}
+		}
 		return emitEvent("message_stop", &dto.ClaudeResponse{Type: "message_stop"}, nil)
 	}
 

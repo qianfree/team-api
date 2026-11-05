@@ -247,6 +247,27 @@ func responsesUsageToCommon(u *dto.ResponsesUsage) *common.Usage {
 	return usage
 }
 
+// applyResponsesToolCalls 从 Responses 响应 output 项统计服务端/云端工具调用计数
+// （计费旁路计量，价格见 billing/tool_pricing.go）：
+//   - web_search_call → web_search（OpenAI Web Search，$10/1K）
+//   - file_search_call → file_search（OpenAI File Search，$2.5/1K）
+//
+// 非流式从整包 output 统计；流式在 response.completed 终帧统计（终帧携带完整 output）。
+// function_call 为客户端自定义函数（客户端侧执行，上游不产生费用），不计。
+func applyResponsesToolCalls(usage *common.Usage, resp *dto.OpenAIResponsesResponse) {
+	if usage == nil || resp == nil {
+		return
+	}
+	for _, item := range resp.Output {
+		switch item.Type {
+		case "web_search_call":
+			usage.AddToolCalls("web_search", 1)
+		case "file_search_call":
+			usage.AddToolCalls("file_search", 1)
+		}
+	}
+}
+
 // recordResponseRoute 记录 response_id → 渠道路由（Redis），供 GET/DELETE/cancel
 // 生命周期端点还原原始请求落到的渠道。ModelName 存 lookupModel 口径（BaseModelName），
 // 与 MaterializeSelection 入参一致。
@@ -293,7 +314,10 @@ func (a *Adaptor) handleResponsesUpstreamNonStream(ctx context.Context, resp *ht
 	var responsesResp dto.OpenAIResponsesResponse
 	if err := json.Unmarshal(body, &responsesResp); err == nil {
 		recordResponseRoute(ctx, info, responsesResp.ID)
-		return responsesUsageToCommon(responsesResp.Usage), nil
+		usage := responsesUsageToCommon(responsesResp.Usage)
+		// 服务端工具调用计数（web_search/file_search 项，按次附加费）
+		applyResponsesToolCalls(usage, &responsesResp)
+		return usage, nil
 	}
 	return &common.Usage{}, nil
 }
@@ -388,10 +412,14 @@ func (a *Adaptor) handleResponsesUpstreamStream(ctx context.Context, resp *http.
 					if r := streamResp.Response; r != nil {
 						// 路由记录：created 即记录使 cancel 尽早可用，completed/done 刷新 TTL（SET 幂等）
 						recordResponseRoute(ctx, info, r.ID)
-						if streamResp.Type != "response.created" && r.Usage != nil {
-							if u := responsesUsageToCommon(r.Usage); u != nil {
-								usage = *u
+						if streamResp.Type != "response.created" {
+							if r.Usage != nil {
+								if u := responsesUsageToCommon(r.Usage); u != nil {
+									usage = *u
+								}
 							}
+							// 终帧携带完整 output：服务端工具调用计数（web_search/file_search 项）
+							applyResponsesToolCalls(&usage, r)
 						}
 					}
 				case "response.output_text.delta":

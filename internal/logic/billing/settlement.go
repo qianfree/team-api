@@ -39,19 +39,20 @@ func isDuplicateKeyErr(err error) bool {
 
 // SettlementResult 结算结果
 type SettlementResult struct {
-	PreDeductAmount  float64        // 预扣金额
-	BaseCost         float64        // 基础费用（应用租户折扣前）
-	ActualCost       float64        // 实际费用（应用折扣后）
-	RefundAmount     float64        // 退款金额（预扣 - 实际，正数）
-	SupplementAmount float64        // 补扣金额（实际 - 预扣，正数）
-	BillingRecordID  int64          // 计费记录 ID
-	BillingSnapshot  string         // 计费快照 JSON
-	BillingSummary   string         // 计费摘要文本
-	CostBreakdown    *CostBreakdown // 费用明细
-	BillingMode      string         // 计费模式
-	BillingSource    string         // 定价来源
-	RateMultiplier   float64        // 费率倍率
-	DuplicateSkip    bool           // 幂等跳过：本次为重复结算（未扣款未写账单），调用方不得再累加额度
+	PreDeductAmount   float64        // 预扣金额
+	BaseCost          float64        // 基础费用（应用租户折扣前）
+	ActualCost        float64        // 实际费用（应用折扣后）
+	RefundAmount      float64        // 退款金额（预扣 - 实际，正数）
+	SupplementAmount  float64        // 补扣金额（实际 - 预扣，正数）
+	BillingRecordID   int64          // 计费记录 ID
+	BillingSnapshot   string         // 计费快照 JSON
+	BillingSummary    string         // 计费摘要文本
+	CostBreakdown     *CostBreakdown // 费用明细
+	ToolSurchargeCost float64        // 工具调用附加费合计（联网搜索/云端工具按次收费，已含在 ActualCost 中）
+	BillingMode       string         // 计费模式
+	BillingSource     string         // 定价来源
+	RateMultiplier    float64        // 费率倍率
+	DuplicateSkip     bool           // 幂等跳过：本次为重复结算（未扣款未写账单），调用方不得再累加额度
 }
 
 // calcSettlementDiff 计算预扣与实际费用的差额（decimal 精确运算）。
@@ -303,13 +304,18 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 		}
 		breakdown = fb
 	} else {
-		breakdown = computeCostWithEval(pricingResult, usage.PromptTokens, usage.CompletionTokens, usage, perRequestCount, evalCtx)
+		// 工具调用附加费（联网搜索/云端工具按次收费）：全局工具价格表按计费模型名解析，
+		// 附加费叠加在任何计费模式之上（applyToolSurcharge）；无工具计数时 resolver 不参与
+		toolPrices := loadToolPriceIndex(ctx)
+		toolResolver := func(tool string) float64 { return toolPrices.resolve(tool, modelName) }
+		breakdown = computeCostWithEval(pricingResult, usage.PromptTokens, usage.CompletionTokens, usage, perRequestCount, evalCtx, toolResolver)
 		// 表达式计费求值失败 fail-safe：公式在真实 usage 环境上求值出错时按预扣额结算
-		// （公式保存时已烟测，此处失败属防御性兜底），错误记入快照供排查
+		// （公式保存时已烟测，此处失败属防御性兜底），错误记入快照供排查。
+		// 工具附加费独立于公式可信（渠道如实计数），兜底时保留叠加
 		if breakdown.FormulaError != "" {
 			g.Log().Errorf(ctx, "settle_with_usage: formula eval failed for %s (model=%s), fallback to pre-deduct estimate %.6f: %s",
 				requestID, modelName, preDeductAmount, breakdown.FormulaError)
-			breakdown.TotalCost = preDeductAmount
+			breakdown.TotalCost = InexactFloat64(RoundMoney(NewFromFloat(preDeductAmount).Add(NewFromFloat(breakdown.ToolSurcharge))))
 			breakdown.BaseCost = preDeductAmount
 		}
 	}
@@ -395,13 +401,14 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 	go CheckBalanceWarning(context.Background(), tenantID)
 
 	settlementResult := &SettlementResult{
-		PreDeductAmount:  preDeductAmount,
-		ActualCost:       actualCost,
-		BaseCost:         breakdown.BaseCost,
-		RefundAmount:     refundAmt,
-		SupplementAmount: supplementAmt,
-		BillingRecordID:  billingID,
-		CostBreakdown:    breakdown,
+		PreDeductAmount:   preDeductAmount,
+		ActualCost:        actualCost,
+		BaseCost:          breakdown.BaseCost,
+		RefundAmount:      refundAmt,
+		SupplementAmount:  supplementAmt,
+		BillingRecordID:   billingID,
+		CostBreakdown:     breakdown,
+		ToolSurchargeCost: breakdown.ToolSurcharge,
 	}
 
 	var snapshotJSON, summaryText string

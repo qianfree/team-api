@@ -246,15 +246,21 @@ func (c *GeminiToResponsesStreamConverter) ConvertStreamResponse(
 			})
 		}
 
-		// 本方向客户端可见 usage 与计费口径一致（OpenAI 语义），completed 帧同时携带计费用量；
+		// 本方向客户端可见 usage 与计费口径一致（OpenAI 语义），completed 帧同时携带计费用量
+		// 与 grounding 搜索计数（经 ToolCalls 侧信道供按次附加费计费）；
 		// 输出缺失时的估算兜底（EstimateStreamOutputTokens）由宿主桥接层处理
 		usage := geminiUsageToDetails(&totalUsage)
 		completedAt := int(time.Now().Unix())
-		if err := emitEvent("response.completed", map[string]any{
-			"type": "response.completed",
-			"response": buildResponsesObjectMap(respID, createdAt, "completed", modelName,
-				finalOutput, buildResponsesUsageMap(usage), &completedAt, info),
-		}, usage); err != nil {
+		if err := chunkWriter(&relayconvert.StreamEvent{
+			Event: "response.completed",
+			Data: map[string]any{
+				"type": "response.completed",
+				"response": buildResponsesObjectMap(respID, createdAt, "completed", modelName,
+					finalOutput, buildResponsesUsageMap(usage), &completedAt, info),
+			},
+			Usage:     usage,
+			ToolCalls: shared.GeminiSearchToolCalls(citations),
+		}); err != nil {
 			return err
 		}
 		sentCompleted = true

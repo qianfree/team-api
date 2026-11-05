@@ -17,6 +17,7 @@ import (
 	v1 "github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/dispatchadapter"
+	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/logic/common"
 )
 
@@ -92,6 +93,8 @@ func (s *sAdmin) validateCrossFieldSettings(ctx context.Context, category string
 		return s.validateSecuritySettings(ctx, values)
 	case "channel":
 		return s.validateChannelSettings(ctx, values)
+	case "billing":
+		return s.validateBillingSettings(ctx, values)
 	default:
 		return nil
 	}
@@ -174,6 +177,19 @@ func isValidCategory(category string) bool {
 		}
 	}
 	return false
+}
+
+// validateBillingSettings 校验计费配置：工具调用价格表必须过 billing 包的 JSON 校验
+// （key 格式 / 价格区间），保存入口拦截脏数据，计费读取侧仅做防御性容错。
+func (s *sAdmin) validateBillingSettings(ctx context.Context, values map[string]string) error {
+	raw, ok := values["tool_call_prices"]
+	if !ok || strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	if err := billing.ValidateToolCallPricesJSON(raw); err != nil {
+		return common.NewBadRequestError(err.Error())
+	}
+	return nil
 }
 
 // TestStorageConfig 测试对象存储配置连通性：用生成的测试图片走一次「上传 → 下载校验 → 删除」

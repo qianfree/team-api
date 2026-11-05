@@ -37,7 +37,11 @@ var knownVars = map[string]bool{
 // KnownFactKeys 已注册 usage facts 键表（key → 中文说明）。
 // u("key") 从渠道 adaptor 填充的 usage facts（非 token 计量：音频秒数、字节数等）
 // 取值；保存公式时烟测强校验字面 key 必须已注册（防拼写错误静默取 0 错价）。
-// adaptor 新增 facts 填充点时必须同步在此注册，并更新前端速查表
+// adaptor 新增 facts 填充点时必须同步在此注册，并更新前端速查表。
+//
+// 注意：工具调用计数（web_search/google_search 等按次附加费）走 Usage.ToolCalls
+// 旁路（结算层 tool_pricing.go 计价），刻意不注册为 facts——注册后公式 u() 与
+// 附加费通道会对同一计数双重计费
 var KnownFactKeys = map[string]string{
 	"audio_seconds": "音频时长秒数（STT/翻译 verbose_json.duration，OpenAI 渠道填充）",
 	"audio_bytes":   "音频响应字节数（TTS 二进制响应实测大小，OpenAI 渠道填充）",
