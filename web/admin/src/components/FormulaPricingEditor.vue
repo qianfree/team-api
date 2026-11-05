@@ -206,6 +206,8 @@ async function doValidate(): Promise<boolean> {
 			validateError.value = data?.error || '公式校验未通过'
 			validateResults.value = data?.results || null
 			usedVars.value = data?.vars || []
+			// 校验失败即作废上一次通过标记，避免失败态与"校验通过"提示同时出现
+			validatedMark.value = ''
 			Message.error(`公式校验未通过：${validateError.value}`)
 			return false
 		}
@@ -268,12 +270,9 @@ const currentRow = ref<RuleRow>(newRuleRow())
 
 <template>
 	<div class="formula-pricing-editor">
-		<!-- 头部：标题/徽标与 模板+校验 同行，口径说明收敛为浅底一行（细节进速查） -->
-		<div class="fx-header">
-			<div class="fx-title">
-				<h3>表达式计费</h3>
-				<ATag color="purple" size="small">价格完全由公式决定</ATag>
-			</div>
+		<!-- 头部沿用弹窗 section 语言：标题 + 右侧动作；口径说明降为一行小字（细节进速查） -->
+		<div class="editor-section-header">
+			<h3>计费公式</h3>
 			<div class="fx-actions">
 				<ASelect size="small" placeholder="示例模板…" class="fx-template-select" @change="applyTemplate">
 					<AOption v-for="tpl in formulaTemplates" :key="tpl.expr" :value="tpl.expr">{{ tpl.label }}</AOption>
@@ -281,16 +280,16 @@ const currentRow = ref<RuleRow>(newRuleRow())
 				<AButton size="small" type="primary" :loading="validating" @click="doValidate">校验并试算</AButton>
 			</div>
 		</div>
-		<div class="fx-hint">
+		<div class="fx-caption">
 			金额 = 系数 ÷ 1M × 租户乘数；<code>fixed(x)</code> = 每次请求 x {{ currencySymbol }}；
 			时段 / 请求参数条件写在下方「请求规则」（hour()/param()），不再单独配置时段定价与参数倍率
 		</div>
 
 		<!-- 基础公式 -->
-		<div class="fx-block">
-			<div class="fx-block-head">
-				<span class="fx-block-label">基础公式<em class="fx-req">*</em></span>
-				<span class="fx-block-sub">token 系数 / 按次 / 按秒 / 长上下文档位</span>
+		<div class="fx-card">
+			<div class="fx-card-head">
+				<span class="fx-card-label">基础公式<em class="fx-req">*</em></span>
+				<span class="fx-card-sub">token 系数 / 按次 / 按秒 / 长上下文档位</span>
 			</div>
 			<ATextarea
 				v-model="formulaText"
@@ -301,17 +300,15 @@ const currentRow = ref<RuleRow>(newRuleRow())
 		</div>
 
 		<!-- 请求规则（可选） -->
-		<div class="fx-block">
-			<div class="fx-block-head">
-				<span class="fx-block-label">
+		<div class="fx-card">
+			<div class="fx-card-head">
+				<span class="fx-card-label">
 					请求规则
 					<ATag size="small" class="fx-optional">可选</ATag>
 				</span>
-				<div class="fx-block-tools">
-					<ASelect size="small" placeholder="规则模板追加…" class="fx-template-select" @change="applyRuleTemplate">
-						<AOption v-for="tpl in ruleTemplates" :key="tpl.expr" :value="tpl.expr">{{ tpl.label }}</AOption>
-					</ASelect>
-				</div>
+				<ASelect size="small" placeholder="规则模板追加…" class="fx-template-select" @change="applyRuleTemplate">
+					<AOption v-for="tpl in ruleTemplates" :key="tpl.expr" :value="tpl.expr">{{ tpl.label }}</AOption>
+				</ASelect>
 			</div>
 			<ATextarea
 				v-model="rulesText"
@@ -321,6 +318,14 @@ const currentRow = ref<RuleRow>(newRuleRow())
 			/>
 			<!-- 可视化构建器：生成因子追加到上方表达式（表达式框为唯一真相） -->
 			<div class="fx-builder">
+				<div class="fx-builder-labels">
+					<span>来源</span>
+					<span>键 / 路径</span>
+					<span>匹配</span>
+					<span>比对值</span>
+					<span>乘数</span>
+					<span />
+				</div>
 				<div class="fx-builder-grid">
 					<ASelect v-model="currentRow.source" size="small" :options="sourceOptions" />
 					<AInput
@@ -337,10 +342,13 @@ const currentRow = ref<RuleRow>(newRuleRow())
 			</div>
 		</div>
 
-		<!-- 校验错误（行内红字，可直接展示后端中文报错） -->
-		<div v-if="validateError" class="fx-error">
-			<ATag color="red">校验未通过</ATag>
-			<span>{{ validateError }}</span>
+		<!-- 校验反馈：失败走 AAlert（可直接展示后端中文报错），通过给一条持久确认 -->
+		<AAlert v-if="validateError" type="error" class="fx-feedback" :title="`校验未通过：${validateError}`" />
+		<div v-else-if="validatedMark" class="fx-feedback fx-feedback--ok">
+			<ATag color="green" size="small">校验通过</ATag>
+			<span class="fx-feedback-text">
+				引用 {{ usedVars.length }} 个变量<template v-if="validateResults && validateResults.length">，试算 {{ validateResults.length }} 条样例</template>
+			</span>
 		</div>
 
 		<!-- 引用变量 chips -->
@@ -358,8 +366,8 @@ const currentRow = ref<RuleRow>(newRuleRow())
 			class="fx-results"
 		>
 			<template #columns>
-				<ATableColumn title="样例" data-index="name" :width="96" />
-				<ATableColumn title="变量取值（非零）" :width="280">
+				<ATableColumn title="样例" data-index="name" :width="100" />
+				<ATableColumn title="变量取值（非零）" :width="220">
 					<template #cell="{ record }">
 						<template v-if="envEntries(record.env).length > 0">
 							<ATag v-for="[k, v] in envEntries(record.env)" :key="k" size="small" class="env-tag">
@@ -374,20 +382,20 @@ const currentRow = ref<RuleRow>(newRuleRow())
 						<span class="mono">{{ record.factor.toLocaleString() }}</span>
 					</template>
 				</ATableColumn>
-				<ATableColumn title="命中规则" :width="230">
+				<ATableColumn title="命中规则" :width="200">
 					<template #cell="{ record }">
 						<template v-if="matchedRules(record.rules).length > 0">
 							<div v-for="(rule, i) in matchedRules(record.rules)" :key="i" class="rule-trace">
 								<ATag :color="rule.matched ? 'green' : 'gray'" size="small">
 									{{ rule.matched ? `×${rule.multiplier}` : '×1' }}
 								</ATag>
-								<span class="rule-cond">{{ rule.cond }}</span>
+								<span class="rule-cond" :title="rule.cond">{{ rule.cond }}</span>
 							</div>
 						</template>
 						<span v-else class="env-empty">（无规则）</span>
 					</template>
 				</ATableColumn>
-				<ATableColumn title="试算金额（未乘折扣）" :width="160">
+				<ATableColumn title="试算金额（折扣前）" :width="164">
 					<template #cell="{ record }">
 						<span class="mono">{{ fmtAmount(record.amount) }}</span>
 					</template>
@@ -471,62 +479,53 @@ const currentRow = ref<RuleRow>(newRuleRow())
 .formula-pricing-editor {
 	display: flex;
 	flex-direction: column;
-	gap: 10px;
+	gap: 12px;
 }
 
-/* 头部：标题/徽标 与 模板+校验 同行 */
-.fx-header {
+/* 与弹窗其他 section 同一套标题语言（14px/600，右侧动作右对齐） */
+.editor-section-header {
 	display: flex;
 	align-items: center;
-	justify-content: space-between;
-	gap: 10px;
+	gap: 12px;
 	flex-wrap: wrap;
 }
 
-.fx-title {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-}
-
-.fx-title h3 {
-	margin: 0;
-	font-size: 15px;
+.editor-section-header h3 {
+	font-size: 14px;
 	font-weight: 600;
+	color: var(--ta-text-primary);
+	margin: 0;
 }
 
 .fx-actions {
 	display: flex;
 	align-items: center;
 	gap: 8px;
+	margin-left: auto;
 }
 
 .fx-template-select {
 	width: 168px;
 }
 
-/* 口径说明：浅底单行收敛 */
-.fx-hint {
+/* 口径说明：纯文字一行，不再单独占一块灰底（细节进速查折叠） */
+.fx-caption {
 	font-size: 12px;
-	color: var(--color-text-3);
-	line-height: 1.6;
-	padding: 6px 10px;
-	background: var(--color-fill-1);
-	border-radius: 4px;
+	color: var(--ta-text-tertiary);
+	line-height: 1.7;
 }
 
-/* 区块：基础公式 / 请求规则 */
-.fx-block {
-	border: 1px solid var(--color-border-2);
-	border-radius: 6px;
-	padding: 10px 12px;
+/* 卡片：与 tier-card 同构（fill-1 底 + 8px 圆角、无边框），保持弹窗内视觉统一 */
+.fx-card {
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
-	background: var(--color-bg-2);
+	padding: 12px 16px;
+	background: var(--color-fill-1);
+	border-radius: 8px;
 }
 
-.fx-block-head {
+.fx-card-head {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
@@ -534,13 +533,18 @@ const currentRow = ref<RuleRow>(newRuleRow())
 	flex-wrap: wrap;
 }
 
-.fx-block-label {
+.fx-card-label {
 	display: inline-flex;
 	align-items: center;
 	gap: 6px;
 	font-size: 13px;
 	font-weight: 600;
-	color: var(--color-text-1);
+	color: var(--ta-text-primary);
+}
+
+.fx-card-sub {
+	font-size: 12px;
+	color: var(--ta-text-tertiary);
 }
 
 .fx-req {
@@ -553,39 +557,40 @@ const currentRow = ref<RuleRow>(newRuleRow())
 	font-weight: 400;
 }
 
-.fx-block-sub {
-	font-size: 12px;
-	color: var(--color-text-4);
-}
-
-.fx-block-tools {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-}
-
 .fx-textarea :deep(textarea) {
 	font-family: 'JetBrains Mono', Consolas, Monaco, monospace;
 	font-size: 13px;
 }
 
-/* 构建器：网格布局，窄屏自动两列换行 */
+/* 构建器：网格布局，窄屏自动两列换行；列标签与控件共用同一套轨道 */
 .fx-builder {
 	display: flex;
 	flex-direction: column;
 	gap: 6px;
-	padding-top: 8px;
+	padding-top: 10px;
 	border-top: 1px dashed var(--color-border-2);
 }
 
+/* 六列轨道集中定义：标签行与控件行各用一份 grid 保证逐列对齐 */
+.fx-builder-labels,
 .fx-builder-grid {
 	display: grid;
-	grid-template-columns: 148px minmax(120px, 1fr) 96px minmax(100px, 1fr) 104px auto;
-	gap: 6px;
+	grid-template-columns: 184px minmax(112px, 1fr) 88px minmax(96px, 1fr) 96px 96px;
+	gap: 8px;
 	align-items: center;
 }
 
+.fx-builder-labels {
+	font-size: 12px;
+	color: var(--ta-text-tertiary);
+	line-height: 1.4;
+}
+
 @media (max-width: 720px) {
+	.fx-builder-labels {
+		display: none;
+	}
+
 	.fx-builder-grid {
 		grid-template-columns: 1fr 1fr;
 	}
@@ -593,16 +598,26 @@ const currentRow = ref<RuleRow>(newRuleRow())
 
 .fx-builder-hint {
 	font-size: 12px;
-	color: var(--color-text-4);
+	color: var(--ta-text-tertiary);
 }
 
-/* 校验反馈 */
-.fx-error {
+/* 校验反馈：失败态用 AAlert 撑满一行，通过态用一条轻量确认行 */
+.fx-feedback {
+	margin: 0;
+}
+
+.fx-feedback--ok {
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	font-size: 13px;
-	color: rgb(var(--red-6));
+	padding: 6px 12px;
+	border-radius: 8px;
+	background: var(--color-success-light-1);
+}
+
+.fx-feedback-text {
+	font-size: 12px;
+	color: var(--ta-text-secondary);
 }
 
 .fx-vars {
@@ -614,7 +629,7 @@ const currentRow = ref<RuleRow>(newRuleRow())
 
 .fx-vars-label {
 	font-size: 12px;
-	color: var(--color-text-3);
+	color: var(--ta-text-tertiary);
 }
 
 .fx-results {
@@ -622,13 +637,14 @@ const currentRow = ref<RuleRow>(newRuleRow())
 }
 
 .env-tag {
+	margin: 0 4px 4px 0;
 	font-family: 'JetBrains Mono', Consolas, monospace;
 	font-size: 12px;
 }
 
 .env-empty {
 	font-size: 12px;
-	color: var(--color-text-4);
+	color: var(--ta-text-tertiary);
 }
 
 .rule-trace {
@@ -641,11 +657,11 @@ const currentRow = ref<RuleRow>(newRuleRow())
 .rule-cond {
 	font-family: 'JetBrains Mono', Consolas, monospace;
 	font-size: 12px;
-	color: var(--color-text-2);
+	color: var(--ta-text-secondary);
 	white-space: nowrap;
 	overflow: hidden;
 	text-overflow: ellipsis;
-	max-width: 160px;
+	max-width: 146px;
 }
 
 .fx-docs {

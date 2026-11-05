@@ -25,6 +25,7 @@ import (
 	tenantController "github.com/qianfree/team-api/internal/controller/tenant"
 	"github.com/qianfree/team-api/internal/dispatchadapter"
 	"github.com/qianfree/team-api/internal/logic/admin"
+	"github.com/qianfree/team-api/internal/logic/aianalysis"
 	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/monitor"
@@ -147,6 +148,10 @@ var (
 				}()
 				g.Log().Infof(ctx, "pprof listening on 127.0.0.1:%d", port)
 			}
+
+			// AI请求分析：清理上次运行残留的 pending/running 任务
+			//（任务队列不跨重启，残留任务若无清理会永远挂起）
+			aianalysis.RecoverStaleJobs(ctx)
 
 			// Register cron jobs
 			common.InitCronScheduler()
@@ -343,6 +348,8 @@ var (
 			//    正常退出时是空操作。必须在所有任务池/Writer 排空之后执行。
 			defer update.MaybeExecRestart(ctx)
 			defer plugin.Shutdown(ctx)
+			// AI请求分析：停掉任务执行器并等待在跑任务收尾（未开始的任务保持 pending，下次启动标记失败）
+			defer aianalysis.StopJobRunner()
 			defer dispatchadapter.Shutdown()
 			defer tenant.ShutdownWebhookDispatcher()
 			defer common.CloseAuditLogWriter()
@@ -434,6 +441,7 @@ func syncGlobalRelaySettings(ctx context.Context) {
 // 新增 cron 任务时在此追加一项即可；任务名（用于分布式锁 key）需保持唯一且稳定。
 func registerCronJobs(cs *common.CronScheduler) {
 	watchChannelAutoTestInterval(cs)
+	watchAiAnalysisPatrolSchedule(cs)
 	cs.Register("ops_system_collector", "系统指标采集", "* * * * *", func(ctx context.Context) error {
 		return monitor.CollectSystemMetrics(ctx)
 	})
@@ -513,6 +521,29 @@ func registerCronJobs(cs *common.CronScheduler) {
 	})
 	cs.Register("order_expiration", "订单过期处理", "*/5 * * * *", func(ctx context.Context) error {
 		return task.ExpirePendingOrders(ctx)
+	})
+	// AI请求分析：巡查计划按配置注册（PatrolCronExpr 读 sys_options，缺省回落默认表达式），
+	// 巡查开关由 handler 内按配置静默跳过
+	cs.Register(aianalysis.PatrolJobName, "AI请求分析定时巡查", aianalysis.PatrolCronExpr(gctx.New()), func(ctx context.Context) error {
+		aianalysis.RunPatrol(ctx)
+		return nil
+	})
+	cs.Register(aianalysis.RetentionJobName, "AI请求分析报告保留期清理", aianalysis.RetentionCleanupCron, func(ctx context.Context) error {
+		aianalysis.RunRetentionCleanup(ctx)
+		return nil
+	})
+}
+
+// watchAiAnalysisPatrolSchedule 巡查计划配置变更时重排 cron，无需重启。
+// 回调经 Redis pub/sub 触发，多实例会各自重排自己的调度器。
+func watchAiAnalysisPatrolSchedule(cs *common.CronScheduler) {
+	common.OnSettingsChanged(func(ctx context.Context, key string) {
+		if key != "ai_analysis_patrol_cron" {
+			return
+		}
+		if err := cs.Reschedule(ctx, aianalysis.PatrolJobName, aianalysis.PatrolCronExpr(ctx)); err != nil {
+			g.Log().Errorf(ctx, "AI请求分析巡查计划重排失败，沿用原计划: %v", err)
+		}
 	})
 }
 

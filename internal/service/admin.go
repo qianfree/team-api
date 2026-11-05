@@ -50,6 +50,28 @@ type (
 		ListAdminPendingAgreements(ctx context.Context, req *v1.AdminAgreementPendingReq) (*v1.AdminAgreementPendingRes, error)
 		// AcceptAdminAgreements 管理员接受协议
 		AcceptAdminAgreements(ctx context.Context, req *v1.AdminAgreementAcceptReq) (*v1.AdminAgreementAcceptRes, error)
+		// AiAnalysisCreate 发起按需分析：目标租户/用户校验 → 配置预检 → 建任务入队。
+		AiAnalysisCreate(ctx context.Context, req *v1.AiAnalysisCreateReq) (*v1.AiAnalysisCreateRes, error)
+		// AiAnalysisReportList 报告列表（联查租户/用户名）。
+		AiAnalysisReportList(ctx context.Context, req *v1.AiAnalysisReportListReq) (*v1.AiAnalysisReportListRes, error)
+		// AiAnalysisReportDetail 报告详情 + 发现明细。
+		// 报告证据含用户对话内容，访问即写敏感访问日志。
+		AiAnalysisReportDetail(ctx context.Context, req *v1.AiAnalysisReportDetailReq) (*v1.AiAnalysisReportDetailRes, error)
+		// AiAnalysisReportConversation 按报告内发现还原完整会话：
+		// finding_id 定位发现的锚点日志，调核心会话重组（平台侧副本）。
+		AiAnalysisReportConversation(ctx context.Context, req *v1.AiAnalysisReportConversationReq) (*v1.AiAnalysisReportConversationRes, error)
+		// AiAnalysisReportDelete 删除报告，连同发现明细。
+		AiAnalysisReportDelete(ctx context.Context, req *v1.AiAnalysisReportDeleteReq) (*v1.AiAnalysisReportDeleteRes, error)
+		// AiAnalysisJobList 任务列表与进度。
+		AiAnalysisJobList(ctx context.Context, req *v1.AiAnalysisJobListReq) (*v1.AiAnalysisJobListRes, error)
+		// AiAnalysisConfigGet 读取分析配置（与设置页读取同构，敏感字段掩码显示）。
+		AiAnalysisConfigGet(ctx context.Context, _ *v1.AiAnalysisConfigGetReq) (*v1.AiAnalysisConfigGetRes, error)
+		// AiAnalysisConfigUpdate 更新分析配置。敏感字段为掩码/空值时保持现值
+		//（UpdateCategory 内统一处理）；巡查计划变更经设置监听即时重排 cron。
+		AiAnalysisConfigUpdate(ctx context.Context, req *v1.AiAnalysisConfigUpdateReq) (*v1.AiAnalysisConfigUpdateRes, error)
+		// AiAnalysisTest 用已保存配置发起一次最小补全做连通性测试，
+		// 失败原因原样返回给管理员定位问题（测试失败本身是有效结果，不返回 error）。
+		AiAnalysisTest(ctx context.Context, _ *v1.AiAnalysisTestReq) (*v1.AiAnalysisTestRes, error)
 		// GetAuditConfig retrieves the global audit level from sys_options.
 		GetAuditConfig(ctx context.Context, _ *v1.AuditConfigGetReq) (*v1.AuditConfigGetRes, error)
 		// UpdateAuditConfig updates the global audit level.
@@ -355,7 +377,9 @@ type (
 		SetModelPricing(ctx context.Context, req *v1.PricingSetReq) (*v1.PricingSetRes, error)
 		// ValidateModelPricingFormula 校验计费公式并试算（dry-run，不落库不触发缓存失效）。
 		// 管理端「表达式计费」编辑器的「校验并试算」按钮与保存前置校验共用；
-		// 与保存链路的强制烟测（BuildPricingBlob formula 分支）同口径
+		// 与保存链路的强制烟测（BuildPricingBlob formula 分支）同口径。
+		// 基础公式与请求规则分别接收，按 EffectiveFormula 组合后求值（与线上计费同口径）；
+		// 样例可携带 headers/body/eval_at 模拟请求上下文（header()/param()/时间函数探测）
 		ValidateModelPricingFormula(ctx context.Context, req *v1.PricingFormulaValidateReq) (*v1.PricingFormulaValidateRes, error)
 		// FetchOfficialPricing 拉取模型官方定价（来自 LiteLLM + models.dev 双数据源）
 		FetchOfficialPricing(ctx context.Context, req *v1.PricingFetchOfficialReq) (*v1.PricingFetchOfficialRes, error)

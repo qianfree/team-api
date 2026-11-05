@@ -185,6 +185,19 @@ var adminPermissionRules = []permissionRule{
 	{method: "GET", path: "/api/admin/audit/content-filter-logs", perm: "audit:view"},
 	{method: "DELETE", path: "/api/admin/audit/content-filter-logs/clear", perm: "audit:clear"},
 
+	// ── ai_analysis AI请求分析 ──
+	// 发起按需分析与删除报告是写操作，挂操作档权限点
+	{method: "POST", path: "/api/admin/ai-analysis/analyze", perm: "ai_analysis:analyze"},
+	{method: "DELETE", prefix: "/api/admin/ai-analysis/reports/", perm: "ai_analysis:analyze"},
+	// 报告列表/详情/会话还原/任务列表均为只读（前缀不带尾斜杠，同时覆盖
+	// /reports 与 /reports/{id}[/conversation]）
+	{method: "GET", prefix: "/api/admin/ai-analysis/reports", perm: "ai_analysis:view"},
+	{method: "GET", path: "/api/admin/ai-analysis/jobs", perm: "ai_analysis:view"},
+	// 配置读写与连通性测试：测试会真实调用外部 AI 端点并验证密钥，属配置能力
+	{method: "GET", path: "/api/admin/ai-analysis/config", perm: "ai_analysis:config"},
+	{method: "PUT", path: "/api/admin/ai-analysis/config", perm: "ai_analysis:config"},
+	{method: "POST", path: "/api/admin/ai-analysis/test", perm: "ai_analysis:config"},
+
 	// ── file 文件管理 ──
 	{method: "GET", path: "/api/admin/files", perm: "file:view"},
 	{method: "GET", path: "/api/admin/files/stats", perm: "file:view"},

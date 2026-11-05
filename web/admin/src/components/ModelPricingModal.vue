@@ -263,6 +263,18 @@ const hasOfficialPricing = computed(() => {
 	)
 })
 
+// 官方价快捷区提示：表达式计费金额由公式决定，折扣换算不适用（切回其他模式才可用）
+const officialQuickTitle = computed(() => {
+	if (editorBillingMode.value === 'formula') {
+		return hasOfficialPricing.value
+			? '官方价基准已设置（非计费依据）；表达式计费价格由公式决定，不参与折扣换算'
+			: '官方价基准未设置；表达式计费价格由公式决定，官方价仅用于「现价几折」展示'
+	}
+	return hasOfficialPricing.value
+		? `官方价基准已设置（非计费依据）${officialFoldSummary() ? '，' + officialFoldSummary() : ''}；点击标签可修改`
+		: '官方价基准未设置；点击标签设置后可按折扣一键生成我方定价'
+})
+
 function addOfficialPerSecondRow(spec = '') {
 	officialPerSecondRows.push({ spec, price: 0 })
 }
@@ -1055,25 +1067,18 @@ watch(() => props.visible, (val) => {
 		/>
 		<AForm v-else :model="{}" layout="vertical">
 			<div class="pricing-editor">
-				<!-- Billing Mode -->
+				<!-- Billing Mode：标题行右挂官方价工具，模式单选独占一行（5 个选项 + 工具挤一行会顶到换行） -->
 				<div class="editor-section">
 					<div class="editor-section-header">
 						<h3>计费模式</h3>
-					</div>
-					<div class="billing-mode-row">
-						<ARadioGroup v-model="editorBillingMode" type="button">
-							<ARadio v-for="opt in billingModeOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</ARadio>
-						</ARadioGroup>
 						<div class="billing-mode-tools">
 							<!-- 官方价状态：颜色区分是否配置；点击标签进二层弹窗设置。已配置时右侧直接给快速折扣录入 -->
-							<div
-								class="official-quick"
-								:title="hasOfficialPricing ? `官方价基准已设置（非计费依据）${officialFoldSummary() ? '，' + officialFoldSummary() : ''}；点击标签可修改` : '官方价基准未设置；点击标签设置后可按折扣一键生成我方定价'"
-							>
+							<div class="official-quick" :title="officialQuickTitle">
 								<ATag :color="hasOfficialPricing ? 'green' : 'gray'" class="official-quick-tag" @click="openOfficialModal">
 									{{ hasOfficialPricing ? '官方价已设置' : '官方价未设置' }}
 								</ATag>
-								<template v-if="hasOfficialPricing">
+								<!-- 表达式计费的价格由公式决定，折扣换算无意义：只留状态标签，避免按官方价填入把模式改走 -->
+								<template v-if="hasOfficialPricing && editorBillingMode !== 'formula'">
 									<AInputNumber
 										v-model="officialDiscountPercent"
 										:min="1"
@@ -1088,9 +1093,13 @@ watch(() => props.visible, (val) => {
 									</AInputNumber>
 									<AButton size="small" type="primary" @click="applyOfficialToPricing">按官方价填入</AButton>
 								</template>
+								<span v-else-if="hasOfficialPricing" class="official-quick-note">仅作折数基准</span>
 							</div>
 						</div>
 					</div>
+					<ARadioGroup v-model="editorBillingMode" type="button" class="billing-mode-group">
+						<ARadio v-for="opt in billingModeOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</ARadio>
+					</ARadioGroup>
 				</div>
 
 				<!-- Per-request Mode -->
@@ -1641,12 +1650,10 @@ watch(() => props.visible, (val) => {
 	color: var(--ta-text-tertiary);
 }
 
-.billing-mode-row {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: 12px;
+/* 计费模式单选：独占一行；选项多时整体换行，不与右侧官方价工具抢空间 */
+.billing-mode-group {
 	flex-wrap: wrap;
+	row-gap: 4px;
 }
 
 .tier-card {
@@ -1694,12 +1701,20 @@ watch(() => props.visible, (val) => {
 	color: var(--ta-text-secondary);
 }
 
-/* 计费模式行右上角工具组：官方价状态 + 快速折扣录入 + 折扣重算 */
+/* 计费模式行右上角工具组：官方价状态 + 快速折扣录入 + 折扣重算（靠右对齐，标题行内换行不塌） */
 .billing-mode-tools {
 	display: flex;
 	align-items: center;
 	gap: 16px;
 	flex-wrap: wrap;
+	margin-left: auto;
+}
+
+/* 表达式计费下的官方价说明：折扣换算不可用，仅保留折数基准语义 */
+.official-quick-note {
+	font-size: 12px;
+	color: var(--ta-text-tertiary);
+	white-space: nowrap;
 }
 
 /* 官方价状态标签：颜色区分是否配置；可点击进二层弹窗设置 */

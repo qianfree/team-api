@@ -329,7 +329,7 @@ cmd（路由注册）
 | `ord_` | 订单支付 + 优惠券 | 二 | `ord_orders` `ord_refunds` `ord_payment_channels` `ord_promo_codes` `ord_promo_code_usages` `ord_redemptions` `ord_redemption_usages` |
 | `pln_` | 套餐订阅 | 二 | `pln_plans` `pln_tenant_plans` `pln_feature_flags` |
 | `ntf_` | 通知消息 | 三 | `ntf_templates` `ntf_send_log` `ntf_messages` `ntf_read_status` `ntf_preferences` `ntf_announcements` |
-| `aud_` | 审计日志 | 三 | `aud_request_logs` `aud_operation_logs` `aud_sensitive_access_logs` `aud_login_history` |
+| `aud_` | 审计日志 | 三 | `aud_request_logs` `aud_operation_logs` `aud_sensitive_access_logs` `aud_login_history` `aud_ai_analysis_reports` `aud_ai_analysis_findings` `aud_ai_analysis_jobs` |
 | `spt_` | 客户支持（工单+帮助+反馈） | 三/六 | `spt_tickets` `spt_replies` `spt_attachments` `spt_categories` `spt_articles` `spt_feedbacks` |
 | `ops_` | 运维监控 | 四 | `ops_alert_rules` `ops_alert_events` `ops_system_metrics` |
 | `tsk_` | 异步任务 | 四 | `tsk_tasks` `tsk_task_logs` `tsk_model_tasks` |

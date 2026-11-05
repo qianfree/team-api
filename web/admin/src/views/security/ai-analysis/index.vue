@@ -4,7 +4,6 @@ import {
   Tag, Button, Space, Popconfirm, Tooltip, Progress,
 } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
-import { useRouter } from 'vue-router'
 import { IconSettings } from '@arco-design/web-vue/es/icon'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
@@ -16,14 +15,13 @@ import AnalyzeModal from './AnalyzeModal.vue'
 import ReportDetailDrawer from './ReportDetailDrawer.vue'
 import ConfigDrawer from './ConfigDrawer.vue'
 
-// AI请求分析（ai-req-analyze 插件）页面入口：筛选 + 报告/任务双 Tab + 弹层协调。
-// 弹层组件内聚各自逻辑（发起分析 / 报告详情 / 插件配置），本文件只管列表与状态。
+// AI请求分析页面入口：筛选 + 报告/任务双 Tab + 弹层协调。
+// 弹层组件内聚各自逻辑（发起分析 / 报告详情 / 分析配置），本文件只管列表与状态。
 //
-// 权限：页面挂在 ai-req-analyze:view 下；发起分析/删除按 analyze、插件配置按 config。
+// 权限：页面挂在 ai_analysis:view 下；发起分析/删除按 analyze、分析配置按 config。
 
-const router = useRouter()
-const canAnalyze = computed(() => hasPermission('ai-req-analyze:analyze'))
-const canConfig = computed(() => hasPermission('ai-req-analyze:config'))
+const canAnalyze = computed(() => hasPermission('ai_analysis:analyze'))
+const canConfig = computed(() => hasPermission('ai_analysis:config'))
 
 // ── 标签映射 ────────────────────────────────────────────────────────────────
 
@@ -45,16 +43,6 @@ const jobStatusColor: Record<string, string> = {
 function fmtTime(s?: string | null): string {
   if (!s) return '-'
   return String(s).replace('T', ' ').slice(0, 19)
-}
-
-// ── 插件可用性 ──────────────────────────────────────────────────────────────
-
-// 插件未安装/未启用时其路由未注册，业务接口表现为 404 —— 引导前往插件管理
-const pluginUnavailable = ref(false)
-function markUnavailableIf404(err: any) {
-  if (err?.response?.status === 404 || (err as any)?.apiError?.code === 404) {
-    pluginUnavailable.value = true
-  }
 }
 
 // ── 弹层状态 ────────────────────────────────────────────────────────────────
@@ -113,14 +101,13 @@ async function fetchReports() {
     if (reportFilter.value.start_date) params.start_date = reportFilter.value.start_date
     if (reportFilter.value.end_date) params.end_date = reportFilter.value.end_date
 
-    const res: any = await request.get('/admin/plugins/ai-req-analyze/reports', { params })
+    const res: any = await request.get('/admin/ai-analysis/reports', { params })
     const raw = res.data?.data
     reports.value = raw?.list || []
     reportTotal.value = raw?.total || 0
-  } catch (err) {
+  } catch {
     reports.value = []
     reportTotal.value = 0
-    markUnavailableIf404(err)
   } finally {
     reportLoading.value = false
   }
@@ -133,7 +120,7 @@ function handleReportFilter() {
 
 async function deleteReport(id: number) {
   try {
-    await request.delete(`/admin/plugins/ai-req-analyze/reports/${id}`)
+    await request.delete(`/admin/ai-analysis/reports/${id}`)
     reports.value = reports.value.filter((r) => r.id !== id)
     reportTotal.value = Math.max(0, reportTotal.value - 1)
     fetchReports()
@@ -235,7 +222,7 @@ async function fetchJobs() {
   try {
     const params: Record<string, any> = { page: jobPage.value, page_size: jobPageSize.value }
     if (jobFilterStatus.value) params.status = jobFilterStatus.value
-    const res: any = await request.get('/admin/plugins/ai-req-analyze/jobs', { params })
+    const res: any = await request.get('/admin/ai-analysis/jobs', { params })
     const raw = res.data?.data
     jobs.value = raw?.list || []
     jobTotal.value = raw?.total || 0
@@ -335,123 +322,114 @@ function onAnalyzeSubmitted() {
       <template #actions>
         <AButton v-if="canConfig" @click="configVisible = true">
           <template #icon><IconSettings /></template>
-          插件配置
+          分析配置
         </AButton>
         <AButton v-if="canAnalyze" type="primary" @click="analyzeVisible = true">发起分析</AButton>
       </template>
     </PageHeader>
 
-    <!-- 插件不可用引导 -->
-    <ACard v-if="pluginUnavailable" :bordered="false">
-      <AEmpty description="AI请求分析插件未安装或未启用">
-        <AButton type="primary" @click="router.push({ name: 'AdminPlugins' })">前往插件管理</AButton>
-      </AEmpty>
+    <!-- 筛选 -->
+    <ACard :bordered="false" class="mb-4">
+      <div class="filter-bar">
+        <ASelect
+          v-model="reportFilter.tenant_id"
+          :options="tenantOptions"
+          placeholder="租户"
+          allow-search allow-clear
+          :filter-option="false"
+          style="width: 200px"
+          @search="handleTenantSearch"
+          @change="handleReportFilter"
+          @clear="handleReportFilter"
+        />
+        <ASelect v-model="reportFilter.source" :options="sourceOptions" placeholder="来源"
+          allow-clear style="width: 120px" @change="handleReportFilter" @clear="handleReportFilter" />
+        <ASelect v-model="reportFilter.risk_level" :options="riskOptions" placeholder="风险等级"
+          allow-clear style="width: 130px" @change="handleReportFilter" @clear="handleReportFilter" />
+        <ARangePicker
+          v-model="reportFilter.range"
+          style="width: 280px"
+          value-format="YYYY-MM-DD"
+          @change="(v: any) => {
+            reportFilter.start_date = v?.[0] || ''
+            reportFilter.end_date = v?.[1] || ''
+            handleReportFilter()
+          }"
+        />
+        <div class="filter-actions">
+          <AButton @click="fetchReports">刷新</AButton>
+        </div>
+      </div>
     </ACard>
 
-    <template v-else>
-      <!-- 筛选 -->
-      <ACard :bordered="false" class="mb-4">
-        <div class="filter-bar">
-          <ASelect
-            v-model="reportFilter.tenant_id"
-            :options="tenantOptions"
-            placeholder="租户"
-            allow-search allow-clear
-            :filter-option="false"
-            style="width: 200px"
-            @search="handleTenantSearch"
-            @change="handleReportFilter"
-            @clear="handleReportFilter"
+    <ACard :bordered="false">
+      <ATabs v-model:active-key="activeTab" @change="(key: any) => key === 'jobs' && fetchJobs()">
+        <ATabPane key="reports" title="分析报告">
+          <ResponsiveTable
+            :columns="reportColumns"
+            :data="reports"
+            :loading="reportLoading"
+            :scroll="{ x: 1100 }"
+            :stripe="true"
+            row-key="id"
+            card-title-key="tenant_name"
+            card-subtitle-key="time_start"
+            card-badge-key="risk_level"
+            :card-fields="['source', 'target_username', 'finding_count', 'created_at']"
           />
-          <ASelect v-model="reportFilter.source" :options="sourceOptions" placeholder="来源"
-            allow-clear style="width: 120px" @change="handleReportFilter" @clear="handleReportFilter" />
-          <ASelect v-model="reportFilter.risk_level" :options="riskOptions" placeholder="风险等级"
-            allow-clear style="width: 130px" @change="handleReportFilter" @clear="handleReportFilter" />
-          <ARangePicker
-            v-model="reportFilter.range"
-            style="width: 280px"
-            value-format="YYYY-MM-DD"
-            @change="(v: any) => {
-              reportFilter.start_date = v?.[0] || ''
-              reportFilter.end_date = v?.[1] || ''
-              handleReportFilter()
-            }"
-          />
-          <div class="filter-actions">
-            <AButton @click="fetchReports">刷新</AButton>
+          <AEmpty v-if="!reportLoading && reports.length === 0" style="margin-top: 40px">
+            <template #description>
+              暂无分析报告{{ canConfig ? '；首次使用请先通过右上角「分析配置」完成分析 AI 连接' : '' }}
+            </template>
+          </AEmpty>
+          <div class="table-footer">
+            <TableStats :total="reportTotal" :page="reportPage" :page-size="reportPageSize" />
+            <APagination
+              v-model:current="reportPage"
+              v-model:page-size="reportPageSize"
+              :total="reportTotal"
+              show-total show-page-size
+              @change="fetchReports"
+              @page-size-change="handleReportFilter"
+            />
           </div>
-        </div>
-      </ACard>
+        </ATabPane>
 
-      <ACard :bordered="false">
-        <ATabs v-model:active-key="activeTab" @change="(key: any) => key === 'jobs' && fetchJobs()">
-          <ATabPane key="reports" title="分析报告">
-            <ResponsiveTable
-              :columns="reportColumns"
-              :data="reports"
-              :loading="reportLoading"
-              :scroll="{ x: 1100 }"
-              :stripe="true"
-              row-key="id"
-              card-title-key="tenant_name"
-              card-subtitle-key="time_start"
-              card-badge-key="risk_level"
-              :card-fields="['source', 'target_username', 'finding_count', 'created_at']"
-            />
-            <AEmpty v-if="!reportLoading && reports.length === 0" style="margin-top: 40px">
-              <template #description>
-                暂无分析报告{{ canConfig ? '；首次使用请先通过右上角「插件配置」完成分析 AI 连接' : '' }}
-              </template>
-            </AEmpty>
-            <div class="table-footer">
-              <TableStats :total="reportTotal" :page="reportPage" :page-size="reportPageSize" />
-              <APagination
-                v-model:current="reportPage"
-                v-model:page-size="reportPageSize"
-                :total="reportTotal"
-                show-total show-page-size
-                @change="fetchReports"
-                @page-size-change="handleReportFilter"
-              />
+        <ATabPane key="jobs" title="任务列表">
+          <ResponsiveTable
+            :columns="jobColumns"
+            :data="jobs"
+            :loading="jobLoading"
+            :scroll="{ x: 900 }"
+            :stripe="true"
+            row-key="id"
+            card-title-key="tenant_id"
+            card-badge-key="status"
+            :card-fields="['source', 'progress', 'time_start', 'created_at']"
+          />
+          <AEmpty v-if="!jobLoading && jobs.length === 0" style="margin-top: 40px">
+            <template #description>暂无分析任务</template>
+          </AEmpty>
+          <div class="table-footer">
+            <div class="job-filter">
+              <ASelect v-model="jobFilterStatus" :options="jobStatusOptions" placeholder="任务状态"
+                allow-clear style="width: 120px"
+                @change="() => { jobPage = 1; fetchJobs() }" @clear="() => { jobPage = 1; fetchJobs() }" />
+              <AButton size="small" @click="fetchJobs">刷新</AButton>
             </div>
-          </ATabPane>
-
-          <ATabPane key="jobs" title="任务列表">
-            <ResponsiveTable
-              :columns="jobColumns"
-              :data="jobs"
-              :loading="jobLoading"
-              :scroll="{ x: 900 }"
-              :stripe="true"
-              row-key="id"
-              card-title-key="tenant_id"
-              card-badge-key="status"
-              :card-fields="['source', 'progress', 'time_start', 'created_at']"
+            <APagination
+              v-model:current="jobPage"
+              v-model:page-size="jobPageSize"
+              :total="jobTotal"
+              show-total
+              @change="fetchJobs"
             />
-            <AEmpty v-if="!jobLoading && jobs.length === 0" style="margin-top: 40px">
-              <template #description>暂无分析任务</template>
-            </AEmpty>
-            <div class="table-footer">
-              <div class="job-filter">
-                <ASelect v-model="jobFilterStatus" :options="jobStatusOptions" placeholder="任务状态"
-                  allow-clear style="width: 120px"
-                  @change="() => { jobPage = 1; fetchJobs() }" @clear="() => { jobPage = 1; fetchJobs() }" />
-                <AButton size="small" @click="fetchJobs">刷新</AButton>
-              </div>
-              <APagination
-                v-model:current="jobPage"
-                v-model:page-size="jobPageSize"
-                :total="jobTotal"
-                show-total
-                @change="fetchJobs"
-              />
-            </div>
-          </ATabPane>
-        </ATabs>
-      </ACard>
-    </template>
+          </div>
+        </ATabPane>
+      </ATabs>
+  </ACard>
 
-    <!-- 弹层：发起分析 / 报告详情 / 插件配置 -->
+    <!-- 弹层：发起分析 / 报告详情 / 分析配置 -->
     <AnalyzeModal v-model:visible="analyzeVisible" @submitted="onAnalyzeSubmitted" />
     <ReportDetailDrawer
       v-model:visible="detailVisible"

@@ -83,6 +83,13 @@ var predefinedPermissionGroups = []v1.PermissionGroup{
 		},
 	},
 	{
+		Name:  "ai_analysis",
+		Label: "AI请求分析",
+		Permissions: []string{
+			"ai_analysis:view", "ai_analysis:analyze", "ai_analysis:config",
+		},
+	},
+	{
 		Name:  "operation",
 		Label: "内容运营",
 		Permissions: []string{

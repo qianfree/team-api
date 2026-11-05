@@ -4,7 +4,7 @@ import { Message } from '@arco-design/web-vue'
 import request from '@/utils/request'
 import { useTenantOptions } from '@/composables/useTenantOptions'
 
-// 发起按需分析弹窗（ai-req-analyze:analyze 权限入口）。
+// 发起按需分析弹窗（ai_analysis:analyze 权限入口）。
 // 租户远程搜索；目标成员按租户远程搜索，无 member:view 权限（接口 403）时
 // 自动降级为手输成员 ID；时间范围后端校验（单次 ≤31 天、起止有序）。
 
@@ -76,7 +76,7 @@ async function submit() {
     }
     if (form.value.user_id) payload.user_id = form.value.user_id
 
-    const res: any = await request.post('/admin/plugins/ai-req-analyze/analyze', payload)
+    const res: any = await request.post('/admin/ai-analysis/analyze', payload)
     Message.success(`分析任务已创建（#${res.data?.data?.job_id}），可在任务列表查看进度`)
     emit('update:visible', false)
     emit('submitted')

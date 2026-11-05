@@ -3,12 +3,13 @@ import { ref, reactive, computed, watch } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import request from '@/utils/request'
 
-// 插件配置抽屉（手写界面，替代 schema 驱动的通用表单——布局自由、可内嵌
-// 连通性测试与公网地址警示这两个通用渲染做不到的能力）。
+// 分析配置抽屉（手写界面而非设置页通用渲染——布局自由、可内嵌连通性测试
+// 与公网地址警示这两个通用表单做不到的能力）。
 //
-// 字段清单与后端 ConfigSchema()（plugins/ai-req-analyze/plugin.go）一一对应，
-// 后端增删字段时需同步本组件。读写仍走通用配置接口：加密字段（ai_api_key）
-// 回显为掩码，留空/保持掩码提交即不改动现值（框架语义）。
+// 字段清单与后端设置注册表（internal/logic/common/settings_registry.go 的
+// ai_analysis_* 键）一一对应，后端增删字段时需同步本组件。读写走功能自有的
+// 配置端点（/admin/ai-analysis/config，sys_options 存储）：加密字段
+// （ai_analysis_api_key）回显为掩码，留空/保持掩码提交即不改动现值。
 
 const props = defineProps<{ visible: boolean }>()
 const emit = defineEmits<{
@@ -18,21 +19,21 @@ const emit = defineEmits<{
 
 // 与后端 ConfigSchema Default 一致的本地默认值
 const defaults = () => ({
-  ai_base_url: '',
-  ai_endpoint_mode: 'base',
-  ai_api_key: '',
-  ai_model: '',
-  ai_timeout_ms: 60000,
-  ai_max_tokens: 4096,
-  agent_prompt: '',
-  units_per_batch: 6,
-  snippet_max_len: 4000,
-  custom_rules: '',
-  patrol_enabled: false,
-  patrol_cron: '0 3 * * *',
-  patrol_scope: '{"tenants":[]}',
-  patrol_window_h: 24,
-  retention_days: 90,
+  ai_analysis_base_url: '',
+  ai_analysis_endpoint_mode: 'base',
+  ai_analysis_api_key: '',
+  ai_analysis_model: '',
+  ai_analysis_timeout_ms: 60000,
+  ai_analysis_max_tokens: 4096,
+  ai_analysis_agent_prompt: '',
+  ai_analysis_units_per_batch: 6,
+  ai_analysis_snippet_max_len: 4000,
+  ai_analysis_custom_rules: '',
+  ai_analysis_patrol_enabled: false,
+  ai_analysis_patrol_cron: '0 3 * * *',
+  ai_analysis_patrol_scope: '{"tenants":[]}',
+  ai_analysis_patrol_window_h: 24,
+  ai_analysis_retention_days: 90,
 })
 
 const loading = ref(false)
@@ -55,12 +56,12 @@ async function load() {
   loading.value = true
   Object.assign(form, defaults())
   try {
-    const res: any = await request.get('/admin/plugins/ai-req-analyze')
-    const config = res.data?.data?.config || {}
+    const res: any = await request.get('/admin/ai-analysis/config')
+    const items: any[] = res.data?.data?.list || []
     // 掩码值原样回显：提交掩码 = 保持现值；未配置的键用本地默认
-    for (const key of Object.keys(defaults())) {
-      if (config[key] !== undefined && config[key] !== null) {
-        ;(form as any)[key] = config[key]
+    for (const item of items) {
+      if (item.value !== undefined && item.value !== null && (form as any)[item.key] !== undefined) {
+        ;(form as any)[item.key] = item.value
       }
     }
   } catch {
@@ -74,7 +75,7 @@ async function load() {
 async function save() {
   saving.value = true
   try {
-    await request.put('/admin/plugins/ai-req-analyze/config', { config: { ...form } })
+    await request.put('/admin/ai-analysis/config', { settings: { ...form } })
     Message.success('配置已保存')
     emit('saved')
   } catch {
@@ -100,7 +101,7 @@ function isPrivateHost(url: string): boolean {
 }
 
 const publicEndpointWarn = computed(() => {
-  const url = String(form.ai_base_url || '').trim()
+  const url = String(form.ai_analysis_base_url || '').trim()
   if (!url) return false
   return !isPrivateHost(url)
 })
@@ -114,7 +115,7 @@ async function testConnection() {
   testing.value = true
   testResult.value = null
   try {
-    const res: any = await request.get('/admin/plugins/ai-req-analyze/ai/test')
+    const res: any = await request.post('/admin/ai-analysis/test')
     testResult.value = res.data?.data || null
   } catch {
     testResult.value = null
@@ -127,7 +128,7 @@ async function testConnection() {
 <template>
   <ADrawer
     :visible="visible"
-    title="AI请求分析 - 插件配置"
+    title="AI请求分析 - 分析配置"
     :width="620"
     unmount-on-close
     @update:visible="emit('update:visible', $event)"
@@ -140,24 +141,24 @@ async function testConnection() {
         <div class="grid2">
           <AFormItem label="分析 AI 端点" required
             extra="OpenAI 兼容端点地址（填法取决于右侧「端点模式」）">
-            <AInput v-model="form.ai_base_url" placeholder="如 http://ollama:11434/v1" allow-clear />
+            <AInput v-model="form.ai_analysis_base_url" placeholder="如 http://ollama:11434/v1" allow-clear />
           </AFormItem>
           <AFormItem label="端点模式"
             extra="base：填基地址自动拼 /chat/completions；full：填完整请求地址">
-            <ASelect v-model="form.ai_endpoint_mode" :options="endpointModeOptions" />
+            <ASelect v-model="form.ai_analysis_endpoint_mode" :options="endpointModeOptions" />
           </AFormItem>
           <AFormItem label="分析 AI 密钥"
-            :extra="form.ai_api_key ? '已配置（回显为掩码，留空或保持掩码提交即不改动）' : '加密存储；内网无鉴权部署（如 Ollama）可留空'">
-            <AInputPassword v-model="form.ai_api_key" allow-clear />
+            :extra="form.ai_analysis_api_key ? '已配置（回显为掩码，留空或保持掩码提交即不改动）' : '加密存储；内网无鉴权部署（如 Ollama）可留空'">
+            <AInputPassword v-model="form.ai_analysis_api_key" allow-clear />
           </AFormItem>
           <AFormItem label="分析模型" required extra="用于分析的模型名">
-            <AInput v-model="form.ai_model" placeholder="如 qwen2.5:32b、gpt-4o-mini" allow-clear />
+            <AInput v-model="form.ai_analysis_model" placeholder="如 qwen2.5:32b、gpt-4o-mini" allow-clear />
           </AFormItem>
           <AFormItem label="调用超时（毫秒）">
-            <AInputNumber v-model="form.ai_timeout_ms" :min="1000" :step="1000" style="width: 100%" />
+            <AInputNumber v-model="form.ai_analysis_timeout_ms" :min="1000" :step="1000" style="width: 100%" />
           </AFormItem>
           <AFormItem label="单次输出上限" extra="单次分析调用的 max_tokens">
-            <AInputNumber v-model="form.ai_max_tokens" :min="64" :step="256" style="width: 100%" />
+            <AInputNumber v-model="form.ai_analysis_max_tokens" :min="64" :step="256" style="width: 100%" />
           </AFormItem>
         </div>
         <AAlert v-if="publicEndpointWarn" type="warning" class="mb-16">
@@ -181,7 +182,7 @@ async function testConnection() {
         <AFormItem label="自定义智能体提示词"
           extra="替换内置的角色设定与双维度定义；判定质量要求与 JSON 输出格式由系统自动拼接，无需编写">
           <ATextarea
-            v-model="form.agent_prompt"
+            v-model="form.ai_analysis_agent_prompt"
             :auto-size="{ minRows: 6, maxRows: 16 }"
             placeholder="留空使用内置提示词。自定义分析智能体的角色设定与审计维度，例如：&#10;你是医疗行业的合规审计专家，重点审计药品广告违规与患者隐私外发……"
             allow-clear
@@ -192,15 +193,15 @@ async function testConnection() {
         <div class="group-title">分析行为</div>
         <div class="grid2">
           <AFormItem label="每批分析单元数" extra="每批送入 AI 的会话/独立单元数">
-            <AInputNumber v-model="form.units_per_batch" :min="1" style="width: 100%" />
+            <AInputNumber v-model="form.ai_analysis_units_per_batch" :min="1" style="width: 100%" />
           </AFormItem>
           <AFormItem label="单元截断长度（字符）" extra="单个分析单元送入 AI 的最大长度">
-            <AInputNumber v-model="form.snippet_max_len" :min="200" :step="200" style="width: 100%" />
+            <AInputNumber v-model="form.ai_analysis_snippet_max_len" :min="200" :step="200" style="width: 100%" />
           </AFormItem>
         </div>
         <AFormItem label="自定义合规规则" extra="与自定义智能体提示词可共存">
           <ATextarea
-            v-model="form.custom_rules"
+            v-model="form.ai_analysis_custom_rules"
             :auto-size="{ minRows: 3, maxRows: 8 }"
             placeholder="追加到分析提示词的额外规则（如行业监管要求），可选"
             allow-clear
@@ -211,21 +212,21 @@ async function testConnection() {
         <div class="group-title">定时巡查</div>
         <div class="grid2">
           <AFormItem label="启用定时巡查" extra="按计划自动对巡查范围内的租户产出分析报告">
-            <ASwitch v-model="form.patrol_enabled" />
+            <ASwitch v-model="form.ai_analysis_patrol_enabled" />
           </AFormItem>
           <AFormItem label="巡查回看窗口（小时）" extra="每次巡查分析的回看时间窗口">
-            <AInputNumber v-model="form.patrol_window_h" :min="1" style="width: 100%" />
+            <AInputNumber v-model="form.ai_analysis_patrol_window_h" :min="1" style="width: 100%" />
           </AFormItem>
-          <AFormItem label="巡查计划" extra="cron 表达式；修改后需禁用→启用插件生效">
-            <AInput v-model="form.patrol_cron" placeholder="0 3 * * *" allow-clear />
+          <AFormItem label="巡查计划" extra="cron 表达式；保存后自动重排生效">
+            <AInput v-model="form.ai_analysis_patrol_cron" placeholder="0 3 * * *" allow-clear />
           </AFormItem>
           <AFormItem label="报告保留天数" extra="超期由清理任务自动删除">
-            <AInputNumber v-model="form.retention_days" :min="1" style="width: 100%" />
+            <AInputNumber v-model="form.ai_analysis_retention_days" :min="1" style="width: 100%" />
           </AFormItem>
         </div>
         <AFormItem label="巡查范围" extra="指定租户 ID 列表，空数组表示全部活跃租户">
           <ATextarea
-            v-model="form.patrol_scope"
+            v-model="form.ai_analysis_patrol_scope"
             :auto-size="{ minRows: 2, maxRows: 4 }"
             placeholder='{"tenants":[]}'
           />

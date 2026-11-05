@@ -1,15 +1,15 @@
-package aireqanalyze
+package aianalysis
 
 import (
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 )
 
-// 插件自有表的数据模型。刻意手写而不走 gf gen dao：生成物落在 internal/dao、
-// internal/model（核心生成目录），插件表混入会破坏「插件可整体删除」的隔离性
-//（见设计文档 6.4）。操作统一走 g.DB().Model("plg_ai_req_analyze_xxx") + DO 对象。
+// 数据模型。三张表属审计域（aud_ 前缀），迁移建表见 migrations/000030_ai_analysis.sql。
+// 刻意手写 DO/Entity 而不走 gf gen dao：分析引擎是自包含域，查询统一走
+// g.DB().Model("aud_ai_analysis_xxx") + DO 对象，与生成物解耦。
 
-// ── 报告主表 plg_ai_req_analyze_reports ──
+// ── 报告主表 aud_ai_analysis_reports ──
 
 // ReportEntity 报告实体（查询结果映射）。
 type ReportEntity struct {
@@ -35,7 +35,7 @@ type ReportEntity struct {
 
 // ReportDO 报告 DO（写入操作，未设置字段为 nil 自动忽略）。
 type ReportDO struct {
-	g.Meta          `orm:"table:plg_ai_req_analyze_reports, do:true"`
+	g.Meta          `orm:"table:aud_ai_analysis_reports, do:true"`
 	Id              any         // 主键ID
 	TenantId        any         // 分析目标租户ID
 	TargetUserId    any         // 分析目标用户ID（0=租户全员）
@@ -56,7 +56,7 @@ type ReportDO struct {
 	UpdatedAt       *gtime.Time // 更新时间
 }
 
-// ── 发现明细表 plg_ai_req_analyze_findings ──
+// ── 发现明细表 aud_ai_analysis_findings ──
 
 // 单元类型与分析维度枚举。
 const (
@@ -70,23 +70,23 @@ const (
 
 // FindingEntity 发现明细实体。
 type FindingEntity struct {
-	Id          int64       `json:"id"           orm:"id"`
-	ReportId    int64       `json:"report_id"    orm:"report_id"`
-	UnitType    string      `json:"unit_type"    orm:"unit_type"`
-	SessionKey  string      `json:"session_key"  orm:"session_key"`
-	RequestId   string      `json:"request_id"   orm:"request_id"`
+	Id          int64       `json:"id"            orm:"id"`
+	ReportId    int64       `json:"report_id"     orm:"report_id"`
+	UnitType    string      `json:"unit_type"     orm:"unit_type"`
+	SessionKey  string      `json:"session_key"   orm:"session_key"`
+	RequestId   string      `json:"request_id"    orm:"request_id"`
 	AnchorLogId int64       `json:"anchor_log_id" orm:"anchor_log_id"`
-	Dimension   string      `json:"dimension"    orm:"dimension"`
-	Severity    string      `json:"severity"     orm:"severity"`
-	Category    string      `json:"category"     orm:"category"`
-	Evidence    string      `json:"evidence"     orm:"evidence"`
-	Explanation string      `json:"explanation"  orm:"explanation"`
-	CreatedAt   *gtime.Time `json:"created_at"   orm:"created_at"`
+	Dimension   string      `json:"dimension"     orm:"dimension"`
+	Severity    string      `json:"severity"      orm:"severity"`
+	Category    string      `json:"category"      orm:"category"`
+	Evidence    string      `json:"evidence"      orm:"evidence"`
+	Explanation string      `json:"explanation"   orm:"explanation"`
+	CreatedAt   *gtime.Time `json:"created_at"    orm:"created_at"`
 }
 
 // FindingDO 发现明细 DO。
 type FindingDO struct {
-	g.Meta      `orm:"table:plg_ai_req_analyze_findings, do:true"`
+	g.Meta      `orm:"table:aud_ai_analysis_findings, do:true"`
 	Id          any         // 主键ID
 	ReportId    any         // 所属报告ID
 	UnitType    any         // 单元类型：session / standalone
@@ -101,7 +101,7 @@ type FindingDO struct {
 	CreatedAt   *gtime.Time // 创建时间
 }
 
-// ── 任务表 plg_ai_req_analyze_jobs ──
+// ── 任务表 aud_ai_analysis_jobs ──
 
 // 任务状态枚举。
 const (
@@ -130,7 +130,7 @@ type JobEntity struct {
 
 // JobDO 任务 DO。
 type JobDO struct {
-	g.Meta       `orm:"table:plg_ai_req_analyze_jobs, do:true"`
+	g.Meta       `orm:"table:aud_ai_analysis_jobs, do:true"`
 	Id           any         // 主键ID
 	ReportId     any         // 完成后回填的报告ID
 	TenantId     any         // 分析目标租户ID
@@ -148,7 +148,7 @@ type JobDO struct {
 
 // 表名常量（查询统一引用，避免散落字符串拼写错误）。
 const (
-	tableReports  = "plg_ai_req_analyze_reports"
-	tableFindings = "plg_ai_req_analyze_findings"
-	tableJobs     = "plg_ai_req_analyze_jobs"
+	TableReports  = "aud_ai_analysis_reports"
+	TableFindings = "aud_ai_analysis_findings"
+	TableJobs     = "aud_ai_analysis_jobs"
 )

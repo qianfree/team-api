@@ -1,4 +1,4 @@
-package aireqanalyze
+package aianalysis
 
 import (
 	"context"

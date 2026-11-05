@@ -1,4 +1,4 @@
-package aireqanalyze
+package aianalysis
 
 import (
 	"context"
@@ -16,14 +16,14 @@ import (
 )
 
 // 分析流水线：单元采样 → 分批物化（会话重组/独立正文）→ 调 AI → 校验归一 →
-// 聚合去重 → 落报告。设计文档 5.5/5.6 节的实现。
+// 聚合去重 → 落报告。。
 //
 // 提示词注入防护：AI 输入不含任何标识符（单元只有序号，会话键不进 prompt），
-// 序号到单元的映射在插件侧完成，被分析内容无法伪造与真实记录的关联。
+// 序号到单元的映射在引擎侧完成，被分析内容无法伪造与真实记录的关联。
 
 // ── AI 输出契约 ──
 
-// aiFinding AI 输出的单条发现（index 由插件映射回单元）。
+// aiFinding AI 输出的单条发现（index 由引擎映射回单元）。
 type aiFinding struct {
 	Index       int    `json:"index"`
 	Dimension   string `json:"dimension"`
@@ -38,7 +38,7 @@ type aiBatchResult struct {
 	Findings     []aiFinding `json:"findings"`
 	BatchSummary string      `json:"batch_summary"`
 
-	tokensUsed int      // 本批 token 消耗（插件侧计量，非 AI 输出）
+	tokensUsed int      // 本批 token 消耗（引擎侧计量，非 AI 输出）
 	notes      []string // 批内降级产生的单元级失败明细（整批错误时为空，错误走返回值）
 }
 
@@ -75,7 +75,7 @@ const defaultAgentPrompt = `你是一个 AI 网关平台的内容安全审计员
 （姓名+身份证+手机号等组合）。`
 
 // promptQualityAndContract 判定质量要求与 JSON 输出契约。
-// 无论内置还是自定义提示词都强制拼接在末尾：输出契约决定插件能否解析结果
+// 无论内置还是自定义提示词都强制拼接在末尾：输出契约决定引擎能否解析结果
 // （index/dimension/severity/category 枚举），质量要求决定 evidence 可信度
 // 与 severity 展示语义——放开自定义会破坏解析与回链，这段不参与自定义。
 const promptQualityAndContract = `判定要求：
@@ -247,7 +247,7 @@ func materializeBatch(ctx context.Context, units []*SampledUnit, maxLen int) ([]
 		}
 		// 重组失败（锚点被清理/时间越界等）→ 降级为独立单元，用锚点单条正文
 		if err != nil {
-			glog.Warningf(ctx, "ai-req-analyze: 会话重组失败，锚点 %d 降级为独立单元: %v", su.AnchorLogID, err)
+			glog.Warningf(ctx, "ai_analysis: 会话重组失败，锚点 %d 降级为独立单元: %v", su.AnchorLogID, err)
 		}
 		rec := bodies[su.AnchorLogID]
 		if rec == nil {
@@ -341,7 +341,7 @@ type findingRecord struct {
 }
 
 // normalizeFinding 校验并归一一条 AI 发现，映射回单元；非法条目返回 nil。
-// evidence/explanation 落库前过 MaskSensitiveData 脱敏（设计文档第七节）。
+// evidence/explanation 落库前过 MaskSensitiveData 脱敏。
 func normalizeFinding(f aiFinding, units []materializedUnit) *findingRecord {
 	if f.Index < 1 || f.Index > len(units) {
 		return nil
@@ -665,7 +665,7 @@ func persistReport(ctx context.Context, job *JobEntity, cfg *Config, p *reportPa
 
 	var reportID int64
 	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		v, err := g.DB().Model(tableReports).Ctx(ctx).Data(ReportDO{
+		v, err := g.DB().Model(TableReports).Ctx(ctx).Data(ReportDO{
 			TenantId:        job.TenantId,
 			TargetUserId:    job.TargetUserId,
 			Source:          job.Source,
@@ -703,7 +703,7 @@ func persistReport(ctx context.Context, job *JobEntity, cfg *Config, p *reportPa
 					Explanation: f.Explanation,
 				}
 			}
-			if _, err := g.DB().Model(tableFindings).Ctx(ctx).Data(rows).Insert(); err != nil {
+			if _, err := g.DB().Model(TableFindings).Ctx(ctx).Data(rows).Insert(); err != nil {
 				return err
 			}
 		}
@@ -721,11 +721,11 @@ func updateJobProgress(ctx context.Context, jobID int64, total, done int) {
 	if total > 0 {
 		pct = done * 100 / total
 	}
-	if _, err := g.DB().Model(tableJobs).Ctx(ctx).
+	if _, err := g.DB().Model(TableJobs).Ctx(ctx).
 		Where("id", jobID).
 		Data(JobDO{Progress: pct}).
 		Update(); err != nil {
-		glog.Warningf(ctx, "ai-req-analyze: 更新任务进度失败 job=%d: %v", jobID, err)
+		glog.Warningf(ctx, "ai_analysis: 更新任务进度失败 job=%d: %v", jobID, err)
 	}
 }
 
