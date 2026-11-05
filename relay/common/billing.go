@@ -116,6 +116,7 @@ type SettlementResult struct {
 	CacheCreationCost float64
 	CacheReadCost     float64
 	TotalCost         float64
+	ToolSurchargeCost float64 // 工具调用附加费合计（联网搜索/云端工具按次收费，已含在 ActualCost 中）
 	BillingMode       string
 	BillingSource     string
 	RateMultiplier    float64

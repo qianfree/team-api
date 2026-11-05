@@ -330,6 +330,9 @@ func (a *Adaptor) handleCodeAssistAggregatedStream(ctx context.Context, resp *ht
 		lastFinish  string
 		toolCalls   []dto.ToolCall
 		toolCallIdx int
+		// grounding 搜索次数跨 chunk 取最大（聚合响应重建 candidates 会丢 grounding，
+		// 计数须在聚合前捕获；max 防御同一 grounding 在相邻 chunk 重复下发）
+		searchCount int
 	)
 
 	for scanner.Scan() {
@@ -371,6 +374,9 @@ func (a *Adaptor) handleCodeAssistAggregatedStream(ctx context.Context, resp *ht
 		}
 		if chunk.ModelName != "" {
 			modelName = chunk.ModelName
+		}
+		if n := geminiSearchRequestCount(&chunk); n > searchCount {
+			searchCount = n
 		}
 
 		// 检查安全过滤
@@ -467,7 +473,9 @@ func (a *Adaptor) handleCodeAssistAggregatedStream(ctx context.Context, resp *ht
 		_, _ = writer.Write(respBody)
 	}
 
-	return geminiUsageToCommon(&totalUsage), nil
+	usage := geminiUsageToCommon(&totalUsage)
+	usage.SetToolCount(geminiSearchToolKey, searchCount)
+	return usage, nil
 }
 
 // appendToolCall 添加工具调用到列表

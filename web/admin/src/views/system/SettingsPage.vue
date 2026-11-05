@@ -4,7 +4,7 @@ import { useRoute } from 'vue-router'
 import { Message } from '@arco-design/web-vue'
 import {
 	IconSettings, IconLock, IconEmail, IconSafe, IconHistory, IconSwap,
-	IconThunderbolt, IconFilter, IconShareInternal, IconCloud, IconStorage, IconFile,
+	IconThunderbolt, IconFilter, IconShareInternal, IconCloud, IconStorage, IconFile, IconRecord,
 } from '@arco-design/web-vue/es/icon'
 import PageHeader from '@/components/PageHeader.vue'
 import { useSettings } from './settings/useSettings'
@@ -21,6 +21,7 @@ import ChannelTab from './settings/ChannelTab.vue'
 import StorageTab from './settings/StorageTab.vue'
 import DataGovernanceTab from './settings/DataGovernanceTab.vue'
 import AgreementTab from './settings/AgreementTab.vue'
+import BillingTab from './settings/BillingTab.vue'
 
 interface SettingCategory {
 	key: string
@@ -42,6 +43,7 @@ const categoryMap: Record<string, Component> = {
 	storage: StorageTab,
 	data_governance: DataGovernanceTab,
 	agreement: AgreementTab,
+	billing: BillingTab,
 }
 
 // 后端下发的分类 icon 名 → Arco 图标（未匹配时回落齿轮）
@@ -58,6 +60,7 @@ const iconMap: Record<string, Component> = {
 	cloud: IconCloud,
 	database: IconStorage,
 	document: IconFile,
+	record: IconRecord,
 }
 
 const categories = ref<SettingCategory[]>([])

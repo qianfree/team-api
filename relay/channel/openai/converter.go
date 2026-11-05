@@ -1069,7 +1069,7 @@ func ResponsesResponseToChatCompletions(resp *dto.OpenAIResponsesResponse, id st
 		Usage: *usage,
 	}
 
-	return chatResp, &common.Usage{
+	billingUsage := &common.Usage{
 		PromptTokens:     usage.PromptTokens,
 		CompletionTokens: usage.CompletionTokens,
 		TotalTokens:      usage.TotalTokens,
@@ -1078,7 +1078,10 @@ func ResponsesResponseToChatCompletions(resp *dto.OpenAIResponsesResponse, id st
 		CacheIncludedInPrompt:  true,
 		PromptTokensDetails:    common.DtoTokenDetailsToCommon(usage.PromptTokensDetails),
 		CompletionTokenDetails: common.DtoTokenDetailsToCommon(usage.CompletionTokenDetails),
-	}, nil
+	}
+	// 服务端工具调用计数（web_search/file_search 项，按次附加费计费）
+	applyResponsesToolCalls(billingUsage, resp)
+	return chatResp, billingUsage, nil
 }
 
 func extractOutputFromResponses(resp *dto.OpenAIResponsesResponse) (string, []dto.ToolCall) {
@@ -1293,6 +1296,8 @@ func HandleResponsesStreamToChat(ctx context.Context, resp *http.Response, info 
 						totalUsage.TotalTokens = totalUsage.PromptTokens + totalUsage.CompletionTokens
 					}
 				}
+				// 终帧携带完整 output：服务端工具调用计数（web_search/file_search 项，按次附加费）
+				applyResponsesToolCalls(&totalUsage, streamResp.Response)
 			}
 			if !sendStartIfNeeded() {
 				sr.Stop(fmt.Errorf("send start chunk failed"))

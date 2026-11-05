@@ -46,6 +46,45 @@ type Usage struct {
 	// 按需填充，公式计费经 u("key") 消费；key 注册表见 billing/formula.KnownFactKeys。
 	// 新增填充点必须同步注册 key（保存烟测强校验），值单位随 key 语义固定
 	Facts map[string]float64 `json:"-"`
+	// ToolCalls 服务端/云端工具调用次数（工具名 → 次数），渠道 adaptor 从响应证据中
+	// 填充（Claude usage.server_tool_use / Gemini grounding 查询数 / Responses
+	// web_search_call 项等），结算层按全局工具价格表（billing/tool_pricing.go）
+	// 计按次附加费。计数与价格解耦：渠道只管如实计数，未配价 = 免费。
+	// 刻意不并入 Facts：Facts 是公式计费变量通道，混入会导致公式 u() 与附加费双重计费
+	ToolCalls map[string]int `json:"-"`
+}
+
+// SetToolCount 记录工具调用次数（厂商报数替换语义：上游 usage 明确报告的累计次数
+// 覆盖协议层逐条累计的结果，负数/零次忽略——零值可能是上游未统计而非确无调用）
+func (u *Usage) SetToolCount(tool string, count int) {
+	if u == nil || tool == "" || count <= 0 {
+		return
+	}
+	if u.ToolCalls == nil {
+		u.ToolCalls = make(map[string]int)
+	}
+	u.ToolCalls[tool] = count
+}
+
+// AddToolCalls 累加工具调用次数（协议层逐条计数语义）
+func (u *Usage) AddToolCalls(tool string, delta int) {
+	if u == nil || tool == "" || delta <= 0 {
+		return
+	}
+	if u.ToolCalls == nil {
+		u.ToolCalls = make(map[string]int)
+	}
+	u.ToolCalls[tool] += delta
+}
+
+// MergeToolCalls 并入他方工具计数（同名工具次数相加；用于流式多帧/转换桥汇聚）
+func (u *Usage) MergeToolCalls(other map[string]int) {
+	if u == nil || len(other) == 0 {
+		return
+	}
+	for tool, count := range other {
+		u.AddToolCalls(tool, count)
+	}
 }
 
 // TotalInputTokens 返回「含缓存的总输入 token」：口径未包含缓存（Claude）时补加缓存读/写，

@@ -34,6 +34,12 @@ type BillingSnapshot struct {
 	// Formula 表达式计费命中明细（仅 billing_mode=formula 填充）：公式原文（截断）、
 	// 变量环境快照与命中系数，配合 multipliers 使「系数 / 1e6 × 乘数链 = 实际费用」可复算
 	Formula *BillingSnapshotFormula `json:"formula,omitempty"`
+	// ToolSurcharges 工具调用附加费明细（联网搜索/云端工具按次收费，任何计费模式可叠加）：
+	// 逐工具记录次数/结算时刻单价/费用，使「次数 × 单价 = 费用」可复算。
+	// 工具费独立计算，任何乘数（租户/时段/参数倍率）均不作用。
+	// 单价为结算时刻全局工具价格表（sys_options tool_call_prices）的解析值，价格后续
+	// 调整不影响历史账单解释。仅发生工具计费时填充；旧快照无此键，读取方按空处理
+	ToolSurcharges []ToolSurchargeItem `json:"tool_surcharges,omitempty"`
 }
 
 // BillingSnapshotFormula 表达式计费命中明细
@@ -192,6 +198,12 @@ func GenerateBillingSnapshot(
 				UnitPrice:  breakdown.TaskFacts.PerSecond.UnitPrice,
 			}
 		}
+	}
+
+	// 工具调用附加费明细（仅发生工具计费时填充）：固定单价 × 次数，
+	// 「次数 × 单价 = cost」自洽复算（不乘任何倍率）
+	if len(breakdown.ToolItems) > 0 {
+		snapshot.ToolSurcharges = breakdown.ToolItems
 	}
 
 	// Cache 比率（仅当有 cache token 时填充）
@@ -413,6 +425,30 @@ func GenerateBillingSummary(ctx context.Context, snapshot *BillingSnapshot) stri
 			lines = append(lines, fmt.Sprintf("合计: (%s) = %s",
 				joinWithPlus(costParts), money(snapshot.Settlement.ActualCost)))
 		}
+	}
+
+	// 工具调用附加费行（任何计费模式可叠加，仅发生工具计费时快照携带）：
+	// 逐工具「名称: N 次 × 单价/次 = 费用」。工具费独立计算，任何乘数（租户/时段/参数倍率）
+	// 均不作用——算式两端严格相等，无需倍率段。单价为结算时刻全局工具价格表的解析值
+	// （对齐 new-api tool_surcharges 快照语义）
+	toolNameMap := map[string]string{
+		"web_search":                    "联网搜索",
+		"web_search_preview":            "联网搜索(preview)",
+		"google_search":                 "Google检索",
+		"google_search_grounded_prompt": "Google检索(按请求)",
+		"file_search":                   "文件检索",
+		"web_fetch":                     "网页抓取",
+		"code_execution":                "代码执行",
+	}
+	for _, item := range snapshot.ToolSurcharges {
+		label := toolNameMap[item.Name]
+		if label == "" {
+			label = item.Name
+		} else {
+			label = fmt.Sprintf("%s(%s)", label, item.Name)
+		}
+		lines = append(lines, fmt.Sprintf("%s: %s 次 × %s/次 = %s",
+			label, formatInt(item.Count), money(item.UnitPrice), money(item.Cost)))
 	}
 
 	// 按秒计费命中明细行（仅任务结算路径且按秒矩阵参与定价时快照携带）：

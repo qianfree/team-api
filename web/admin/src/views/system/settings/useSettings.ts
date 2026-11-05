@@ -15,6 +15,30 @@ const categoryValidators: Record<string, (values: Record<string, any>) => string
 		}
 		return null
 	},
+	billing: (values) => {
+		// 工具调用价格表必须是合法 JSON 对象：key 为 工具名 或 工具名:模型前缀*，价格 0~100（与后端校验口径一致）
+		const raw = (values['tool_call_prices'] ?? '').toString().trim()
+		if (!raw) return null
+		let obj: unknown
+		try {
+			obj = JSON.parse(raw)
+		} catch {
+			return '工具调用价格表必须是合法的 JSON 对象，如 {"web_search": 0.01}'
+		}
+		if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) {
+			return '工具调用价格表必须是 JSON 对象，如 {"web_search": 0.01}'
+		}
+		for (const [key, price] of Object.entries(obj as Record<string, unknown>)) {
+			if (!/^[a-z0-9_]+(:[A-Za-z0-9._*\-]+)?$/.test(key)) {
+				return `key "${key}" 格式非法：应为 工具名 或 工具名:模型前缀*`
+			}
+			const p = Number(price)
+			if (!Number.isFinite(p) || p < 0 || p > 100) {
+				return `key "${key}" 的价格必须是 0~100 之间的数字`
+			}
+		}
+		return null
+	},
 }
 
 export function useSettings(category: () => string) {

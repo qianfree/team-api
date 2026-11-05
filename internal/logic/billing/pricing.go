@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -643,12 +644,30 @@ func CalculateCost(ctx context.Context, tenantID int64, modelName string, inputT
 // 提取为独立函数以便单元测试，不依赖数据库或缓存。
 // count 为按次计费放大倍数（图片协议顶层 n），<=1 不放大；token/tiered 计费不受其影响。
 func computeCost(pricing *PricingResult, inputTokens, outputTokens int, usage *rcommon.Usage, count int) *CostBreakdown {
-	return computeCostWithEval(pricing, inputTokens, outputTokens, usage, count, nil)
+	return computeCostWithEval(pricing, inputTokens, outputTokens, usage, count, nil, nil)
 }
 
+// ToolPriceResolver 工具单价查找器（tool_pricing.go 的索引按计费模型名闭包封装；
+// nil = 无工具计费——legacy 调用路径与无工具计数的请求直通）
+type ToolPriceResolver func(tool string) float64
+
 // computeCostWithEval 带公式求值上下文的 computeCost。ec 携带请求探测值与时间基准
-// （formula 模式消费；nil → 探针取空值、时间取当前时刻，legacy/无请求路径的兜底口径）
-func computeCostWithEval(pricing *PricingResult, inputTokens, outputTokens int, usage *rcommon.Usage, count int, ec *formula.EvalContext) *CostBreakdown {
+// （formula 模式消费；nil → 探针取空值、时间取当前时刻，legacy/无请求路径的兜底口径）。
+// toolPrice 为工具调用单价查找器（联网搜索/云端工具按次附加费，见 tool_pricing.go），
+// 附加费在任何计费模式的 TotalCost 之上叠加，与折扣/时段乘数同链
+func computeCostWithEval(pricing *PricingResult, inputTokens, outputTokens int, usage *rcommon.Usage, count int, ec *formula.EvalContext, toolPrice ToolPriceResolver) *CostBreakdown {
+	bd := computeCostByMode(pricing, inputTokens, outputTokens, usage, count, ec)
+	if bd == nil {
+		return nil
+	}
+	// 工具调用附加费：叠加在任何计费模式之上（含 formula 求值失败的 fail-safe 路径——
+	// 工具计数独立于公式可信，SettleWithUsage 兜底时保留 ToolSurcharge）
+	applyToolSurcharge(bd, pricing, usage, toolPrice)
+	return bd
+}
+
+// computeCostByMode 各计费模式（token/per_request/tiered/formula）的原有费用计算
+func computeCostByMode(pricing *PricingResult, inputTokens, outputTokens int, usage *rcommon.Usage, count int, ec *formula.EvalContext) *CostBreakdown {
 	baseInputTokens, outputTokens, cacheReadTokens, cacheCreation5mTokens, cacheCreation1hTokens := resolveTokenCounts(pricing, inputTokens, outputTokens, usage)
 	if count < 1 {
 		count = 1
@@ -765,6 +784,60 @@ func computeCostWithEval(pricing *PricingResult, inputTokens, outputTokens int, 
 		CacheCreation5mCost:   InexactFloat64(RoundMoney(cacheCreation5mCostD.Mul(mul))),
 		CacheCreation1hCost:   InexactFloat64(RoundMoney(cacheCreation1hCostD.Mul(mul))),
 	}
+}
+
+// applyToolSurcharge 计算工具调用附加费并叠加到费用明细（任何计费模式通用）。
+//
+// 计费规则（参考 new-api 工具附加费语义，全额本位币口径——无积分/QuotaPerUnit 换算）：
+//   - 逐工具取 usage.ToolCalls 次数，按 MaxBillableToolCallCount 钳制（防上游异常值天价账单）
+//   - 单价经 ToolPriceResolver 查全局工具价格表（tool_pricing.go，支持模型前缀覆盖；
+//     管理端配置值与种子折算后均为本位币），
+//     price <= 0 / 非法值跳过（未配价 = 免费放行，非 fail-closed——与模型未配价语义不同）
+//   - 分项费用独立计算：固定单价 × 次数（decimal 精算），任何乘数（租户/时段/参数倍率）
+//     均不作用于工具费——上游对工具调用按次固定计费，平台按固定价原价收取，
+//     倍率（折扣/促销）只作用于模型费用
+//   - TotalCost += 附加费合计；BaseCost += 附加费小计（同额，无倍率差异）
+//   - 明细按工具名排序写入 ToolItems（快照/摘要可复算：次数 × 单价 = 费用）
+func applyToolSurcharge(bd *CostBreakdown, pricing *PricingResult, usage *rcommon.Usage, resolve ToolPriceResolver) {
+	if bd == nil || pricing == nil || resolve == nil || usage == nil || len(usage.ToolCalls) == 0 {
+		return
+	}
+
+	names := make([]string, 0, len(usage.ToolCalls))
+	for name := range usage.ToolCalls {
+		names = append(names, name)
+	}
+	sort.Strings(names) // map 迭代序不确定，排序保证明细与费用跨次一致
+
+	var totalD decimal.Decimal
+	for _, name := range names {
+		count := usage.ToolCalls[name]
+		if count <= 0 {
+			continue
+		}
+		if count > MaxBillableToolCallCount {
+			count = MaxBillableToolCallCount
+		}
+		price := resolve(name)
+		if price <= 0 || math.IsNaN(price) || math.IsInf(price, 0) {
+			continue
+		}
+		itemCostD := RoundMoney(NewFromFloat(price).Mul(NewFromFloat(float64(count))))
+		bd.ToolItems = append(bd.ToolItems, ToolSurchargeItem{
+			Name:      name,
+			Count:     count,
+			UnitPrice: price,
+			Cost:      InexactFloat64(itemCostD),
+		})
+		totalD = totalD.Add(itemCostD)
+	}
+	if len(bd.ToolItems) == 0 {
+		return
+	}
+
+	bd.ToolSurcharge = InexactFloat64(RoundMoney(totalD))
+	bd.BaseCost = InexactFloat64(RoundMoney(NewFromFloat(bd.BaseCost).Add(totalD)))
+	bd.TotalCost = InexactFloat64(RoundMoney(NewFromFloat(bd.TotalCost).Add(NewFromFloat(bd.ToolSurcharge))))
 }
 
 // fillCacheCreationBuckets 填充 CostBreakdown 的缓存创建 TTL 分桶字段（per_request 等
@@ -888,11 +961,28 @@ type CostBreakdown struct {
 	// 请求规则命中表（formula 模式：header()/param()/时间条件倍率的埋点结果，
 	// 随快照留痕供账单解释「本次请求命中了哪些倍率规则」）
 	RequestRules []formula.RequestRuleTrace
+
+	// 工具调用附加费（联网搜索/云端工具按次收费，叠加在任何计费模式之上）。
+	// ToolItems 为逐工具明细（次数/单价/费用，随快照留痕），ToolSurcharge 为
+	// 固定单价 × 次数的合计——独立计算，任何乘数（租户/时段/参数倍率）均不作用；
+	// TotalCost 已含该值。渠道采集侧只如实计数（relay Usage.ToolCalls），
+	// 未配价的工具不计费（免费，非 fail-closed）
+	ToolSurcharge float64
+	// ToolItems 工具附加费明细（按工具名排序，快照与摘要的计费解释依据）
+	ToolItems []ToolSurchargeItem
+}
+
+// ToolSurchargeItem 单个工具的按次附加费明细（快照与账单解释的最小单元）
+type ToolSurchargeItem struct {
+	Name      string  `json:"name"`       // 工具计费 key（web_search / google_search / file_search ...）
+	Count     int     `json:"count"`      // 计费次数（已按 MaxBillableToolCallCount 钳制）
+	UnitPrice float64 `json:"unit_price"` // 每次调用单价（本位币，固定价不乘任何倍率）
+	Cost      float64 `json:"cost"`       // 实际费用 = UnitPrice × Count
 }
 
 // EstimatePreDeductAmount 估算预扣金额
 // 输出 token 估算：用户指定 max_tokens 时按其值（截断到模型上限）；未指定时按模型 max_output_tokens 的 80%。
-// 按估算全额冻结（无上限封顶），下限 $0.001；未配置定价的模型 fail-closed 返回错误拒绝请求。
+// 按估算全额冻结（无上限封顶），下限 0.001 本位币；未配置定价的模型 fail-closed 返回错误拒绝请求。
 // count 为按次计费放大倍数（图片协议顶层 n），<=1 不放大；token 计费不受其影响（usage 已随 n 放大）。
 // headers/body 为客户端原始请求（formula 模式请求规则探测用；时间函数基准取当前时刻，
 // 与结算的 billAt≈受理时刻几乎重合，跨小时边界以结算为准不漂移）。

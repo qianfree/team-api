@@ -564,7 +564,12 @@ func settleSuccessfulRequest(
 		usageRecord.OutputCost = settleResult.OutputCost
 		usageRecord.CacheCreationCost = settleResult.CacheCreationCost
 		usageRecord.CacheReadCost = settleResult.CacheReadCost
+		usageRecord.ToolSurchargeCost = settleResult.ToolSurchargeCost
 	}
+
+	// 工具调用计数（联网搜索/云端工具按次附加费的采集侧数据）：
+	// 结算失败（settleResult nil）时仍落计数，供对账排查
+	usageRecord.ToolUsage = usage.ToolCalls
 
 	v.billingResult.FirstTokenMs = firstTokenMs
 	provider.RecordUsage(postCtx, usageRecord)

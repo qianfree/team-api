@@ -46,6 +46,7 @@ var Categories = []SettingCategory{
 	{Key: "storage", Label: "存储配置", Icon: "cloud", Order: 10},
 	{Key: "data_governance", Label: "数据治理", Icon: "database", Order: 11},
 	{Key: "agreement", Label: "用户协议", Icon: "document", Order: 12},
+	{Key: "billing", Label: "计费配置", Icon: "record", Order: 13},
 }
 
 // Registry is the central definition of all configuration items.
@@ -79,6 +80,12 @@ var Registry = []SettingDef{
 		Label: "站点后端地址", Description: "平台后端 API 的对外访问地址，如 https://api.example.com，用于构造 OAuth 登录回调地址（须与 GitHub/Google 应用后台登记的回调域名一致）；为空时按当前请求 Host 推断"},
 	{Key: "pricing_time_timezone", Type: SettingTypeString, Default: "Asia/Shanghai", Category: "general",
 		Label: "计费时区", Description: "模型时段定价（峰谷/促销）按此时区解释，IANA 时区名，如 Asia/Shanghai"},
+
+	// ── Billing (计费) ──
+	// 工具调用计费（联网搜索/云端工具按次附加费）：价格表为 sys_options JSON，
+	// 查找与附加费计算见 internal/logic/billing/tool_pricing.go
+	{Key: "tool_call_prices", Type: SettingTypeJSON, Default: "{}", Category: "billing",
+		Label: "工具调用价格表", Description: "云端工具/联网搜索按次计费单价（每次调用，本位币）。key=工具名或 工具名:模型前缀*（最长前缀匹配），如 {\"web_search\":0.01,\"web_search:claude-*\":0.01}；0=关闭该工具计费；未列出的工具用内置默认价（厂商 USD 列表价按支付汇率折算为本位币），整体留空 {} 仅用默认价"},
 
 	// ── OAuth (第三方登录) ──
 	{Key: "oauth_auto_register", Type: SettingTypeBool, Default: "false", Category: "oauth",

@@ -138,6 +138,7 @@ func toCommonSettlementResult(result *SettlementResult) *common.SettlementResult
 		CacheCreationCost: cacheCreationCost,
 		CacheReadCost:     cacheReadCost,
 		TotalCost:         result.ActualCost,
+		ToolSurchargeCost: result.ToolSurchargeCost,
 		BillingMode:       result.BillingMode,
 		BillingSource:     result.BillingSource,
 		RateMultiplier:    result.RateMultiplier,

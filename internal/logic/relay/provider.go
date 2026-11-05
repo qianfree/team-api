@@ -440,10 +440,27 @@ func buildUsageLogDO(record *common.UsageRecord) do.BilUsageLogs {
 		ImageCount: record.ImageCount,
 		ImageSize:  sanitizeUTF8(record.ImageSize),
 
+		// 工具调用计费：计数 JSONB（map 键经 encoding/json 自动排序，跨次落库一致），
+		// 无工具调用为 NULL；附加费合计 0 值落库（DEFAULT 0 NOT NULL 语义对齐）
+		ToolUsage:         jsonNullIfEmpty(marshalToolUsage(record.ToolUsage)),
+		ToolSurchargeCost: record.ToolSurchargeCost,
+
 		BillingSnapshot: jsonNullIfEmpty(sanitizeUTF8(record.BillingSnapshot)),
 		BillingSummary:  sanitizeUTF8(record.BillingSummary),
 		TaskId:          sanitizeUTF8(record.TaskID),
 	}
+}
+
+// marshalToolUsage 工具调用计数序列化为 JSON（失败返回空串 → 落库 NULL）
+func marshalToolUsage(toolUsage map[string]int) string {
+	if len(toolUsage) == 0 {
+		return ""
+	}
+	data, err := json.Marshal(toolUsage)
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }
 
 // maxAuditBodyLen 未配置独立审计库时，审计日志请求体/响应体/任务结果的字节截断上限（2 KiB）。

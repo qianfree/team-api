@@ -223,6 +223,11 @@ type UsageRecord struct {
 	BillingSnapshot string // JSON 字符串
 	BillingSummary  string // 人类可读中文文本
 
+	// 工具调用计费（联网搜索/云端工具按次附加费）：计数来自渠道采集（usage.ToolCalls），
+	// 费用来自结算结果；明细（单价/倍率/分项费用）在 BillingSnapshot.tool_surcharges
+	ToolUsage         map[string]int
+	ToolSurchargeCost float64
+
 	// 异步任务关联
 	TaskID string // 异步任务公开ID（task_xxxxx），普通请求为空
 

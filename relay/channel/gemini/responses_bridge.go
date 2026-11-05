@@ -64,8 +64,10 @@ func (a *Adaptor) handleNonStreamToResponses(ctx context.Context, resp *http.Res
 	writer.WriteHeader(http.StatusOK)
 	_, _ = writer.Write(convertedBody)
 
-	// 计费用量取 Gemini 原生口径（与客户端可见口径一致）
-	return geminiUsageToCommon(geminiResp.UsageMetadata), nil
+	// 计费用量取 Gemini 原生口径（与客户端可见口径一致），grounding 搜索计数一并透出
+	usage := geminiUsageToCommon(geminiResp.UsageMetadata)
+	applyGeminiGroundingCount(usage, &geminiResp)
+	return usage, nil
 }
 
 // buildResponsesBodyFromGemini 构建 Responses 非流式响应体与用量。
