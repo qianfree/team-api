@@ -30,6 +30,9 @@ type SettingDef struct {
 	Sensitive   bool        `json:"sensitive,omitempty"`
 	Validation  string      `json:"validation,omitempty"` // "enum:a,b,c" or "min:1,max:100"
 	IsPublic    bool        `json:"is_public,omitempty"`
+	// Encrypted 敏感值加密存储：写入前 AES-256-GCM 加密（v1: 前缀密文），
+	// 读取走 Config().GetSecret 解密；界面回显掩码同 Sensitive。密钥与渠道 Key 共用
+	Encrypted bool `json:"encrypted,omitempty"`
 }
 
 // Categories defines all setting categories in display order.
@@ -281,6 +284,51 @@ var Registry = []SettingDef{
 	// ── Agreement (用户协议) ──
 	{Key: "agreement_enabled", Type: SettingTypeBool, Default: "false", Category: "agreement",
 		Label: "启用用户协议", Description: "启用后，管理员可管理协议版本，用户登录时需接受协议", IsPublic: true},
+
+	// ── AI 请求分析 ──
+	// 审计域核心功能（原 ai-req-analyze 插件转系统原生）：配置存 sys_options 但不进
+	// Categories（设置页无此分类页签），读写走功能页自有的 /ai-analysis/config 端点；
+	// 业务读取方为 internal/logic/aianalysis。
+	{Key: "ai_analysis_base_url", Type: SettingTypeString, Default: "", Category: "ai_analysis",
+		Label:       "分析 AI 端点",
+		Description: "OpenAI 兼容端点地址（填法取决于「端点模式」）。建议内网自部署，防止分析内容二次泄露"},
+	{Key: "ai_analysis_endpoint_mode", Type: SettingTypeString, Default: "base", Category: "ai_analysis",
+		Label: "端点模式", Validation: "enum:base,full",
+		Description: "base：端点填基地址（如 http://ollama:11434/v1，自动拼接 /chat/completions）；full：端点填完整请求地址（非标准路径用）"},
+	{Key: "ai_analysis_api_key", Type: SettingTypeString, Default: "", Category: "ai_analysis",
+		Label: "分析 AI 密钥", Sensitive: true, Encrypted: true,
+		Description: "端点访问密钥，AES-256 加密存储；内网无鉴权部署（如 Ollama）可留空"},
+	{Key: "ai_analysis_model", Type: SettingTypeString, Default: "", Category: "ai_analysis",
+		Label: "分析模型", Description: "用于分析的模型名（如 qwen2.5:32b、gpt-4o-mini）"},
+	{Key: "ai_analysis_timeout_ms", Type: SettingTypeInt, Default: "60000", Category: "ai_analysis",
+		Label: "调用超时（毫秒）", Validation: "min:1000,max:600000",
+		Description: "单次分析调用的超时时间"},
+	{Key: "ai_analysis_max_tokens", Type: SettingTypeInt, Default: "4096", Category: "ai_analysis",
+		Label: "单次输出上限", Validation: "min:64,max:128000",
+		Description: "单次分析调用的 max_tokens"},
+	{Key: "ai_analysis_agent_prompt", Type: SettingTypeString, Default: "", Category: "ai_analysis",
+		Label:       "智能体提示词",
+		Description: "自定义分析智能体的角色设定与审计维度（如专属行业合规口径），留空使用内置提示词。判定质量要求与 JSON 输出格式由系统自动拼接，无需编写"},
+	{Key: "ai_analysis_custom_rules", Type: SettingTypeString, Default: "", Category: "ai_analysis",
+		Label: "自定义合规规则", Description: "追加到分析系统提示词的额外规则（如行业监管要求），可选"},
+	{Key: "ai_analysis_units_per_batch", Type: SettingTypeInt, Default: "6", Category: "ai_analysis",
+		Label: "每批分析单元数", Validation: "min:1,max:50",
+		Description: "每批送入 AI 的会话/独立单元数。单元含多轮对话，比逐请求的批量小一个量级"},
+	{Key: "ai_analysis_snippet_max_len", Type: SettingTypeInt, Default: "4000", Category: "ai_analysis",
+		Label: "单元截断长度（字符）", Validation: "min:200,max:100000",
+		Description: "单个分析单元送入 AI 的最大长度，超出截断"},
+	{Key: "ai_analysis_patrol_enabled", Type: SettingTypeBool, Default: "false", Category: "ai_analysis",
+		Label: "启用定时巡查", Description: "按计划自动对巡查范围内的租户产出分析报告"},
+	{Key: "ai_analysis_patrol_cron", Type: SettingTypeString, Default: "0 3 * * *", Category: "ai_analysis",
+		Label: "巡查计划", Description: "cron 表达式，默认每天凌晨 3 点；保存后自动重排生效"},
+	{Key: "ai_analysis_patrol_scope", Type: SettingTypeJSON, Default: `{"tenants":[]}`, Category: "ai_analysis",
+		Label: "巡查范围", Description: "指定租户 ID 列表，空数组表示全部活跃租户"},
+	{Key: "ai_analysis_patrol_window_h", Type: SettingTypeInt, Default: "24", Category: "ai_analysis",
+		Label: "巡查回看窗口（小时）", Validation: "min:1,max:720",
+		Description: "每次巡查分析的回看时间窗口"},
+	{Key: "ai_analysis_retention_days", Type: SettingTypeInt, Default: "90", Category: "ai_analysis",
+		Label: "报告保留天数", Validation: "min:1,max:3650",
+		Description: "报告及发现明细的保留期，超期由清理任务删除"},
 }
 
 // registryMap is a lookup index for fast access by key.

@@ -1,4 +1,4 @@
-package aireqanalyze
+package aianalysis
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 
 // 会话采样：把分析窗口内的审计日志收敛为「分析单元」描述符（不含正文）。
 //
-// 三类单元（见设计文档 2.5 节）：
+// 三类单元：
 //   - 会话单元：session_key 分组，锚点 = 组内最大 id（最新请求）
 //   - 内容链单元：无会话键但有 conv_fingerprint 的记录按指纹分组
 //   - 独立单元：两者皆空（单发/embedding/任务提交），逐条分析
@@ -20,7 +20,7 @@ import (
 // 正文的获取是惰性的：会话单元在分批处理时经 LoadConversationView 重组，
 // 独立单元按批 IN 查询，内存与查询量都随批推进而非随窗口总量扩张。
 //
-// 全部查询经 AuditModelCtx 访问（独立审计库部署时自动路由），插件对审计库只读。
+// 全部查询经 AuditModelCtx 访问（独立审计库部署时自动路由），分析引擎对审计库只读。
 
 // maxStandaloneUnits 独立单元采样上限。
 // 单发请求（embedding 等）可能数量巨大，超限部分不进入本次分析并在报告中标注；

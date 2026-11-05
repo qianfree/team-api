@@ -11,7 +11,7 @@ const props = withDefaults(
 	defineProps<{
 		visible: boolean
 		recordId: number | null
-		// 自定义数据端点：默认走审计模块会话视图；ai-req-analyze 报告等调用方
+		// 自定义数据端点：默认走审计模块会话视图；AI请求分析报告等调用方
 		// 未必有 audit:view 权限，传自己的端点（参数为 recordId，其语义由调用方定义）
 		fetchUrl?: (recordId: number) => string
 	}>(),

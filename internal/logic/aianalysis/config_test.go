@@ -1,4 +1,4 @@
-package aireqanalyze
+package aianalysis
 
 import (
 	"testing"
@@ -20,26 +20,26 @@ func TestConfigFromMapDefaults(t *testing.T) {
 
 func TestConfigEndpointMode(t *testing.T) {
 	// full 生效；非法/空值回落 base（错配 full 会把请求打到根路径，宁可保守拼接）
-	if cfg := configFromMap(g.Map{"ai_endpoint_mode": "full"}); cfg.AIEndpointMode != EndpointModeFull {
+	if cfg := configFromMap(g.Map{"ai_analysis_endpoint_mode": "full"}); cfg.AIEndpointMode != EndpointModeFull {
 		t.Fatalf("full 模式未生效: %q", cfg.AIEndpointMode)
 	}
-	if cfg := configFromMap(g.Map{"ai_endpoint_mode": "FULL"}); cfg.AIEndpointMode != EndpointModeBase {
+	if cfg := configFromMap(g.Map{"ai_analysis_endpoint_mode": "FULL"}); cfg.AIEndpointMode != EndpointModeBase {
 		t.Fatalf("大小写敏感，非法值应回落 base: %q", cfg.AIEndpointMode)
 	}
-	if cfg := configFromMap(g.Map{"ai_endpoint_mode": "whatever"}); cfg.AIEndpointMode != EndpointModeBase {
+	if cfg := configFromMap(g.Map{"ai_analysis_endpoint_mode": "whatever"}); cfg.AIEndpointMode != EndpointModeBase {
 		t.Fatalf("非法值应回落 base: %q", cfg.AIEndpointMode)
 	}
 }
 
 func TestConfigFromMapOverrides(t *testing.T) {
 	cfg := configFromMap(g.Map{
-		"ai_base_url":     "http://ollama:11434/v1",
-		"ai_api_key":      "secret",
-		"ai_model":        "qwen2.5:32b",
-		"units_per_batch": 10,
-		"custom_rules":    "禁止分析医疗数据",
-		"patrol_enabled":  true,
-		"patrol_scope":    `{"tenants":[1,2,3]}`,
+		"ai_analysis_base_url":        "http://ollama:11434/v1",
+		"ai_analysis_api_key":         "secret",
+		"ai_analysis_model":           "qwen2.5:32b",
+		"ai_analysis_units_per_batch": 10,
+		"ai_analysis_custom_rules":    "禁止分析医疗数据",
+		"ai_analysis_patrol_enabled":  true,
+		"ai_analysis_patrol_scope":    `{"tenants":[1,2,3]}`,
 	})
 	if cfg.AIBaseURL != "http://ollama:11434/v1" || cfg.AIAPIKey != "secret" || cfg.AIModel != "qwen2.5:32b" {
 		t.Fatalf("连接配置覆盖失败: %+v", cfg)
@@ -61,13 +61,13 @@ func TestConfigFromMapOverrides(t *testing.T) {
 func TestConfigFromMapInvalidValuesFallBack(t *testing.T) {
 	// 零值/负数/低于下限的值回落默认，不产生危险配置
 	cfg := configFromMap(g.Map{
-		"ai_timeout_ms":   0,
-		"ai_max_tokens":   -5,
-		"units_per_batch": 0,
-		"snippet_max_len": 10,
-		"patrol_window_h": 0,
-		"retention_days":  -1,
-		"patrol_cron":     "",
+		"ai_analysis_timeout_ms":      0,
+		"ai_analysis_max_tokens":      -5,
+		"ai_analysis_units_per_batch": 0,
+		"ai_analysis_snippet_max_len": 10,
+		"ai_analysis_patrol_window_h": 0,
+		"ai_analysis_retention_days":  -1,
+		"ai_analysis_patrol_cron":     "",
 	})
 	if cfg.AITimeoutMs != 60000 || cfg.AIMaxTokens != 4096 || cfg.UnitsPerBatch != 6 {
 		t.Fatalf("零值回落失败: %+v", cfg)

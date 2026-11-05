@@ -1,4 +1,4 @@
-package aireqanalyze
+package aianalysis
 
 import (
 	"bytes"
@@ -16,7 +16,7 @@ import (
 
 // AIClient OpenAI 兼容端点的极简客户端（/chat/completions）。
 // 独立于系统渠道体系：不经调度、不计费、不进审计日志——这正是「独立 AI」
-// 架构决策的落地（见设计文档 3.2 节）。分析内容是敏感数据，端点应指向
+// 架构决策的落地。分析内容是敏感数据，端点应指向
 // 内网自部署模型；内网自签 HTTPS 部署时放宽证书校验由调用方按需扩展。
 type AIClient struct {
 	endpoint string // 最终请求端点：base 模式 = base_url+"/chat/completions"；full 模式 = 配置原值

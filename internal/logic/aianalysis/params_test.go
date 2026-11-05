@@ -1,4 +1,4 @@
-package aireqanalyze
+package aianalysis
 
 import (
 	"testing"
@@ -46,18 +46,45 @@ func TestParseEndBound(t *testing.T) {
 	_ = time.Local
 }
 
+func TestParseAnalysisParams(t *testing.T) {
+	// 租户必填
+	if _, err := ParseAnalysisParams(0, 0, "2026-10-01", "2026-10-02"); err == nil {
+		t.Fatal("缺少租户应报错")
+	}
+	// 时间顺序
+	if _, err := ParseAnalysisParams(1, 0, "2026-10-02", "2026-10-01"); err == nil {
+		t.Fatal("开始晚于结束应报错")
+	}
+	// 跨度上限
+	if _, err := ParseAnalysisParams(1, 0, "2026-09-01", "2026-10-15"); err == nil {
+		t.Fatal("超过 31 天窗口应报错")
+	}
+	// 正常解析：日期粒度自动补界
+	p, err := ParseAnalysisParams(1, 7, "2026-10-01", "2026-10-02")
+	if err != nil {
+		t.Fatalf("正常参数不应报错: %v", err)
+	}
+	if p.TenantID != 1 || p.UserID != 7 {
+		t.Fatalf("租户/用户解析错误: %+v", p)
+	}
+	if p.TimeStart.Format("2006-01-02 15:04:05") != "2026-10-01 00:00:00" ||
+		p.TimeEnd.Format("2006-01-02 15:04:05") != "2026-10-02 23:59:59" {
+		t.Fatalf("时间窗补界错误: %v ~ %v", p.TimeStart, p.TimeEnd)
+	}
+}
+
 func TestJobRunnerStartStopCycle(t *testing.T) {
-	// 启停循环必须可重复（插件禁用→再启用场景）；不触 DB，只验证池的启停
+	// 启停循环必须可重复（停机→再拉起场景）；不触 DB，只验证池的启停
 	for i := 0; i < 2; i++ {
 		ensureJobRunner()
 		if !runnerOn {
 			t.Fatalf("第 %d 次启动后 runnerOn 应为 true", i+1)
 		}
-		stopJobRunner()
+		StopJobRunner()
 		if runnerOn {
 			t.Fatalf("第 %d 次停止后 runnerOn 应为 false", i+1)
 		}
 	}
 	// 重复停止幂等
-	stopJobRunner()
+	StopJobRunner()
 }

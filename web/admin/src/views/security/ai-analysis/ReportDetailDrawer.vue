@@ -34,7 +34,7 @@ async function fetchDetail(id: number) {
   loading.value = true
   detail.value = null
   try {
-    const res: any = await request.get(`/admin/plugins/ai-req-analyze/reports/${id}`)
+    const res: any = await request.get(`/admin/ai-analysis/reports/${id}`)
     detail.value = res.data?.data || null
   } catch {
     detail.value = null
@@ -48,7 +48,7 @@ async function handleDelete() {
   if (!detail.value) return
   deleting.value = true
   try {
-    await request.delete(`/admin/plugins/ai-req-analyze/reports/${detail.value.id}`)
+    await request.delete(`/admin/ai-analysis/reports/${detail.value.id}`)
     Message.success('报告已删除')
     emit('update:visible', false)
     emit('deleted')
@@ -102,7 +102,7 @@ const convFindingId = ref<number | null>(null)
 const convFetchUrl = computed(() => {
   const reportId = detail.value?.id
   return (findingId: number) =>
-    `/admin/plugins/ai-req-analyze/reports/${reportId}/conversation?finding_id=${findingId}`
+    `/admin/ai-analysis/reports/${reportId}/conversation?finding_id=${findingId}`
 })
 
 function openConversation(findingId: number) {
