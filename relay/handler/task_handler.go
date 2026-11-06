@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
+	"github.com/qianfree/team-api/internal/jsplugin"
 	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
@@ -21,6 +22,7 @@ import (
 	"github.com/qianfree/team-api/relay/taskchannel"
 	_ "github.com/qianfree/team-api/relay/taskchannel/ali"
 	_ "github.com/qianfree/team-api/relay/taskchannel/gemini"
+	_ "github.com/qianfree/team-api/relay/taskchannel/jsbridge"
 	_ "github.com/qianfree/team-api/relay/taskchannel/kling"
 	"github.com/qianfree/team-api/relay/taskchannel/midjourney"
 	_ "github.com/qianfree/team-api/relay/taskchannel/minimax"
@@ -173,11 +175,32 @@ func HandleTaskSubmit(
 
 	// 2. 确定任务平台
 	providerType := constant.ProviderType(channelMeta.ChannelType)
-	platform, ok := constant.ProviderTypeToTaskPlatform(providerType)
-	if !ok {
-		g.Log().Warningf(ctx, "HandleTaskSubmit: unsupported task platform, channelType=%d, modelName=%s", channelMeta.ChannelType, modelName)
-		writeTaskError(rc.Writer, http.StatusBadRequest, "unsupported task platform", "")
-		return
+	var platform constant.TaskPlatform
+	if providerType == constant.ProviderJSTask {
+		// JS 任务插件：平台标识 = js:{plugin_key}，轮询侧据此路由到具体插件池。
+		// plugin_key 优先取渠道显式配置（覆盖语义），缺省按模型解析——v1 冲突预检
+		// 保证模型对插件独占，渠道只需配模型路由（chn_abilities），零额外配置
+		pluginKey := channelMeta.Settings.PluginKey
+		if pluginKey == "" {
+			if resolved, ok := jsplugin.ResolvePluginKeyForModel(modelName); ok {
+				pluginKey = resolved
+			}
+		}
+		if pluginKey != "" {
+			platform = constant.TaskPlatform("js:" + pluginKey)
+		} else {
+			g.Log().Warningf(ctx, "HandleTaskSubmit: js task channel cannot resolve plugin (model=%s, channelID=%d)", modelName, channelMeta.ChannelID)
+			writeTaskError(rc.Writer, http.StatusBadRequest, "js task channel cannot resolve plugin by model", "")
+			return
+		}
+	} else {
+		var ok bool
+		platform, ok = constant.ProviderTypeToTaskPlatform(providerType)
+		if !ok {
+			g.Log().Warningf(ctx, "HandleTaskSubmit: unsupported task platform, channelType=%d, modelName=%s", channelMeta.ChannelType, modelName)
+			writeTaskError(rc.Writer, http.StatusBadRequest, "unsupported task platform", "")
+			return
+		}
 	}
 
 	// 3. 获取 TaskAdaptor

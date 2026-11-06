@@ -137,11 +137,45 @@ func resolvePerSecondFacts(ratios map[string]any, usage *rcommon.TaskMaterialUsa
 	return spec, seconds
 }
 
+// ratioKeyFormulaFacts ratios 中携带计费用量事实的键（adaptor 经 EstimateBilling
+// 注入 map[string]float64，随 billing_context 冻结；结算期被 usage.Facts 覆盖）。
+// 非 float 值，不会被 applyRatioMultipliers 当乘数连乘。
+const ratioKeyFormulaFacts = "formula_facts"
+
+// mergeTaskFacts 合并计费用量事实：结算期官方计量（usage.Facts）优先，
+// 覆盖提交期冻结的估算事实（ratios[ratioKeyFormulaFacts]）。
+func mergeTaskFacts(ratios map[string]any, usage *rcommon.TaskMaterialUsage) map[string]float64 {
+	var frozen map[string]float64
+	if ratios != nil {
+		if m, ok := ratios[ratioKeyFormulaFacts].(map[string]any); ok && len(m) > 0 {
+			frozen = make(map[string]float64, len(m))
+			for k, v := range m {
+				if f, ok := v.(float64); ok {
+					frozen[k] = f
+				}
+			}
+		}
+	}
+	if usage == nil || len(usage.Facts) == 0 {
+		return frozen
+	}
+	merged := make(map[string]float64, len(frozen)+len(usage.Facts))
+	for k, v := range frozen {
+		merged[k] = v
+	}
+	for k, v := range usage.Facts {
+		merged[k] = v
+	}
+	return merged
+}
+
 // taskFormulaInput 构建任务路径的公式变量环境：
 //   - seconds：时长信号（素材计量 OutputSeconds 优先 → spec.duration → 默认 5s，均钳制 120s），
 //     与 resolvePerSecondFacts 同口径（含 usage 非空时的实际输出秒数）
 //   - image_count：图片张数（任务 ratios 的 count 信号；公式按张计费时消费，
 //     wrapSchemeCost 对 formula 模式同步 skip count 防双重放大）
+//   - Facts：计费用量事实（u() 通道）——提交期估算（ratios 冻结）与结算期官方计量
+//     （usage.Facts）经 mergeTaskFacts 合并，结算值优先
 //   - p/c 等同步 token 变量恒 0（任务无 token usage 传入；token 重算路径不适用 formula）
 func taskFormulaInput(ratios map[string]any, usage *rcommon.TaskMaterialUsage) formula.FormulaInput {
 	_, seconds := resolvePerSecondFacts(ratios, usage)
@@ -149,7 +183,7 @@ func taskFormulaInput(ratios map[string]any, usage *rcommon.TaskMaterialUsage) f
 	if c, ok := ratioFloat(ratios, "count"); ok && c > 0 {
 		count = int(c)
 	}
-	return formula.FormulaInput{Seconds: seconds, ImageCount: count, Eval: taskFormulaEvalContext(ratios)}
+	return formula.FormulaInput{Seconds: seconds, ImageCount: count, Facts: mergeTaskFacts(ratios, usage), Eval: taskFormulaEvalContext(ratios)}
 }
 
 // taskFormulaEvalContext 从 ratios 还原公式求值上下文：提交时冻结的请求探测值与
@@ -216,7 +250,7 @@ func (g GenericScheme) SettleTaskCost(pricing *PricingResult, ratios map[string]
 		}
 		// 矩阵为空/全零：落到下方回退（占位/预扣口径），与预扣分支的兜底行为一致
 	}
-	if pricing.BillingMode == BillingModeFormula && usage != nil && usage.OutputSeconds > 0 {
+	if pricing.BillingMode == BillingModeFormula && usage != nil && (usage.OutputSeconds > 0 || len(usage.Facts) > 0) {
 		if costD, err := runFormulaCost(pricing, taskFormulaInput(ratios, usage)); err == nil {
 			return costD
 		}

@@ -65,6 +65,27 @@ type UpstreamRequestIDExtractor interface {
 	ExtractUpstreamRequestID(body []byte) string
 }
 
+// BatchTaskPoller 批量轮询能力（fetchMode=batch 的适配器可选实现，如 JS 任务插件）：
+// 一次上游往返携带同渠道同插件下全部未终态任务，避免逐任务打满上游配额。
+// 结算/落库与逐任务路径共用 applyTaskPollResult，口径不因轮询模式分叉。
+type BatchTaskPoller interface {
+	// FetchMode 声明轮询模式："batch" 启用批量通道，其余值按逐任务轮询
+	FetchMode() string
+	// FetchBatchTasks 一次查询整批任务（同渠道同插件；platform 一致的分组由轮询循环保证）
+	FetchBatchTasks(ctx context.Context, baseURL, apiKey string, tasks []BatchTaskRef) (*http.Response, error)
+	// ParseBatchTasks 解析批量响应，按上游任务 ID 映射结果；
+	// 本轮未回报的任务不出现在 map 中（保持现状等下一轮）
+	ParseBatchTasks(body []byte) (map[string]*TaskInfo, error)
+}
+
+// BatchTaskRef 批量轮询的任务引用。
+type BatchTaskRef struct {
+	Platform string // 任务平台（js:{key}；批量分组键）
+	TaskID   string // 上游任务 ID
+	TaskData []byte // 任务最新上游快照（可空）
+	State    []byte // 插件状态（可空；JS 插件 v1 未持久化 state）
+}
+
 // TaskInfo 异步任务查询结果
 type TaskInfo struct {
 	Status     TaskStatusEnum
@@ -84,6 +105,20 @@ type TaskInfo struct {
 	PromptTokens     int
 	CompletionTokens int
 	TotalTokens      int
+
+	// Artifacts 终态产物声明（JS 任务插件 parseQueryResponse 上报）：key + taskData
+	// 内的取值路径（上游 URL 或 base64 字段）。字节永不进 JS，转存由宿主产物流水线
+	// 完成（internal/logic/task/artifact）；空 = 无产物需要转存
+	Artifacts []TaskArtifact
+}
+
+// TaskArtifact 产物声明（转存流水线的输入，纯数据、无 JS 依赖）。
+type TaskArtifact struct {
+	Key        string // 任务内唯一，如 "video"
+	MimeType   string // inline 必填；url 型为空时按内容推断
+	SourceType string // url | inline
+	SourcePath string // taskData 内取值路径，如 "data.videos[0].url"
+	SourceAuth string // 需鉴权下载的凭据形态（"channel-bearer"）；空 = 裸下载
 }
 
 // TaskMaterialUsage 上游任务 usage 中的素材计量。
@@ -95,6 +130,11 @@ type TaskMaterialUsage struct {
 	InputAudioSeconds float64 // 输入音频时长（秒）
 	OutputSeconds     float64 // 输出（生成）时长（秒）
 	Resolution        string  // 实际输出分辨率规格（如 "720P"，对齐 per_second 矩阵键）；空 = 上游未返回
+
+	// Facts 计费用量事实（JS 任务插件经 extractUsageOnComplete 上报，键 ∈ usageSchema
+	// 的 number 型声明）：结算重算时并入公式 u() 通道。unit=second 的事实应同时映射
+	// 到 OutputSeconds（它是结算期公式重跑的触发信号）。
+	Facts map[string]float64
 }
 
 // TaskStatusEnum 任务状态枚举

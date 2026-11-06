@@ -39,6 +39,9 @@ const (
 	ProviderMidjourney ProviderType = 40
 	ProviderNewAPI     ProviderType = 41
 	ProviderSub2API    ProviderType = 42
+	// ProviderJSTask JS 任务插件渠道：adaptor 由 relay/taskchannel/jsbridge 提供，
+	// 具体插件由 settings.plugin_key 绑定（见 docs/design/JS异步任务插件设计方案-v1.md）。
+	ProviderJSTask ProviderType = 43
 )
 
 // String 返回供应商类型名称
@@ -110,6 +113,8 @@ func (p ProviderType) String() string {
 		return "New API"
 	case ProviderSub2API:
 		return "Sub2API"
+	case ProviderJSTask:
+		return "JS Task Plugin"
 	default:
 		return "Unknown"
 	}

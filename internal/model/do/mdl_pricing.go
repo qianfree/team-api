@@ -14,7 +14,7 @@ type MdlPricing struct {
 	g.Meta          `orm:"table:mdl_pricing, do:true"`
 	Id              any         //
 	ModelId         any         // 关联模型ID
-	BillingMode     any         // 计费模式：token=按量；per_request=按次；tiered=阶梯；per_second=按秒（视频）；special=特殊计费（pricing JSONB 顶层 scheme 声明计费方案，如 custom:minimax-material）
+	BillingMode     any         // 计费模式：token=按量；per_request=按次；tiered=阶梯；per_second=按秒（视频）；special=特殊计费；formula=表达式计费（pricing JSONB formula 键）
 	CreatedAt       *gtime.Time //
 	UpdatedAt       *gtime.Time //
 	PriceNote       any         // 价格说明（仅管理后台可见，调价背景等内部备注），仅 min_tokens=0 锚点行使用，NULL=无

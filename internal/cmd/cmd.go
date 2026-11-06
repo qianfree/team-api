@@ -31,6 +31,7 @@ import (
 	"github.com/qianfree/team-api/internal/logic/monitor"
 	relayLogic "github.com/qianfree/team-api/internal/logic/relay"
 	"github.com/qianfree/team-api/internal/logic/task"
+	"github.com/qianfree/team-api/internal/logic/task/artifact"
 	"github.com/qianfree/team-api/internal/logic/tenant"
 	"github.com/qianfree/team-api/internal/logic/update"
 	"github.com/qianfree/team-api/internal/middleware"
@@ -43,6 +44,7 @@ import (
 	"github.com/qianfree/team-api/internal/handler/public"
 	"github.com/qianfree/team-api/internal/handler/relay"
 	setupHandler "github.com/qianfree/team-api/internal/handler/setup"
+	"github.com/qianfree/team-api/internal/jsplugin"
 	"github.com/qianfree/team-api/internal/plugin"
 	"github.com/qianfree/team-api/web"
 )
@@ -184,6 +186,12 @@ var (
 				g.Log().Errorf(ctx, "plugin bootstrap: %v", pluginErr)
 			}
 
+			// JS 任务插件基座：装载已激活版本、构建路由 generation
+			//（与 Go 插件框架并存，见 docs/design/JS异步任务插件设计方案-v1.md）
+			if jsErr := jsplugin.DefaultRegistry().Bootstrap(ctx); jsErr != nil {
+				g.Log().Errorf(ctx, "jsplugin bootstrap: %v", jsErr)
+			}
+
 			// Global middleware
 			s.Use(middleware.Recovery)
 			s.Use(middleware.RequestId)
@@ -297,6 +305,13 @@ var (
 				group.GET("/{id}/serve", adminHandler.HandleFileServe)
 			})
 
+			// JS 插件品牌图标：二进制直写，同样绕过 JSON 包装
+			//（rbac 前缀规则 GET /api/admin/js-plugins/ → plugin:upload 已覆盖本路径）
+			s.Group("/api/admin", func(group *ghttp.RouterGroup) {
+				group.Middleware(middleware.AdminAuth, middleware.AdminPermissionGuard, middleware.OperationLog)
+				group.GET("/js-plugins/{key}/icon", adminHandler.HandleJSPluginIcon)
+			})
+
 			// Open Platform API — HMAC-SHA256 authentication
 			// 中间件与 /api/tenant 对齐：演示模式同样要拦住写操作（否则演示部署可经开放平台
 			// 真实改数据），维护模式头同样要下发，幂等同样要生效 —— 开放平台是对外的、
@@ -311,6 +326,10 @@ var (
 
 			// AI proxy endpoints (OpenAI compatible, /v1/xxx)
 			registerRelayRoutes(s)
+
+			// JS 任务插件分发器（/pjs/{key}/...）：静态通配路由 + generation 匹配，
+			// 必须在 relay 路由与前端 SPA 之间注册，永不触碰 gf 路由表
+			relay.RegisterJSDispatcher(s)
 
 			// Register plugin routes
 			plugin.RegisterAllRoutes(ctx, s)
@@ -331,6 +350,9 @@ var (
 			// Start sync-image async worker pool (wraps synchronous image providers as async tasks)
 			task.StartSyncImageWorkers(ctx)
 
+			// JS 插件产物转存流水线（worker 池 + sweep 重试 cron）
+			artifact.Start(ctx)
+
 			// Start webhook dispatcher (event-driven delivery)
 			tenant.InitWebhookDispatcher(ctx)
 
@@ -348,6 +370,8 @@ var (
 			//    正常退出时是空操作。必须在所有任务池/Writer 排空之后执行。
 			defer update.MaybeExecRestart(ctx)
 			defer plugin.Shutdown(ctx)
+			// JS 任务插件：关闭全部插件实例池（在 Go 插件框架关闭之前，顺序无依赖）
+			defer jsplugin.DefaultRegistry().Shutdown()
 			// AI请求分析：停掉任务执行器并等待在跑任务收尾（未开始的任务保持 pending，下次启动标记失败）
 			defer aianalysis.StopJobRunner()
 			defer dispatchadapter.Shutdown()
@@ -358,6 +382,7 @@ var (
 			defer response.CloseErrorLogWriter()
 			defer task.StopAsyncPolling()
 			defer task.StopSyncImageWorkers()
+			defer artifact.Stop()
 
 			s.Run()
 			return nil

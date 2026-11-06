@@ -76,7 +76,7 @@ func validateUKeys(c *Compiled) error {
 		if key == "" {
 			return fmt.Errorf("u() 的 key 不能为空")
 		}
-		if _, ok := KnownFactKeys[key]; !ok {
+		if !factKeyRegistered(key) {
 			return fmt.Errorf("u(\"%s\") 引用了未注册的 usage 字段（可用：%v），请检查拼写或联系开发注册", key, factKeyNames())
 		}
 	}
@@ -85,8 +85,9 @@ func validateUKeys(c *Compiled) error {
 
 // factKeyNames 已注册 facts key 列表（报错提示用，按名排序保证文本稳定）
 func factKeyNames() []string {
-	names := make([]string, 0, len(KnownFactKeys))
-	for k := range KnownFactKeys {
+	registered := KnownFactKeys()
+	names := make([]string, 0, len(registered))
+	for k := range registered {
 		names = append(names, k)
 	}
 	sortStrings(names)

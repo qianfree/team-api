@@ -22,6 +22,7 @@ export const providerTypeOptions: { label: string; value: number }[] = [
   { label: 'Jimeng (即梦)', value: 34 },
   { label: 'Codex', value: 35 },
   { label: 'New API', value: 41 }, { label: 'Sub2API', value: 42 },
+  { label: 'JS 任务插件', value: 43 },
 ]
 
 // value -> label 映射，便于表格/详情按数值取展示名

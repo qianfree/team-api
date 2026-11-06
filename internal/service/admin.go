@@ -497,6 +497,24 @@ type (
 		PluginUpgrade(ctx context.Context, req *v1.PluginUpgradeReq) (*v1.PluginUpgradeRes, error)
 		PluginConfigUpdate(ctx context.Context, req *v1.PluginConfigUpdateReq) (*v1.PluginConfigUpdateRes, error)
 		PluginConfigSchema(ctx context.Context, req *v1.PluginConfigSchemaReq) (*v1.PluginConfigSchemaRes, error)
+		// JSPluginList JS 插件（异步任务插件）列表
+		JSPluginList(ctx context.Context, req *v1.JSPluginListReq) (*v1.JSPluginListRes, error)
+		// JSPluginUpload 上传 JS 插件源码
+		JSPluginUpload(ctx context.Context, req *v1.JSPluginUploadReq) (*v1.JSPluginUploadRes, error)
+		// JSPluginActivate 激活 JS 插件版本
+		JSPluginActivate(ctx context.Context, req *v1.JSPluginActivateReq) (*v1.JSPluginActivateRes, error)
+		// JSPluginEnable 启用/禁用 JS 插件
+		JSPluginEnable(ctx context.Context, req *v1.JSPluginEnableReq) (*v1.JSPluginEnableRes, error)
+		// JSPluginDelete 删除 JS 插件版本
+		JSPluginDelete(ctx context.Context, req *v1.JSPluginDeleteReq) (*v1.JSPluginDeleteRes, error)
+		// JSPluginRoutes JS 插件路由预览（当前 generation）
+		JSPluginRoutes(ctx context.Context, req *v1.JSPluginRoutesReq) (*v1.JSPluginRoutesRes, error)
+		// JSPluginConfig JS 插件配置 schema + 当前值（加密掩码）
+		JSPluginConfig(ctx context.Context, req *v1.JSPluginConfigReq) (*v1.JSPluginConfigRes, error)
+		// JSPluginConfigUpdate 更新 JS 插件配置
+		JSPluginConfigUpdate(ctx context.Context, req *v1.JSPluginConfigUpdateReq) (*v1.JSPluginConfigUpdateRes, error)
+		// JSPluginMetrics JS 插件运行指标
+		JSPluginMetrics(ctx context.Context, req *v1.JSPluginMetricsReq) (*v1.JSPluginMetricsRes, error)
 		// ListPromoCodes 获取优惠码列表
 		ListPromoCodes(ctx context.Context, req *v1.PromoCodeListReq) (*v1.PromoCodeListRes, error)
 		// CreatePromoCode 创建优惠码
