@@ -1,6 +1,6 @@
 module github.com/qianfree/team-api
 
-go 1.25.8
+go 1.26.0
 
 require (
 	github.com/Masterminds/semver/v3 v3.5.0
@@ -11,6 +11,9 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.15
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.99.1
 	github.com/cloudflare/ahocorasick v0.0.0-20240916140611-054963ec9396
+	github.com/dop251/goja v0.0.0-20261105002551-2413f2132ac8
+	github.com/evanw/esbuild v0.28.2
+	github.com/expr-lang/expr v1.17.8
 	github.com/gogf/gf/contrib/drivers/pgsql/v2 v2.10.2
 	github.com/gogf/gf/contrib/nosql/redis/v2 v2.10.2
 	github.com/gogf/gf/v2 v2.10.2
@@ -32,7 +35,7 @@ require (
 	github.com/wenlng/go-captcha/v2 v2.0.5
 	github.com/xuri/excelize/v2 v2.10.1
 	golang.org/x/crypto v0.53.0
-	golang.org/x/sync v0.22.0
+	golang.org/x/sync v0.24.0
 	gopkg.in/gomail.v2 v2.0.0-20160411212932-81ebce5c23df
 )
 
@@ -57,15 +60,17 @@ require (
 	github.com/clbanning/mxj v1.8.4 // indirect
 	github.com/clbanning/mxj/v2 v2.7.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/dlclark/regexp2/v2 v2.11.0 // indirect
 	github.com/emirpasic/gods/v2 v2.0.0-alpha // indirect
-	github.com/expr-lang/expr v1.17.8 // indirect
 	github.com/fatih/color v1.18.0 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
+	github.com/go-sourcemap/sourcemap v2.1.3+incompatible // indirect
 	github.com/golang/freetype v0.0.0-20170609003504-e2365dfdc4a0 // indirect
 	github.com/google/go-querystring v1.0.0 // indirect
+	github.com/google/pprof v0.0.0-20230207041349-798e818bf904 // indirect
 	github.com/grokify/html-strip-tags-go v0.1.0 // indirect
 	github.com/lib/pq v1.10.9 // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
@@ -84,7 +89,6 @@ require (
 	github.com/richardlehane/mscfb v1.0.6 // indirect
 	github.com/richardlehane/msoleps v1.0.6 // indirect
 	github.com/rivo/uniseg v0.2.0 // indirect
-	github.com/samber/lo v1.53.0 // indirect
 	github.com/sethvargo/go-retry v0.3.0 // indirect
 	github.com/shoenig/go-m1cpu v0.2.1 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
@@ -106,7 +110,7 @@ require (
 	golang.org/x/image v0.25.0 // indirect
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.40.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	gopkg.in/alexcesaro/quotedprintable.v3 v3.0.0-20150716171945-2caba252f4dc // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect

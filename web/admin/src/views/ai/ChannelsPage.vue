@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, h } from 'vue'
+import { ref, reactive, onMounted, h, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { Tag, Button, Space, Popconfirm, Message, Radio, InputNumber, Select, Tooltip } from '@arco-design/web-vue'
-import { IconInfoCircle } from '@arco-design/web-vue/es/icon'
+import { Tag, Button, Space, Switch, Dropdown, Doption, Modal, Message, Radio, InputNumber, Select, Tooltip } from '@arco-design/web-vue'
+import { IconInfoCircle, IconRefresh, IconDelete } from '@arco-design/web-vue/es/icon'
 import type { TableColumnData } from '@arco-design/web-vue'
 import type { FormInstance } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
@@ -11,8 +11,9 @@ import request from '@/utils/request'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import ChannelModelTestModal from '@/components/ChannelModelTestModal.vue'
 import { useExport } from '@/composables/useExport'
+import { usePluginOptions } from '@/composables/usePluginOptions'
 import { hasPermission } from '@/utils/permission'
-import { providerTypeOptions, providerTypeName, filterProviderOption } from '@/constants/channel'
+import { providerTypeOptions, providerTypeName, filterProviderOption, providerCategoryMap, filterTypeOptionsByCategory } from '@/constants/channel'
 
 const router = useRouter()
 const message = Message
@@ -82,6 +83,19 @@ const columns: TableColumnData[] = [
     title: '类型', dataIndex: 'type', width: 140,
     render({ record }) {
       const label = providerTypeName[record.type] || `Unknown(${record.type})`
+      // JS 任务插件渠道：类型下方标注绑定的插件 key（分发器按 plugin_key 绑定调度）
+      if (record.type === 43) {
+        const nodes = [h(Tag, { color: providerTagColor[record.type], size: 'small' }, () => label)]
+        if (record.plugin_key) {
+          nodes.push(h('span', {
+            style: 'font-size:12px;color:var(--color-text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap',
+            title: record.plugin_key,
+          }, record.plugin_key))
+        } else {
+          nodes.push(h('span', { style: 'font-size:12px;color:#e6532e' }, '未绑定插件'))
+        }
+        return h('div', { style: 'display:flex;flex-direction:column;gap:2px;line-height:1.3' }, nodes)
+      }
       return h(Tag, { color: providerTagColor[record.type], size: 'small' }, () => label)
     },
   },
@@ -168,23 +182,48 @@ const columns: TableColumnData[] = [
       return h(Tooltip, null, { default: () => trigger, content })
     },
   },
-  { title: '创建时间', dataIndex: 'created_at', width: 170 },  {
-    // 启停按钮文字即状态：显示「禁用」= 当前启用，显示「启用」= 当前禁用/测试中
-    title: '操作', dataIndex: 'actions', width: 260, fixed: 'right',
+  {
+    // 启停独立成列：开关状态即渠道状态（active=开）。开关受控（modelValue 绑 record.status），
+    // 点击只弹确认框，确认后由 toggleStatus 乐观更新驱动开关联动；取消则开关不动。
+    title: '状态', dataIndex: 'status', width: 110,
     render({ record }) {
-      const isActive = record.status === 'active'
-      const action = isActive ? '禁用' : '启用'
-      // 破坏性写操作按钮按权限点渲染（super_admin 在 hasPermission 内直接放行）。
       const nodes = [
-        hasPermission('channel:edit')
-          ? h(Popconfirm, {
-              content: `确定${action}该渠道？`,
-              onOk: () => toggleStatus(record),
-            }, () => h(Button, {
-              size: 'small',
-              status: isActive ? 'normal' : 'success',
-            }, () => action))
-          : null,
+        h(Switch, {
+          modelValue: record.status === 'active',
+          size: 'small',
+          loading: !!record._toggling,
+          disabled: !hasPermission('channel:edit'),
+          onChange: () => confirmAction(
+            `确定${record.status === 'active' ? '禁用' : '启用'}该渠道？`,
+            () => toggleStatus(record)),
+        }),
+      ]
+      // testing 渠道开关为关，但语义是「测试中」而非「禁用」，补标签区分
+      if (record.status === 'testing') {
+        nodes.push(h(Tag, { color: 'orange', size: 'small' }, () => '测试中'))
+      }
+      return h('span', { style: 'display:inline-flex;align-items:center;gap:6px' }, nodes)
+    },
+  },
+  {
+    // 日常动作（检测/详情）常驻；低频/危险动作（重置健康度/删除）收进「更多」下拉，避免操作列撑爆换行
+    title: '操作', dataIndex: 'actions', width: 200, fixed: 'right',
+    render({ record }) {
+      // 破坏性写操作按权限点渲染（super_admin 在 hasPermission 内直接放行）。
+      const moreItems = []
+      if (hasPermission('channel:edit')) {
+        moreItems.push(h(Doption, {
+          onClick: () => confirmAction('确定重置该渠道健康度？', () => resetHealth(record)),
+        }, { icon: () => h(IconRefresh), default: () => '重置健康度' }))
+      }
+      if (hasPermission('channel:delete')) {
+        // 删除不可逆，在下拉里标红，避免顺手点到
+        moreItems.push(h(Doption, {
+          class: 'doption-danger',
+          onClick: () => confirmAction('确定删除该渠道？', () => deleteChannel(record), true),
+        }, { icon: () => h(IconDelete), default: () => '删除' }))
+      }
+      const nodes = [
         h(Button, {
           size: 'small',
           onClick: () => openChannelTest(record),
@@ -194,20 +233,14 @@ const columns: TableColumnData[] = [
           type: 'primary',
           onClick: () => openDetail(record),
         }, () => '详情'),
-        hasPermission('channel:edit')
-          ? h(Popconfirm, {
-              content: '确定重置该渠道健康度？',
-              onOk: () => resetHealth(record),
-            }, () => h(Button, {
-              size: 'small',
-              status: 'warning',
-            }, () => '恢复'))
-          : null,
-        hasPermission('channel:delete')
-          ? h(Popconfirm, { content: '确定删除该渠道？', onOk: () => deleteChannel(record) }, () =>
-              h(Button, { size: 'small', status: 'danger' }, () => '删除'))
-          : null,
-      ].filter(Boolean)
+      ]
+      if (moreItems.length) {
+        // 文字按钮 + 悬停展开：日常视线焦点留在检测/详情，更多低频动作悬停即现
+        nodes.push(h(Dropdown, { trigger: 'hover' }, {
+          default: () => h(Button, { size: 'small', type: 'text' }, () => '更多'),
+          content: () => moreItems,
+        }))
+      }
       return h(Space, { size: 4 }, () => nodes)
     },
   },
@@ -240,11 +273,13 @@ const showModal = ref(false)
 const formLoading = ref(false)
 const formRef = ref<FormInstance>()
 
-const formRules = {
+const formRules = computed(() => ({
   name: [{ required: true, message: '请输入渠道名称' }],
   type: [{ required: true, message: '请选择供应商类型' }],
   api_key: [{ required: true, message: '请输入 API Key' }],
-}
+  // JS 任务插件渠道必须绑定具体插件（type=43），其余类型无此项
+  ...(form.type === 43 ? { plugin_key: [{ required: true, message: '请选择绑定的插件' }] } : {}),
+}))
 
 const providerDefaultURLs: Record<number, string> = {
   1: 'https://api.openai.com',
@@ -275,12 +310,32 @@ const providerDefaultURLs: Record<number, string> = {
   35: 'https://chatgpt.com',
 }
 
-const form = reactive({ name: '', type: 1, base_url: '', api_key: '', priority: 0, weight: 100, max_concurrency: 100, tier: 'primary', strict_capacity: false, test_model: '', remark: '', status: 'active', use_proxy: false })
+const form = reactive({ name: '', type: 1, base_url: '', api_key: '', priority: 0, weight: 100, max_concurrency: 100, tier: 'primary', strict_capacity: false, test_model: '', remark: '', status: 'active', use_proxy: false, plugin_key: '' })
 
 function openCreate() {
-  Object.assign(form, { name: '', type: 1, base_url: '', api_key: '', priority: 0, weight: 100, max_concurrency: 100, tier: 'primary', strict_capacity: false, test_model: '', remark: '', status: 'active', use_proxy: false })
+  Object.assign(form, { name: '', type: 1, base_url: '', api_key: '', priority: 0, weight: 100, max_concurrency: 100, tier: 'primary', strict_capacity: false, test_model: '', remark: '', status: 'active', use_proxy: false, plugin_key: '' })
+  providerCategory.value = 'all'
   showModal.value = true
 }
+
+// === 供应商分类胶囊（参考 new-api：分类过滤 + 联动类型下拉） ===
+const providerCategory = ref('all')
+const typeOptions = computed(() => filterTypeOptionsByCategory(providerCategory.value))
+// 切换分类：当前类型不在分类内时回落到首个选项（单选项分类即自动选中）；
+// form.type 变化会触发上面的 watch，插件加载/清理由它接管
+watch(providerCategory, () => {
+  if (!typeOptions.value.some(o => o.value === form.type)) {
+    form.type = typeOptions.value[0].value
+  }
+})
+
+// JS 插件下拉选项：类型切到 43 时懒加载；切走时清掉残留绑定
+// （须在 form 声明之后注册：watch 注册即求值 getter，放前面会触发 TDZ）
+const { pluginOptions, loadPluginOptions } = usePluginOptions()
+watch(() => form.type, (t) => {
+  if (t !== 43) form.plugin_key = ''
+  else loadPluginOptions()
+})
 
 async function handleSubmit(done: () => void) {
   const errors = await formRef.value?.validate()
@@ -305,6 +360,23 @@ async function resetHealth(row: any) {
     message.success('已重置健康度')
     fetchData()
   } catch { /* interceptor handles error toast */ }
+}
+
+/**
+ * 下拉菜单 / 状态开关里的二次确认。
+ *
+ * 这些动作原先用 Popconfirm 包按钮，但 Popconfirm 依附于触发元素，放进下拉里会随菜单
+ * 收起一起消失；开关自带状态也不适合包 Popconfirm。统一改用 Modal.confirm，与其他页面一致。
+ */
+function confirmAction(content: string, onOk: () => void, danger = false) {
+  Modal.confirm({
+    title: '确认操作',
+    content,
+    okText: '确定',
+    cancelText: '取消',
+    okButtonProps: danger ? { status: 'danger' } : undefined,
+    onOk,
+  })
 }
 
 // 快捷启用/禁用渠道：复用 PUT /admin/channels/{id}。
@@ -529,14 +601,14 @@ const { exporting, exportFile } = useExport({
         :columns="columns"
         :data="data"
         :loading="loading"
-        :scroll="{ x: 1300 }"
+        :scroll="{ x: 1310 }"
         :stripe="true"
         row-key="id"
         :row-click="openDetail"
         card-title-key="name"
         card-subtitle-key="base_url"
         card-badge-key="tier"
-        :card-fields="['type', 'health_score', 'breaker_state', 'weight']"
+        :card-fields="['type', 'status', 'health_score', 'breaker_state', 'weight']"
       />
       <div class="table-footer">
         <TableStats :total="pagination.total" />
@@ -545,8 +617,15 @@ const { exporting, exportFile } = useExport({
     </ACard>
 
     <!-- Create Channel Modal -->
-    <AModal v-model:visible="showModal" title="创建渠道" :width="640" :mask-closable="false" :on-before-ok="handleSubmit" :ok-loading="formLoading">
+    <AModal v-model:visible="showModal" title="创建渠道" :width="920" :mask-closable="false" :on-before-ok="handleSubmit" :ok-loading="formLoading">
       <AForm ref="formRef" :model="form" :rules="formRules" :auto-label-width="true" layout="vertical">
+        <!-- 供应商分类胶囊：过滤下方类型下拉（new-api 式模式切换） -->
+        <div class="provider-capsules">
+          <span class="provider-capsules__label">分类</span>
+          <ARadioGroup v-model="providerCategory" type="button" size="small">
+            <Radio v-for="(cat, key) in providerCategoryMap" :key="key" :value="key">{{ cat.label }}</Radio>
+          </ARadioGroup>
+        </div>
         <!-- 基础信息 -->
         <div class="form-group-title">基础信息</div>
         <ARow :gutter="16">
@@ -554,65 +633,87 @@ const { exporting, exportFile } = useExport({
             <AFormItem field="name" label="渠道名称" required><AInput v-model="form.name" placeholder="例如：OpenAI 主力" /></AFormItem>
           </ACol>
           <ACol :span="12">
-            <AFormItem field="type" label="供应商类型" required><ASelect v-model="form.type" :options="providerTypeOptions" placeholder="搜索或选择" allow-search :filter-option="filterProviderOption" /></AFormItem>
+            <AFormItem field="type" label="供应商类型" required>
+              <ASelect v-model="form.type" :options="typeOptions" placeholder="搜索或选择" allow-search :filter-option="filterProviderOption" />
+            </AFormItem>
           </ACol>
         </ARow>
-        <AFormItem label="Base URL">
-          <AInput v-model="form.base_url" :placeholder="providerDefaultURLs[form.type] || 'https://api.openai.com'" />
+        <AFormItem v-if="form.type === 43" field="plugin_key" label="绑定插件" required>
+          <ASelect
+            v-model="form.plugin_key"
+            :options="pluginOptions"
+            placeholder="选择该渠道服务的 JS 插件"
+            allow-search
+          />
           <template #extra>
-            <span v-if="providerDefaultURLs[form.type]" style="color:var(--color-text-3);font-size:12px">
-              {{ form.base_url ? '留空则自动使用默认地址' : '将使用默认地址: ' + providerDefaultURLs[form.type] }}
+            <span style="color:var(--color-text-3);font-size:12px">
+              ⓘ /pjs/{{ form.plugin_key || '{plugin_key}' }}/ 路由的请求只会调度到绑定了该插件的渠道
             </span>
           </template>
         </AFormItem>
-        <AFormItem field="api_key" label="API Key" required>
-          <AInput v-model="form.api_key" type="textarea" :auto-size="{ minRows: 2, maxRows: 4 }" placeholder="sk-xxxx..." />
-        </AFormItem>
+        <ARow :gutter="16">
+          <ACol :span="12">
+            <AFormItem label="Base URL">
+              <AInput
+                v-model="form.base_url"
+                :placeholder="form.type === 43
+                  ? '插件上游 API 地址（插件返回相对路径时以此为前缀，可留空）'
+                  : (providerDefaultURLs[form.type] || 'https://api.openai.com')"
+              />
+              <template #extra>
+                <span v-if="providerDefaultURLs[form.type]" style="color:var(--color-text-3);font-size:12px">
+                  {{ form.base_url ? '留空则自动使用默认地址' : '将使用默认地址: ' + providerDefaultURLs[form.type] }}
+                </span>
+              </template>
+            </AFormItem>
+          </ACol>
+          <ACol :span="12">
+            <AFormItem field="api_key" label="API Key" required>
+              <AInput v-model="form.api_key" type="textarea" :auto-size="{ minRows: 1, maxRows: 4 }" placeholder="sk-xxxx..." />
+            </AFormItem>
+          </ACol>
+        </ARow>
         <!-- 调度与容量 -->
         <div class="form-group-title">调度与容量</div>
         <ARow :gutter="16">
-          <ACol :span="12">
+          <ACol :span="6">
             <AFormItem label="调度层级">
               <ASelect v-model="form.tier" :options="tierOptions" />
-              <template #extra><span class="field-help">三档固定层级，替代旧版数值优先级</span></template>
+              <template #extra><span class="field-help">三档固定层级</span></template>
             </AFormItem>
           </ACol>
-          <ACol :span="12">
+          <ACol :span="6">
             <AFormItem label="权重">
               <AInputNumber v-model="form.weight" :min="0" :max="100" class="w-full" />
-              <template #extra><span class="field-help">同层级内按权重比例分配</span></template>
+              <template #extra><span class="field-help">同层级内按比例分配</span></template>
             </AFormItem>
           </ACol>
-        </ARow>
-        <ARow :gutter="16">
-          <ACol :span="12">
+          <ACol :span="6">
             <AFormItem label="最大并发">
               <AInputNumber v-model="form.max_concurrency" :min="0" class="w-full" />
-              <template #extra><span class="field-help">0 = 自动估算（按上游 429 水位动态调整）</span></template>
+              <template #extra><span class="field-help">0 = 自动估算</span></template>
             </AFormItem>
           </ACol>
-          <ACol :span="12">
+          <ACol :span="6">
             <AFormItem label="严格容量">
               <ASwitch v-model="form.strict_capacity" />
-              <template #extra><span class="field-help">Redis 故障时保守限流（高成本渠道）</span></template>
+              <template #extra><span class="field-help">Redis 故障保守限流</span></template>
             </AFormItem>
           </ACol>
         </ARow>
         <ARow :gutter="16">
-          <ACol :span="12">
+          <ACol :span="8">
             <AFormItem label="状态">
               <ASelect v-model="form.status" :options="[{ label: '启用', value: 'active' }, { label: '禁用', value: 'disabled' }, { label: '测试中', value: 'testing' }]" />
             </AFormItem>
           </ACol>
-          <ACol :span="12">
+          <ACol :span="8">
             <AFormItem label="测试模型"><AInput v-model="form.test_model" placeholder="gpt-4o-mini" /></AFormItem>
           </ACol>
-        </ARow>
-        <ARow :gutter="16">
-          <ACol :span="12">
+          <ACol :span="8">
             <AFormItem label="使用代理">
               <ASwitch v-model="form.use_proxy" />
-              <template #extra><span class="field-help">需先在系统设置中配置代理</span></template>
+              <template #extra><span class="field-help">需先在系统设置配置代理</span></template>
             </AFormItem>
           </ACol>
         </ARow>
@@ -771,5 +872,30 @@ const { exporting, exportFile } = useExport({
   padding-left: 8px;
   border-left: 3px solid #165dff;
   line-height: 1.2;
+}
+/* 供应商分类胶囊条：置于表单顶部，视觉上与表单分组标题对齐 */
+.provider-capsules {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-bottom: 4px;
+  border-radius: var(--ta-radius, 6px);
+  background: var(--color-fill-1);
+}
+.provider-capsules__label {
+  font-size: 12px;
+  color: var(--color-text-3);
+}
+</style>
+
+<style>
+/* 下拉里的危险动作：颜色是唯一的视觉区分，必须标出来。
+   弹层由 Trigger teleport 到 body 下，页面 scoped 样式够不到，只能全局定义；
+   hover 覆盖 Arco 自带的 .arco-dropdown-option:not(…disabled):hover 颜色回置。 */
+.arco-dropdown-option.doption-danger,
+.arco-dropdown-option.doption-danger:not(.arco-dropdown-option-disabled):hover {
+  color: rgb(var(--red-6));
 }
 </style>

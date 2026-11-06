@@ -142,6 +142,10 @@ type ChannelSettings struct {
 	//（客户端↔系统↔上游，body 不截断、凭证脱敏）。数据量大，仅排查问题时开启
 	DebugLogEnabled bool `json:"debug_log_enabled,omitempty"`
 
+	// PluginKey JS 任务插件绑定（仅 ProviderJSTask 渠道有效）：
+	// 指向已激活的 js_plugin_versions.plugin_key，adaptor 据此路由到具体插件实例。
+	PluginKey string `json:"plugin_key,omitempty"`
+
 	// 调试目标过滤（AND 组合，0 = 不限）：只捕捉匹配租户/成员/密钥的请求，
 	// 避免调试期间把全部租户的报文都录下来
 	DebugLogTenantID int64 `json:"debug_log_tenant_id,omitempty"`

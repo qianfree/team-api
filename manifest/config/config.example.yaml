@@ -6,6 +6,8 @@ server:
   serverAgent: "team-api"
   dumpRouterMap: false
   gracefulShutdownTimeout: 30
+  # 请求体上限（默认 8MB）：需容纳 base64 内嵌参考图等大请求体到达 JS 插件解码层
+  clientMaxBodySize: "64MB"
 
 # Logger
 logger:

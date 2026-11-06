@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
+	"github.com/qianfree/team-api/internal/jsplugin"
+	"github.com/qianfree/team-api/internal/jsplugin/contract"
 	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
@@ -21,6 +23,7 @@ import (
 	"github.com/qianfree/team-api/relay/taskchannel"
 	_ "github.com/qianfree/team-api/relay/taskchannel/ali"
 	_ "github.com/qianfree/team-api/relay/taskchannel/gemini"
+	_ "github.com/qianfree/team-api/relay/taskchannel/jsbridge"
 	_ "github.com/qianfree/team-api/relay/taskchannel/kling"
 	"github.com/qianfree/team-api/relay/taskchannel/midjourney"
 	_ "github.com/qianfree/team-api/relay/taskchannel/minimax"
@@ -173,11 +176,56 @@ func HandleTaskSubmit(
 
 	// 2. 确定任务平台
 	providerType := constant.ProviderType(channelMeta.ChannelType)
-	platform, ok := constant.ProviderTypeToTaskPlatform(providerType)
-	if !ok {
-		g.Log().Warningf(ctx, "HandleTaskSubmit: unsupported task platform, channelType=%d, modelName=%s", channelMeta.ChannelType, modelName)
-		writeTaskError(rc.Writer, http.StatusBadRequest, "unsupported task platform", "")
-		return
+	var platform constant.TaskPlatform
+	if providerType == constant.ProviderJSTask {
+		// JS 任务插件：平台标识 = js:{plugin_key}，轮询侧据此路由到具体插件池。
+		// plugin_key 优先取渠道显式配置（覆盖语义），缺省按模型解析——v1 冲突预检
+		// 保证模型对插件独占，渠道只需配模型路由（chn_abilities），零额外配置
+		pluginKey := channelMeta.Settings.PluginKey
+		if pluginKey == "" {
+			if resolved, ok := jsplugin.ResolvePluginKeyForModel(modelName); ok {
+				pluginKey = resolved
+			}
+		}
+		if pluginKey != "" {
+			// JS 插件模型双入口：/pjs 原生路由（分发器已注入解码计划）或标准任务端点
+			// （/v1/videos、/v1/video/generations——插件声明 standardVideos 时在此合成
+			// 解码计划，等价分发器的 decodeRequest 环节，jsbridge 全链无感复用）。
+			// 未声明或非支持端点保持明确拒绝（预扣尚未发生，无资金副作用）。
+			if jsplugin.SubmitPlanFromContext(ctx) == nil {
+				surface := standardEntrySurface(path)
+				if surface == "" {
+					writeTaskError(rc.Writer, http.StatusBadRequest,
+						fmt.Sprintf("model %q is served by JS plugin %q; submit via its native routes /pjs/%s/... (this endpoint is not supported for plugin models)", modelName, pluginKey, pluginKey), "")
+					return
+				}
+				plan, err := jsplugin.SynthesizeStandardPlan(ctx, pluginKey, surface, path, body, modelName)
+				if err != nil {
+					// 解码失败对客户端即请求不可接受；消息可能内嵌密钥/签名片段，同 /pjs 口径净化
+					writeTaskError(rc.Writer, http.StatusBadRequest, jsplugin.SanitizeHookMessage(err.Error()), "")
+					return
+				}
+				if plan == nil {
+					writeTaskError(rc.Writer, http.StatusBadRequest,
+						fmt.Sprintf("model %q is served by JS plugin %q without standard endpoint support (plugin should declare meta.standardVideos); submit via its native routes /pjs/%s/...", modelName, pluginKey, pluginKey), "")
+					return
+				}
+				ctx = jsplugin.WithSubmitPlan(ctx, plan)
+			}
+			platform = constant.TaskPlatform("js:" + pluginKey)
+		} else {
+			g.Log().Warningf(ctx, "HandleTaskSubmit: js task channel cannot resolve plugin (model=%s, channelID=%d)", modelName, channelMeta.ChannelID)
+			writeTaskError(rc.Writer, http.StatusBadRequest, "js task channel cannot resolve plugin by model", "")
+			return
+		}
+	} else {
+		var ok bool
+		platform, ok = constant.ProviderTypeToTaskPlatform(providerType)
+		if !ok {
+			g.Log().Warningf(ctx, "HandleTaskSubmit: unsupported task platform, channelType=%d, modelName=%s", channelMeta.ChannelType, modelName)
+			writeTaskError(rc.Writer, http.StatusBadRequest, "unsupported task platform", "")
+			return
+		}
 	}
 
 	// 3. 获取 TaskAdaptor
@@ -420,6 +468,20 @@ func HandleTaskSubmit(
 		"created_at": now.Unix(),
 	}
 	writeJSON(rc.Writer, http.StatusOK, respBody)
+}
+
+// standardEntrySurface 标准任务端点路径 → 入口标识（JS 插件 standardVideos 解码用）。
+// 空串 = 非支持端点：厂商原生协议端点（MiniMax/阿里等）的 body 不是通用任务体，
+// 不参与标准入口合成，对 JS 插件模型保持明确拒绝。
+func standardEntrySurface(path string) string {
+	switch path {
+	case "/v1/videos":
+		return contract.SurfaceOpenAIVideos
+	case "/v1/video/generations":
+		return contract.SurfaceVideoGenerations
+	default:
+		return ""
+	}
 }
 
 // HandleTaskFetch 异步任务查询管线

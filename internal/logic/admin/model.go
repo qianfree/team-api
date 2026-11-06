@@ -1204,7 +1204,7 @@ func (s *sAdmin) ValidateModelPricingFormula(ctx context.Context, req *v1.Pricin
 	}
 
 	// facts key 注册表恒随响应下发（前端速查展示；Evaluate 内含 SmokeTest 的注册校验）
-	res.KnownFactKeys = formula.KnownFactKeys
+	res.KnownFactKeys = formula.KnownFactKeys()
 
 	compiled, results, err := formula.Evaluate(combined, custom)
 	if err != nil {

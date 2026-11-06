@@ -79,8 +79,10 @@ func Idempotency(r *ghttp.Request) {
 			// HTTP 200 + JSON（response.Success 使用 WriteJson），业务错误为 HTTP 422
 			// 且会被标记为 failed 而不进入此重放分支。因此固定回写 200 + JSON Content-Type，
 			// 避免复用未初始化的 r.Response.Status（默认 0）以及丢失 Content-Type。
+			// WriteHeader 仅记录状态码：WriteStatus 不带内容会把 "OK" 写进响应体，
+			// 污染重放的 JSON。
 			r.Response.Header().Set("Content-Type", "application/json; charset=utf-8")
-			r.Response.WriteStatus(http.StatusOK)
+			r.Response.WriteHeader(http.StatusOK)
 			r.Response.Write([]byte(record.ResponseBody))
 			r.Exit()
 			return

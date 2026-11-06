@@ -67,7 +67,7 @@ type (
 		// AiAnalysisConfigGet 读取分析配置（与设置页读取同构，敏感字段掩码显示）。
 		AiAnalysisConfigGet(ctx context.Context, _ *v1.AiAnalysisConfigGetReq) (*v1.AiAnalysisConfigGetRes, error)
 		// AiAnalysisConfigUpdate 更新分析配置。敏感字段为掩码/空值时保持现值
-		//（UpdateCategory 内统一处理）；巡查计划变更经设置监听即时重排 cron。
+		// （UpdateCategory 内统一处理）；巡查计划变更经设置监听即时重排 cron。
 		AiAnalysisConfigUpdate(ctx context.Context, req *v1.AiAnalysisConfigUpdateReq) (*v1.AiAnalysisConfigUpdateRes, error)
 		// AiAnalysisTest 用已保存配置发起一次最小补全做连通性测试，
 		// 失败原因原样返回给管理员定位问题（测试失败本身是有效结果，不返回 error）。
@@ -347,6 +347,34 @@ type (
 		ListHelpArticles(ctx context.Context, req *v1.HelpArticleListReq) (*v1.HelpArticleListRes, error)
 		// GetHelpArticle 帮助文章详情（管理后台）
 		GetHelpArticle(ctx context.Context, req *v1.HelpArticleGetReq) (*v1.HelpArticleGetRes, error)
+		JSPluginList(ctx context.Context, _ *v1.JSPluginListReq) (*v1.JSPluginListRes, error)
+		JSPluginUpload(ctx context.Context, req *v1.JSPluginUploadReq) (*v1.JSPluginUploadRes, error)
+		// JSPluginDryRun 上传前试运行：编译 / 钩子齐备性 / 跨插件冲突预检 / 样例执行 /
+		// 静态 lint（见 jsplugin.DryRun）。不落库、不发布 generation、不发真实 HTTP，
+		// 所有失败都体现在检查项里，接口本身始终成功返回。
+		JSPluginDryRun(_ context.Context, req *v1.JSPluginDryRunReq) (*v1.JSPluginDryRunRes, error)
+		// JSPluginTemplate 模板下载：内置 golden 参考实现源码（作者抄它起步，删掉不需要的钩子）。
+		JSPluginTemplate(_ context.Context, _ *v1.JSPluginTemplateReq) (*v1.JSPluginTemplateRes, error)
+		JSPluginActivate(ctx context.Context, req *v1.JSPluginActivateReq) (*v1.JSPluginActivateRes, error)
+		JSPluginEnable(ctx context.Context, req *v1.JSPluginEnableReq) (*v1.JSPluginEnableRes, error)
+		JSPluginDelete(ctx context.Context, req *v1.JSPluginDeleteReq) (*v1.JSPluginDeleteRes, error)
+		// JSPluginSource 查看指定版本源码（只读，内置/上传版本均可）。
+		JSPluginSource(ctx context.Context, req *v1.JSPluginSourceReq) (*v1.JSPluginSourceRes, error)
+		// JSPluginRoutes 路由预览取激活版本 manifest（上传/内置 seed 时从 plugin.js 解析落库），
+		// 不依赖当前 generation——禁用状态下也要能看见端点信息（启用后按同一路径挂载）。
+		JSPluginRoutes(ctx context.Context, req *v1.JSPluginRoutesReq) (*v1.JSPluginRoutesRes, error)
+		// JSPluginMetrics 运行指标合流：内存钩子指标（自进程启动）+ DB 业务统计
+		// （任务量按 platform=js:{key}、产物转存按 js_task_artifacts.plugin_key）。
+		JSPluginMetrics(ctx context.Context, _ *v1.JSPluginMetricsReq) (*v1.JSPluginMetricsRes, error)
+		// JSPluginConfig 配置读取：manifest.config schema + 当前值（加密字段掩码），
+		// 形状与 Go 插件 PluginConfigModal 兼容（list/encrypted/group/half_width）。
+		JSPluginConfig(ctx context.Context, req *v1.JSPluginConfigReq) (*v1.JSPluginConfigRes, error)
+		// JSPluginConfigUpdate 更新配置并重建 generation（在服务中的插件即刻装载新值）。
+		JSPluginConfigUpdate(ctx context.Context, req *v1.JSPluginConfigUpdateReq) (*v1.JSPluginConfigUpdateRes, error)
+		// JSPluginOpsStats JS 插件运营统计（GET /api/admin/js-plugins/ops-stats?days=30）。
+		// 任务侧与营收侧两条独立聚合查询后在内存组装（组装逻辑见 buildJsOpsStatsItems，
+		// 保证「无任务插件」与「manifest 已不存在的孤儿 platform」都出现在结果里）。
+		JSPluginOpsStats(ctx context.Context, req *v1.JSPluginOpsStatsReq) (*v1.JSPluginOpsStatsRes, error)
 		// CreateMember adds a new member to a specified tenant.
 		CreateMember(ctx context.Context, req *v1.AdminMemberCreateReq) (*v1.AdminMemberCreateRes, error)
 		// ListAllMembers returns a paginated list of all tenant members across all tenants.

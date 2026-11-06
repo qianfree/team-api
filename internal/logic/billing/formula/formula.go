@@ -34,17 +34,56 @@ var knownVars = map[string]bool{
 	"seconds":     true, // 任务计费秒数（时长类任务：预扣=请求时长信号，结算=官方素材计量；同步路径恒 0）
 }
 
-// KnownFactKeys 已注册 usage facts 键表（key → 中文说明）。
+// knownFactKeys 已注册 usage facts 键表（key → 中文说明）。
 // u("key") 从渠道 adaptor 填充的 usage facts（非 token 计量：音频秒数、字节数等）
 // 取值；保存公式时烟测强校验字面 key 必须已注册（防拼写错误静默取 0 错价）。
-// adaptor 新增 facts 填充点时必须同步在此注册，并更新前端速查表。
+// adaptor 新增 facts 填充点时必须同步在此注册，并更新前端速查表；
+// JS 任务插件的 usageSchema number 型键在插件激活时经 RegisterFactKeys 动态注册。
 //
 // 注意：工具调用计数（web_search/google_search 等按次附加费）走 Usage.ToolCalls
 // 旁路（结算层 tool_pricing.go 计价），刻意不注册为 facts——注册后公式 u() 与
 // 附加费通道会对同一计数双重计费
-var KnownFactKeys = map[string]string{
-	"audio_seconds": "音频时长秒数（STT/翻译 verbose_json.duration，OpenAI 渠道填充）",
-	"audio_bytes":   "音频响应字节数（TTS 二进制响应实测大小，OpenAI 渠道填充）",
+var (
+	knownFactKeysMu sync.RWMutex
+	knownFactKeys   = map[string]string{
+		"audio_seconds": "音频时长秒数（STT/翻译 verbose_json.duration，OpenAI 渠道填充）",
+		"audio_bytes":   "音频响应字节数（TTS 二进制响应实测大小，OpenAI 渠道填充）",
+	}
+)
+
+// KnownFactKeys 返回已注册 facts 键表快照（管理端速查表导出/报错提示用）。
+func KnownFactKeys() map[string]string {
+	knownFactKeysMu.RLock()
+	defer knownFactKeysMu.RUnlock()
+	out := make(map[string]string, len(knownFactKeys))
+	for k, v := range knownFactKeys {
+		out[k] = v
+	}
+	return out
+}
+
+// RegisterFactKeys 动态注册 usage facts 键（JS 任务插件 usageSchema 激活时调用）。
+// 幂等：重复注册覆盖描述。插件禁用不摘除——key 只影响公式保存期校验与 u() 取 0 兜底，
+// 摘除会让历史公式保存失败，保留无害。
+func RegisterFactKeys(keys map[string]string) {
+	if len(keys) == 0 {
+		return
+	}
+	knownFactKeysMu.Lock()
+	defer knownFactKeysMu.Unlock()
+	for k, desc := range keys {
+		if k != "" {
+			knownFactKeys[k] = desc
+		}
+	}
+}
+
+// factKeyRegistered 报告 key 是否已注册（烟测校验用）。
+func factKeyRegistered(key string) bool {
+	knownFactKeysMu.RLock()
+	defer knownFactKeysMu.RUnlock()
+	_, ok := knownFactKeys[key]
+	return ok
 }
 
 // Compiled 编译产物：字节码程序 + AST 静态分析出的变量引用集合。

@@ -57,6 +57,14 @@ const adminRoutes: RouteRecordRaw[] = [
         meta: { title: '插件管理', perm: 'system:plugin' },
       },
       {
+        // JS 任务插件（运行时上传的 plugin.js）：上传/版本/启停/配置/路由预览。
+        // 页面入口收敛在 plugin:upload（只读预览也归上传者）；启停/激活由后端 plugin:manage 校验
+        path: 'js-plugins',
+        name: 'AdminJSPlugins',
+        component: () => import('@/views/system/JSPluginsPage.vue'),
+        meta: { title: 'JS 任务插件', perm: 'plugin:upload' },
+      },
+      {
         path: 'models',
         name: 'AdminModels',
         component: () => import('@/views/ai/ModelsPage.vue'),

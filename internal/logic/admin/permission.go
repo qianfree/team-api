@@ -116,6 +116,8 @@ var predefinedPermissionGroups = []v1.PermissionGroup{
 		Permissions: []string{
 			// 注：在线自更新无权限点 —— 整个 update 域硬性限定超管（superAdminOnlyRules）
 			"system:view", "system:edit", "system:plugin",
+			// JS 任务插件两权分立：上传即执行，upload 默认只授超管；manage 控制启停/激活/删除
+			"plugin:upload", "plugin:manage",
 		},
 	},
 	{

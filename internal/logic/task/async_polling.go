@@ -3,6 +3,7 @@ package task
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"sync"
@@ -13,10 +14,12 @@ import (
 	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/logic/monitor"
 	"github.com/qianfree/team-api/internal/logic/relay"
+	"github.com/qianfree/team-api/internal/logic/task/artifact"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/helper"
 	"github.com/qianfree/team-api/relay/taskchannel"
+	"github.com/qianfree/team-api/relay/taskchannel/jsbridge"
 )
 
 const (
@@ -427,6 +430,26 @@ func processChannelTasks(ctx context.Context, channelID int64, tasks []*common.A
 		return
 	}
 
+	// 批量轮询通道（fetchMode=batch 的适配器，如 JS 任务插件）：按任务平台判定——
+	// 同渠道可挂多个插件且 fetchMode 可异，批量/逐任务分区处理而不是全有全无
+	if batcher, ok := adaptor.(common.BatchTaskPoller); ok {
+		var batchTasks, singleTasks []*common.AsyncTask
+		for _, t := range tasks {
+			if batcher.FetchModeFor(t.Platform) == "batch" {
+				batchTasks = append(batchTasks, t)
+			} else {
+				singleTasks = append(singleTasks, t)
+			}
+		}
+		if len(batchTasks) > 0 {
+			pollBatchTasks(ctx, batcher, channel, batchTasks)
+		}
+		for _, t := range singleTasks {
+			pollSingleTask(ctx, adaptor, channel, t)
+		}
+		return
+	}
+
 	for _, t := range tasks {
 		pollSingleTask(ctx, adaptor, channel, t)
 	}
@@ -442,6 +465,16 @@ type privateData struct {
 		ModelName string         `json:"model_name"`
 		PreDeduct float64        `json:"pre_deduct"`
 	} `json:"billing_context"`
+}
+
+// jsPluginInactiveFailure 构造「任务所属 JS 插件已停用/删除」的失败终态 TaskInfo。
+// 插件不在当前 generation 时存量任务永远轮询不出结果，立即按失败终态化并退款
+// （applyTaskPollResult 失败分支），不再空转到 30 分钟超时网——预扣资金不被长冻。
+func jsPluginInactiveFailure() *common.TaskInfo {
+	return &common.TaskInfo{
+		Status:     common.TaskStatusFailure,
+		FailReason: "任务所属 JS 插件已停用，自动终止并退款",
+	}
 }
 
 // pollSingleTask 轮询单个任务
@@ -463,6 +496,9 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 		"task_id":   pd.UpstreamTaskID,
 		"use_proxy": parseChannelUseProxy(channel.Settings),
 		"model":     upstreamModel,
+		// platform 供 JS 任务插件桥（taskchannel/jsbridge）从 taskData 路由到具体插件池
+		//（FetchTask 签名不携带渠道信息；其余适配器按结构体解析自动忽略未知键）
+		"platform": task.Platform,
 	})
 
 	// 渠道调试日志（轮询记录，仅段2/段3——后台轮询无客户端交互）：
@@ -488,6 +524,17 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 
 	resp, err := adaptor.FetchTask(pollCtx, channel.BaseURL, channel.ApiKey, taskData)
 	if err != nil {
+		// 插件停用/删除：任务归属的 JS 插件已不在当前 generation，后续轮询永无结果，
+		// 不等下一轮更不等超时网，立即按失败终态化并退款（applyTaskPollResult 失败分支，
+		// 复用状态 CAS、SettleTaskFailed 退款、用量日志与审计）。body 传任务既有快照，
+		// 避免空 body 把 data 列覆盖为 null
+		if errors.Is(err, jsbridge.ErrPluginNotActive) {
+			g.Log().Warningf(ctx, "poll: js plugin for task %s not active, abort and refund: %v", task.PublicTaskID, err)
+			dbgAttempt.MarkFinal(err)
+			dbgSess.FinalizeAndSubmit(0, 0)
+			applyTaskPollResult(ctx, task, channel, jsPluginInactiveFailure(), task.Data, nil, pd, nil, nil)
+			return
+		}
 		g.Log().Warningf(ctx, "poll: fetch task %s: %v", task.PublicTaskID, err)
 		dbgAttempt.MarkFinal(err)
 		dbgSess.FinalizeAndSubmit(0, 0)
@@ -512,6 +559,24 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 		return
 	}
 
+	applyTaskPollResult(ctx, task, channel, taskInfo, body, upstreamRespHeaders(resp), pd, dbgSess, dbgAttempt)
+}
+
+// applyTaskPollResult 应用单次轮询解析结果：状态 CAS → 终态结算/退款 → 用量日志/审计
+// → 产物转存。逐任务路径（pollSingleTask）与批量路径（pollBatchTasks）共用本函数，
+// 保证结算口径不因轮询模式分叉。body 为审计用原始响应（批量模式为整批共享响应体；
+// task.Data 优先取 taskInfo.Data 的任务级数据，批量插件由桥填充分项快照）。
+func applyTaskPollResult(
+	ctx context.Context,
+	task *common.AsyncTask,
+	channel *common.ChannelBasicInfo,
+	taskInfo *common.TaskInfo,
+	body []byte,
+	respHeaders map[string]string,
+	pd privateData,
+	dbgSess *common.DebugSession,
+	dbgAttempt *common.DebugAttempt,
+) {
 	// 状态变化判定 + 调试记录提交（CAS 更新 task.Status 之前，task 行内即上一次轮询值）
 	if pollStateChanged(taskInfo, task) {
 		dbgAttempt.MarkFinal(nil)
@@ -522,7 +587,13 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 	oldStatus := task.Status
 	task.Status = string(taskInfo.Status)
 	task.Progress = taskInfo.Progress
-	task.Data = body
+	// 批量模式 body 是整批响应：task.Data 必须是任务自身快照（taskInfo.Data，
+	// 由桥/适配器填充分项数据），缺失时回落原始 body（逐任务路径行为不变）
+	if len(taskInfo.Data) > 0 {
+		task.Data = taskInfo.Data
+	} else {
+		task.Data = body
+	}
 
 	if taskInfo.FailReason != "" {
 		task.FailReason = taskInfo.FailReason
@@ -596,11 +667,12 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 			if !costPersisted {
 				g.Log().Warningf(ctx, "poll: persist actual cost for task %s failed", task.PublicTaskID)
 			}
-			settleResult, err = taskBilling.SettleTaskSuccess(ctx, task.TenantID, task.UserID, task.ApiKeyID, task.ChannelID, task.ModelName, task.RequestID, actualCost, task.PreDeductAmount, taskInfo.TotalTokens, taskInfo.CompletionTokens, taskInfo.MaterialUsage, pd.BillingContext.Ratios, task.PublicTaskID, task.CreatedAt)
-			if err != nil {
+			var settleErr error
+			settleResult, settleErr = taskBilling.SettleTaskSuccess(ctx, task.TenantID, task.UserID, task.ApiKeyID, task.ChannelID, task.ModelName, task.RequestID, actualCost, task.PreDeductAmount, taskInfo.TotalTokens, taskInfo.CompletionTokens, taskInfo.MaterialUsage, pd.BillingContext.Ratios, task.PublicTaskID, task.CreatedAt)
+			if settleErr != nil {
 				// 结算失败（Redis/DB 抖动等）：重试网按上面已持久化的实际费用重放结算，
 				// 避免「预扣兜底扣款 ≠ 重算金额」；用量日志延后补写
-				g.Log().Warningf(ctx, "poll: settle task %s: %v (usage log deferred to settle retry)", task.PublicTaskID, err)
+				g.Log().Warningf(ctx, "poll: settle task %s: %v (usage log deferred to settle retry)", task.PublicTaskID, settleErr)
 				usageLogDeferred = true
 				if !costPersisted {
 					if uErr := DefaultAsyncProvider.UpdateTask(ctx, task); uErr != nil {
@@ -635,8 +707,14 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 		}
 
 		// 更新审计记录（任务终态与计费解耦，始终立即落）
-		recordTaskCompletionAudit(task, "SUCCESS", string(body), upstreamRespHeaders(resp))
+		recordTaskCompletionAudit(task, "SUCCESS", string(body), respHeaders)
 
+		// JS 插件产物转存（声明式：插件只指路，字节由宿主流水线搬运到对象存储，
+		// 完成后改写 task.Data 中的 URL——renderTask 因此自动呈现本地 OSS 链接）。
+		// 异步执行不阻塞轮询循环；失败回落原上游 URL，由 sweep 周期重试
+		if len(taskInfo.Artifacts) > 0 {
+			artifact.EnqueueTransfer(ctx, task, taskInfo.Artifacts)
+		}
 	} else if taskInfo.Status == common.TaskStatusFailure {
 		// 退还预扣费用。失败行用量日志与成功行同一原则：退款成功且认领「已结算」标记后写
 		// ——退款/认领失败延后到 handleUnsettledTasks 补写，每请求至多一条；
@@ -666,7 +744,111 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 		}
 
 		// 更新审计记录（任务终态与计费解耦，始终立即落）
-		recordTaskCompletionAudit(task, "FAILURE", string(body), upstreamRespHeaders(resp))
+		recordTaskCompletionAudit(task, "FAILURE", string(body), respHeaders)
+	}
+}
+
+// FinalizeTaskImmediate 同步即完成任务的立即终态化（jsbridge parseSubmitResponse
+// 返回 immediate 的路径）：复用轮询终态管线 applyTaskPollResult——结算/退款、用量
+// 日志、审计、产物转存与轮询到达终态完全同口径。返回终态化后的任务（失败返回 nil）。
+func FinalizeTaskImmediate(ctx context.Context, task *common.AsyncTask, channel *common.ChannelBasicInfo, info *common.TaskInfo) *common.AsyncTask {
+	if task == nil || info == nil || !info.Status.IsTerminal() {
+		return nil
+	}
+	var pd privateData
+	if err := json.Unmarshal(task.PrivateData, &pd); err != nil {
+		g.Log().Warningf(ctx, "finalize immediate %s: invalid private data: %v", task.PublicTaskID, err)
+		return nil
+	}
+	auditBody := info.Data
+	if len(auditBody) == 0 {
+		auditBody = task.Data
+	}
+	applyTaskPollResult(ctx, task, channel, info, auditBody, nil, pd, nil, nil)
+	return task
+}
+
+// batchPolledTask 批量轮询的任务包装（任务 + 其计费上下文）。
+type batchPolledTask struct {
+	task *common.AsyncTask
+	pd   privateData
+}
+
+// pollBatchTasks 批量轮询：按（渠道 × 平台）分组一次上游往返，逐任务复用
+// applyTaskPollResult。上游未回报的任务本轮保持现状（部分返回是批量上游常态）。
+// 调试日志：批量路径不做逐任务四段报文捕获（一次往返对应多任务，逐任务捕获语义
+// 不成立），排查依赖任务日志与插件 utils.log。
+func pollBatchTasks(ctx context.Context, batcher common.BatchTaskPoller, channel *common.ChannelBasicInfo, tasks []*common.AsyncTask) {
+	// 按 Platform 分组（同渠道可能混多个 JS 插件——渠道按模型路由的场景）
+	groups := make(map[string][]batchPolledTask)
+	order := make([]string, 0)
+	for _, task := range tasks {
+		var pd privateData
+		if err := json.Unmarshal(task.PrivateData, &pd); err != nil || pd.UpstreamTaskID == "" {
+			g.Log().Warningf(ctx, "poll: invalid private data for task %s", task.PublicTaskID)
+			continue
+		}
+		if _, ok := groups[task.Platform]; !ok {
+			order = append(order, task.Platform)
+		}
+		groups[task.Platform] = append(groups[task.Platform], batchPolledTask{task: task, pd: pd})
+	}
+
+	for _, platform := range order {
+		wrapped := groups[platform]
+		refs := make([]common.BatchTaskRef, 0, len(wrapped))
+		for _, w := range wrapped {
+			refs = append(refs, common.BatchTaskRef{
+				Platform: platform,
+				TaskID:   w.pd.UpstreamTaskID,
+				TaskData: w.task.Data,
+			})
+		}
+
+		resp, err := batcher.FetchBatchTasks(ctx, channel.BaseURL, channel.ApiKey, refs)
+		if err != nil {
+			// 插件停用/删除：整批任务立即按失败终态化并退款（不等超时网），逐任务走
+			// applyTaskPollResult 失败分支。body 传各任务既有快照，避免空 body 把
+			// data 列覆盖为 null（批量路径无逐任务调试会话，dbg 参数与既有调用一致传 nil）
+			if errors.Is(err, jsbridge.ErrPluginNotActive) {
+				g.Log().Warningf(ctx, "poll: js plugin for channel %d platform %s not active, abort and refund %d tasks: %v",
+					channel.ID, platform, len(refs), err)
+				for _, w := range wrapped {
+					applyTaskPollResult(ctx, w.task, channel, jsPluginInactiveFailure(), w.task.Data, nil, w.pd, nil, nil)
+				}
+				continue
+			}
+			g.Log().Warningf(ctx, "poll: batch fetch channel %d platform %s (%d tasks): %v", channel.ID, platform, len(refs), err)
+			continue
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			g.Log().Warningf(ctx, "poll: batch read channel %d: %v", channel.ID, readErr)
+			continue
+		}
+		infos, parseErr := batcher.ParseBatchTasks(body)
+		if parseErr != nil {
+			g.Log().Warningf(ctx, "poll: batch parse channel %d platform %s: %v", channel.ID, platform, parseErr)
+			continue
+		}
+		respHeaders := upstreamRespHeaders(resp)
+
+		for _, w := range wrapped {
+			info := infos[w.pd.UpstreamTaskID]
+			if info == nil {
+				// 上游本轮未回报该任务：保持现状，等下一轮
+				g.Log().Debugf(ctx, "poll: batch task %s not reported upstream this round", w.task.PublicTaskID)
+				continue
+			}
+			// 审计只落本任务快照：整批 body 含同渠道其他租户的任务数据，
+			// 原样写进每个任务的审计行会构成跨租户泄漏（与 FinalizeTaskImmediate 同口径）
+			auditBody := info.Data
+			if len(auditBody) == 0 {
+				auditBody = w.task.Data
+			}
+			applyTaskPollResult(ctx, w.task, channel, info, auditBody, respHeaders, w.pd, nil, nil)
+		}
 	}
 }
 
