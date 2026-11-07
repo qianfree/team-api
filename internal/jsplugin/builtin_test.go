@@ -43,6 +43,9 @@ func TestBuiltinPluginsCompile(t *testing.T) {
 	if !foundSecond {
 		t.Fatalf("sora-js usageSchema 缺少 seconds(second) 计费单位: %+v", sora.Manifest.UsageSchema)
 	}
+	if sora.Manifest.StandardVideos != "decodeVideos" {
+		t.Fatalf("sora-js 应声明 standardVideos: %q", sora.Manifest.StandardVideos)
+	}
 }
 
 // TestSoraJSHookFlow sora-js 全钩子冒烟（含 utils.config.get 读取与时长钳制）。
@@ -174,4 +177,100 @@ func mustRawMap(t *testing.T, raw json.RawMessage) map[string]json.RawMessage {
 		t.Fatalf("usage 非对象: %v", err)
 	}
 	return m
+}
+
+// TestSoraJSStandardVideos sora-js 标准视频端点解码（meta.standardVideos）：
+// /v1/videos 归一后的通用任务体（metadata.duration 形态）与 /v1/video/generations
+// 原样 body（顶层 seconds 形态）均映射为原生 requestBody，下游 buildSubmitRequest
+// 无感复用（秒数/尺寸正确进入上游请求）。
+func TestSoraJSStandardVideos(t *testing.T) {
+	builtins, err := compileBuiltins(NewGojaEngine())
+	if err != nil {
+		t.Fatalf("内置插件编译失败: %v", err)
+	}
+	var sora *CompiledPlugin
+	for _, b := range builtins {
+		if b.Key == "sora-js" {
+			sora = b
+		}
+	}
+	if sora == nil {
+		t.Fatal("sora-js 不在内置列表")
+	}
+
+	inst, err := NewGojaEngine().NewInstance(sora, InstanceOptions{
+		CallTimeout: 2 * time.Second,
+		ConfigValues: map[string]any{
+			"default_size": "1280x720",
+			"max_seconds":  12,
+			"vendor_note":  "",
+		},
+	})
+	if err != nil {
+		t.Fatalf("创建实例失败: %v", err)
+	}
+	defer inst.Close()
+
+	call := func(hook string, arg any) map[string]json.RawMessage {
+		t.Helper()
+		args, _ := json.Marshal(arg)
+		out, err := inst.Call(context.Background(), hook, args)
+		if err != nil {
+			t.Fatalf("钩子 %s 失败: %v", hook, err)
+		}
+		raw, err := contract.ParseJSONObject(out)
+		if err != nil {
+			t.Fatalf("钩子 %s 返回非对象: %v", hook, err)
+		}
+		return raw
+	}
+
+	// /v1/videos 形态：metadata.duration / metadata.size（胶水层归一产物）
+	decoded, err := contract.ValidateDecoded(call("decodeVideos", contract.StandardEntryContext{
+		Surface: contract.SurfaceOpenAIVideos, Path: "/v1/videos", Model: "sora-2-js",
+		Body: json.RawMessage(`{"model":"sora-2-js","prompt":"a cat","seconds":"8","metadata":{"duration":8,"size":"1920x1080"}}`),
+	}), sora.Manifest, false)
+	if err != nil {
+		t.Fatalf("decodeVideos 校验失败: %v", err)
+	}
+	var reqBody map[string]any
+	_ = json.Unmarshal(decoded.RequestBody, &reqBody)
+	if reqBody["seconds"] != float64(8) || reqBody["size"] != "1920x1080" {
+		t.Fatalf("metadata 映射异常: %v", reqBody)
+	}
+
+	// /v1/video/generations 形态：顶层 seconds、无 metadata
+	decoded2, err := contract.ValidateDecoded(call("decodeVideos", contract.StandardEntryContext{
+		Surface: contract.SurfaceVideoGenerations, Path: "/v1/video/generations", Model: "sora-2-js",
+		Body: json.RawMessage(`{"model":"sora-2-js","prompt":"a dog","seconds":5}`),
+	}), sora.Manifest, false)
+	if err != nil {
+		t.Fatalf("decodeVideos（通用端点形态）校验失败: %v", err)
+	}
+	var reqBody2 map[string]any
+	_ = json.Unmarshal(decoded2.RequestBody, &reqBody2)
+	if reqBody2["seconds"] != float64(5) {
+		t.Fatalf("顶层 seconds 映射异常: %v", reqBody2)
+	}
+
+	// 下游 buildSubmitRequest 无感复用：映射后的 body 进入上游请求
+	built, err := contract.ValidateBuiltRequest(call("buildSubmitRequest", contract.BuildSubmitContext{
+		Body: decoded.RequestBody, Model: decoded.Model, ChannelBaseURL: "https://up.example.com",
+	}))
+	if err != nil {
+		t.Fatalf("buildSubmitRequest 校验失败: %v", err)
+	}
+	var submitBody map[string]any
+	_ = json.Unmarshal(built.Body, &submitBody)
+	if submitBody["seconds"] != float64(8) || submitBody["size"] != "1920x1080" || submitBody["prompt"] != "a cat" {
+		t.Fatalf("上游请求应携带映射后的参数: %v", submitBody)
+	}
+
+	// 缺 prompt：标准端点同样拒绝
+	if _, err := inst.Call(context.Background(), "decodeVideos", mustJSON(t, contract.StandardEntryContext{
+		Surface: contract.SurfaceOpenAIVideos, Path: "/v1/videos", Model: "sora-2-js",
+		Body: json.RawMessage(`{"model":"sora-2-js"}`),
+	})); err == nil {
+		t.Fatal("缺 prompt 应抛错")
+	}
 }

@@ -44,11 +44,12 @@ export const meta = {
     en: "MiniMax Hailuo video generation (text-to-video, image-to-video, and MiniMax-H3 multimodal reference)",
     zh: "MiniMax 海螺视频生成（文生视频、图生视频、MiniMax-H3 多模态参考生视频）",
   },
-  version: "1.4.0",
+  version: "1.5.0",
   author: "qianfree",
   channelTypes: [35],
   models: [H3_MODEL].concat(V1_MODELS),
   fetchMode: "per_task",
+  standardVideos: "decodeVideos",
   usageSchema: {
     seconds: VIDEO_SECONDS_FIELD,
     resolution: { enum: ["512P", "768P", "720P", "1080P", "2K"], description: RESOLUTION_DESCRIPTION },
@@ -115,6 +116,50 @@ export function createH3Task(ctx) {
     if (!Number.isFinite(n) || n < H3_MIN_DURATION || n > H3_MAX_DURATION) throw new Error("duration must be between " + H3_MIN_DURATION + " and " + H3_MAX_DURATION);
   }
   return { kind: "submit", model: H3_MODEL, requestBody: { model: H3_MODEL, vendorBody: body } };
+}
+
+// decodeVideos 标准视频端点解码（meta.standardVideos 指向）：通用任务体 → 各协议
+// vendorBody。分辨率经 resolutionFor 归一（metadata.size 支持 720/768/1080 等数字词），
+// 时长 seconds 优先、回落 metadata.duration；参考图 images[0]/metadata.image →
+// v1 first_frame_image / H3 content[] 首帧项；尾帧 metadata.last_frame 同理。
+// 词汇映射与 Go 版 minimax 适配器同口径（resolveDuration/resolveResolution/buildGenericContent）。
+export function decodeVideos(ctx) {
+  const raw = ctx.body && typeof ctx.body === "object" && !Array.isArray(ctx.body) ? ctx.body : {};
+  const metadata = plainObject(raw.metadata);
+  const model = trimmed(ctx.model || raw.model);
+  if (!model) throw new Error("model is required");
+  if (!trimmed(raw.prompt)) throw new Error("prompt is required");
+
+  const seconds = raw.seconds != null ? raw.seconds : metadata.duration;
+  const n = typeof seconds === "string" && seconds.trim() !== "" ? Number(seconds) : seconds;
+  const duration = Number.isFinite(n) && n > 0 ? Math.round(n) : null;
+  // 分辨率：显式输入（resolution/size）经 resolutionFor 归一；缺省按协议默认——
+  // H3 与 estimateUsage 的 H3 分支同口径（768P），v1 系列走 defaultResolution
+  const rawResolution = trimmed(metadata.resolution) || trimmed(metadata.size);
+  const resolution = rawResolution ? resolutionFor(rawResolution, model) : (isH3(model) ? "768P" : defaultResolution(model));
+  const image = Array.isArray(raw.images) && raw.images.length && typeof raw.images[0] === "string" ? raw.images[0].trim() : trimmed(metadata.image);
+  const lastFrame = trimmed(metadata.last_frame);
+
+  if (isH3(model)) {
+    if (duration != null && (duration < H3_MIN_DURATION || duration > H3_MAX_DURATION)) {
+      throw new Error("duration must be between " + H3_MIN_DURATION + " and " + H3_MAX_DURATION);
+    }
+    const content = [{ type: "text", text: String(raw.prompt) }];
+    if (image) content.push({ type: "image_url", image_url: { url: image }, role: "first_frame" });
+    if (lastFrame) content.push({ type: "image_url", image_url: { url: lastFrame }, role: "last_frame" });
+    const vendorBody = { content: content, resolution: resolution };
+    if (duration != null) vendorBody.duration = duration;
+    const ratio = trimmed(metadata.ratio) || trimmed(metadata.aspect_ratio);
+    if (ratio) vendorBody.ratio = ratio;
+    return { kind: "submit", model: model, requestBody: { model: model, vendorBody: vendorBody } };
+  }
+
+  if (!V1_MODELS.includes(model)) throw new Error("model must be " + H3_MODEL + " or one of " + V1_MODELS.join(", "));
+  const vendorBody = { prompt: String(raw.prompt), resolution: resolution };
+  if (duration != null) vendorBody.duration = duration;
+  if (image) vendorBody.first_frame_image = image;
+  if (lastFrame) vendorBody.last_frame_image = lastFrame;
+  return { kind: "submit", model: model, requestBody: { model: model, vendorBody: vendorBody } };
 }
 
 // ── 提交链 ────────────────────────────────────────────────

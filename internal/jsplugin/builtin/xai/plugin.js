@@ -45,13 +45,14 @@ export const meta = {
     en: "xAI Grok Imagine video generation (text-to-video, image-to-video, reference-to-video, video editing, and video extension)",
     zh: "xAI Grok Imagine 视频生成（文生视频、图生视频、参考生视频、视频编辑、视频延长）",
   },
-  version: "1.2.0",
+  version: "1.3.0",
   author: "qianfree",
   channelTypes: [48],
   baseUrl: "https://api.x.ai",
   allowedHosts: ["vidgen.x.ai"],
   models: Object.keys(VIDEO_MODELS),
   fetchMode: "per_task",
+  standardVideos: "decodeVideos",
   usageSchema: {
     seconds: { type: "number", unit: "second", description: { en: "Video generation unit price", zh: "视频生成单价" } },
     resolution: { enum: ["480p", "720p", "1080p"], description: RESOLUTION_DESCRIPTION },
@@ -154,6 +155,30 @@ function decodeByPath(kind) {
 export const createGeneration = decodeByPath("generation");
 export const createEdit = decodeByPath("edit");
 export const createExtension = decodeByPath("extension");
+
+// decodeVideos 标准视频端点解码（meta.standardVideos 指向）：通用任务体 → 原生
+// generation 形态（复用 generationRequest 的全套校验）。词汇映射：seconds/
+// metadata.duration→duration、metadata.resolution（缺省 metadata.size，须为
+// 480p/720p/1080p 词）→resolution、metadata.aspect_ratio/ratio→aspect_ratio、
+// 参考图（metadata.image/images[0]）→image（图生视频 action）、
+// metadata.generate_audio→generate_audio。编辑/延长类输入走原生路由。
+export function decodeVideos(ctx) {
+  const raw = ctx.body && typeof ctx.body === "object" && !Array.isArray(ctx.body) ? ctx.body : {};
+  const metadata = plainObject(raw.metadata) || {};
+  const model = trimmed(ctx.model || raw.model) || "grok-imagine-video";
+  videoModel(model);
+  const image = trimmed(metadata.image) || (Array.isArray(raw.images) && raw.images.length && typeof raw.images[0] === "string" ? raw.images[0].trim() : "");
+  const source = {
+    prompt: raw.prompt,
+    image: image || undefined,
+    resolution: trimmed(metadata.resolution) || trimmed(metadata.size) || undefined,
+    duration: raw.seconds != null ? raw.seconds : metadata.duration,
+    aspect_ratio: trimmed(metadata.aspect_ratio) || trimmed(metadata.ratio) || undefined,
+    generate_audio: metadata.generate_audio,
+  };
+  const request = generationRequest(source, model);
+  return { kind: "submit", model: model, requestBody: Object.assign({}, request.body, { _action: request.action }) };
+}
 
 // ── 提交链 ────────────────────────────────────────────────
 

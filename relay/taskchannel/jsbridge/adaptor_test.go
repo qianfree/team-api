@@ -3,10 +3,12 @@ package jsbridge
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/qianfree/team-api/internal/jsplugin"
@@ -241,6 +243,38 @@ func TestValidateRequestPluginMismatch(t *testing.T) {
 
 func jsonContains(s, sub string) bool {
 	return len(s) > 0 && len(sub) > 0 && indexOf(s, sub) >= 0
+}
+
+// TestFetchTaskPluginNotActive 插件不在当前 generation（被禁用/删除）：
+// FetchTask/FetchBatchTasks 返回包装 ErrPluginNotActive 的错误且保留插件 key 细节，
+// 轮询链凭 errors.Is 识别后立即终态化存量任务。key 选不被任何测试发布的名字，
+// 且本测试不发布任何插件——generation 里必然没有它。
+func TestFetchTaskPluginNotActive(t *testing.T) {
+	a := &Adaptor{}
+
+	taskData, _ := json.Marshal(map[string]any{
+		"task_id": "task-42", "platform": "js:ghost-disabled", "model": "m",
+	})
+	_, err := a.FetchTask(context.Background(), "http://unused", "sk-test", taskData)
+	if !errors.Is(err, ErrPluginNotActive) {
+		t.Fatalf("FetchTask 应返回 ErrPluginNotActive，得到: %v", err)
+	}
+	if !strings.Contains(err.Error(), "ghost-disabled") {
+		t.Fatalf("错误信息应保留插件 key 细节: %v", err)
+	}
+
+	refs := []common.BatchTaskRef{{Platform: "js:ghost-disabled", TaskID: "t1"}}
+	_, err = a.FetchBatchTasks(context.Background(), "http://unused", "sk-test", refs)
+	if !errors.Is(err, ErrPluginNotActive) {
+		t.Fatalf("FetchBatchTasks 应返回 ErrPluginNotActive，得到: %v", err)
+	}
+
+	// 对照：platform 无 js: 前缀属数据损坏，不归入哨兵（维持普通轮询错误）
+	badData, _ := json.Marshal(map[string]any{"task_id": "t", "platform": "suno"})
+	_, err = a.FetchTask(context.Background(), "http://unused", "sk-test", badData)
+	if errors.Is(err, ErrPluginNotActive) {
+		t.Fatal("数据损坏错误不应命中 ErrPluginNotActive 哨兵")
+	}
 }
 
 func indexOf(s, sub string) int {

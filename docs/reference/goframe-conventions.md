@@ -1019,3 +1019,20 @@ pgsql 驱动的 `TableFields` 要实时查 `pg_attribute` 系统表（`'表名':
 **修复方式**：改为 `WriteHeader(http.StatusTooManyRequests)`（429）+ `WriteJson(...)`，业务码只放 JSON 体。与上文 2026-10-08 支付回调案例同源——`WriteStatus` 一族只认 HTTP 状态码，且**不带 content 的 `WriteStatus(code)` 会先把状态文本写进响应体**（实测 429 时 body 变成 `Too Many Requests{"code":10014,...}`），状态码 + JSON 体的唯一正确组合是 `WriteHeader(code)` 后 `WriteJson(...)`。
 
 排查信号：响应体为空 + 服务端日志 `invalid WriteHeader code <五位数>`；凡是中间件/手写 handler 里出现 `WriteStatus(常量>`599`)` 一律是同类错误。
+
+### 2026-11-07：WriteStatus 无内容写法复发（jsplugin 新代码 + 幂等重放漏网分支）
+
+**问题**：`/pjs` JS 插件端点的渲染响应体是 `OK{"task_id":...}`（非法 JSON）、插件图标端点返回 `OK` + 二进制（管理后台图标全裂）；文件下载错误响应是 `Not Found{"code":...}`；幂等中间件的重放响应体带 `OK` 前缀。
+
+**原因**：与 2026-10-08 支付回调案完全同源——`WriteStatus(status)` 不带 content 时先把 `http.StatusText(status)` 写进响应缓冲区，随后的 `Write/WriteJson` 只能追加。两处教训：① 新写 handler 时未回查本清单，同一坑在 v0.3 新模块原样复发；② 上次修复只改了幂等中间件的 409 冲突分支，`record.Status == "completed"` 的 200 重放分支漏网。
+
+**修复方式**（本次共 7 处）：
+
+- `internal/handler/relay/jsdispatcher.go`：三处渲染路径 `WriteStatus(rend.Status); Write([]byte(rend.Body))` 合并为 `WriteStatus(rend.Status, []byte(rend.Body))`；`holdWriter.flushTo` 的状态码回放改 `WriteHeader(w.status)`；
+- `internal/handler/admin/jsplugin_icon.go`：`WriteStatus(200); Write(data)` 合并为 `WriteStatus(200, data)`；
+- `internal/handler/admin/file_serve.go`：`writeServeError` 改 `WriteHeader(status)` + `WriteJson`；
+- `internal/middleware/idempotency.go`：重放分支 `WriteStatus(http.StatusOK)` 改 `WriteHeader(http.StatusOK)`。
+
+**正确做法（重申）**：状态码+内容一次写入（`WriteStatus(code, content)`）或 `WriteHeader(code)` 后写内容；**新写任何直写 Response 的 handler 前，先 grep 本清单**。本次由 `/pjs` 分发器的 HTTP 层单测（`internal/handler/relay/jsdispatcher_test.go`）首次捕获——渲染钩子输出经真实 gf 服务器断言响应体，此前各层测试（httptest.Recorder 直调）都无法暴露该类缓冲污染。
+
+排查信号：响应体以 `OK`/`Not Found` 等状态文本开头；`<img>` 加载二进制端点失败但 HTTP 200。

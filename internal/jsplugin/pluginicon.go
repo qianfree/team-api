@@ -2,6 +2,9 @@ package jsplugin
 
 import (
 	"encoding/base64"
+	"fmt"
+	"hash/fnv"
+	"html"
 	"regexp"
 	"strings"
 
@@ -21,7 +24,9 @@ var (
 	svgJavascriptURL = regexp.MustCompile(`(?i)javascript\s*:`)
 	svgDoctype       = regexp.MustCompile(`(?i)<!\s*DOCTYPE`)
 	svgExternalRef   = regexp.MustCompile(`(?i)(href|src)\s*=\s*["']https?://`)
-	dataURIHeaderRe  = regexp.MustCompile(`^data:(image/(svg\+xml|png));base64,$`)
+	// 协议相对外链：//evil.com 形态浏览器会按当前协议解析成绝对外链
+	svgProtocolRelativeRef = regexp.MustCompile(`(?i)(href|src)\s*=\s*["']\s*//`)
+	dataURIHeaderRe        = regexp.MustCompile(`^data:(image/(svg\+xml|png));base64,$`)
 )
 
 // ValidateIconDataURI 校验上传图标的 data URI 形态与内容安全。
@@ -45,11 +50,14 @@ func ValidateIconDataURI(dataURI string) (mimeType string, err error) {
 		}
 		return mimeType, nil
 	}
-	// SVG：良构性（含 svg 根）+ 危险构造全拒绝
-	svg := string(raw)
+	// SVG：良构性（含 svg 根）+ 危险构造全拒绝。
+	// 扫描前做 HTML 实体解码——浏览器解析时会还原 &#106;avascript: 之类的
+	// 实体编码构造，只扫原始字节会被绕过；协议相对外链（//evil.com）也一并拒绝
+	svg := html.UnescapeString(string(raw))
 	if svgScriptTag.MatchString(svg) || svgEventAttr.MatchString(svg) ||
 		svgJavascriptURL.MatchString(svg) || svgDoctype.MatchString(svg) ||
-		svgExternalRef.MatchString(svg) || !strings.Contains(svg, "<svg") {
+		svgExternalRef.MatchString(svg) || svgProtocolRelativeRef.MatchString(svg) ||
+		!strings.Contains(svg, "<svg") {
 		return "", gerror.New("SVG 图标包含不允许的构造（script/事件属性/javascript:/DOCTYPE/外链）或缺少 svg 根")
 	}
 	return mimeType, nil
@@ -69,4 +77,38 @@ func DecodeIconDataURI(dataURI string) (mimeType string, data []byte, err error)
 		return "", nil, err
 	}
 	return mimeType, data, nil
+}
+
+// LetterAvatarSVG 生成默认字母头像（无上传图标插件的兜底）：插件显示名首字符
+// 居中 + 按 key 哈希的稳定配色——同一插件跨请求/跨实例恒定，不同插件色相自然散开。
+// 输出为自包含 SVG 字节（无外链、无脚本），由图标端点以 image/svg+xml 直写。
+// 内置插件的 manifest.icon 是语义标签（"text"/"video"）而非图片数据，上传图标
+// 仅存在于上传版本行——两类来源都取不到时以此兜底，端点不再 404。
+func LetterAvatarSVG(key, name string) []byte {
+	letter := "P" // plugin 兜底字符（key/name 均空的极端情况）
+	if r := []rune(strings.TrimSpace(name)); len(r) > 0 {
+		letter = string(r[0])
+	} else if r := []rune(strings.TrimSpace(key)); len(r) > 0 {
+		letter = string(r[0])
+	}
+
+	// 配色：key 哈希 → 色相；固定饱和度/亮度的浅底深字组合，视觉上成组且不刺眼
+	hue := fnvHash(key) % 360
+	bg := fmt.Sprintf("hsl(%d, 62%%, 88%%)", hue)
+	fg := fmt.Sprintf("hsl(%d, 45%%, 30%%)", hue)
+
+	svg := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">` +
+		`<rect width="64" height="64" rx="14" fill="` + bg + `"/>` +
+		`<text x="32" y="33" text-anchor="middle" dominant-baseline="central" ` +
+		`font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" ` +
+		`font-size="30" font-weight="600" fill="` + fg + `">` +
+		html.EscapeString(letter) + `</text></svg>`
+	return []byte(svg)
+}
+
+// fnvHash key → 稳定散列（fNV-1a 32 位足够散开色相，无需密码学强度）。
+func fnvHash(s string) uint32 {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(s))
+	return h.Sum32()
 }

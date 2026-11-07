@@ -73,6 +73,21 @@ export interface JSPluginMetricsItem {
   artifacts_failed: number
 }
 
+/** 运营统计行（对应 api/admin/v1.JSPluginOpsStatsItem）：营收为本位币 float */
+export interface JSPluginOpsStatsItem {
+  plugin_key: string
+  name: string
+  enabled: boolean
+  tasks_total: number
+  tasks_success: number
+  tasks_failed: number
+  tasks_processing: number
+  success_rate: number // 0-1；无终态任务时分母为 0、值为 0
+  revenue: number
+  last_task_time: string // YYYY-MM-DD HH:mm:ss，窗口内无任务为空串
+  orphan: boolean // 有任务记录但激活 manifest 已不存在
+}
+
 // ── 卡片图标 ──────────────────────────────────────────────
 // manifest.icon 是「图标名 / text / text:label」，上传时也可存 SVG/PNG 图标
 const PLUGIN_ICON_MAP: Record<string, Component> = {
@@ -149,7 +164,10 @@ export function pluginStatus(
 }
 
 export function fetchModeLabel(mode?: string): string {
-  return mode === 'batch' ? '批量轮询' : '逐任务轮询'
+  if (mode === 'batch') return '批量轮询'
+  if (mode === 'per_task' || !mode) return '逐任务轮询'
+  // 未知值显示原文：后端新增枚举时前端静默映射成「逐任务」会掩盖契约漂移
+  return mode
 }
 
 /** 从 metrics 里取最近一条钩子错误，用于「最近错误」列 */

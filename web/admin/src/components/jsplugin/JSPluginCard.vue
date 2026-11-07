@@ -2,12 +2,14 @@
 // JS 插件卡片：列表默认视图。整卡可点开详情，底部操作区阻止冒泡。
 // 版式：左状态色条 → 头部（图标/名称/标识/状态）→ 描述 → 适用模型 → 事实行 → 操作。
 // 事实行承载版本数、计费项、轮询方式、白名单、作者，避免内容因高度限制被裁掉。
-import { computed } from 'vue'
+import { computed, toRef } from 'vue'
 import { Button, Popconfirm } from '@arco-design/web-vue'
 import {
   pluginStatus, resolvePluginIcon, fetchModeLabel,
   type JSPlugin,
 } from './pluginMeta'
+import { usePluginIcon } from './usePluginIcon'
+import { hasPermission } from '@/utils/permission'
 
 const props = defineProps<{ plugin: JSPlugin }>()
 const emit = defineEmits<{
@@ -24,19 +26,20 @@ const versionCount = computed(() => (props.plugin.versions || []).length)
 const usageCount = computed(() => (props.plugin.usage_schema || []).length)
 const hostCount = computed(() => (props.plugin.allowed_hosts || []).length)
 
-const iconUrl = computed(
-  () => `/api/admin/js-plugins/${props.plugin.key}/icon?v=${props.plugin.active_version || ''}`,
-)
+// 品牌图标经 blob 加载：图标端点要求 Authorization 头，<img :src> 带不上必 401
+const iconURL = usePluginIcon(toRef(props, 'plugin'))
 
+// 启停按钮的权限点与后端一致（rbac：POST enable/activate 均需 plugin:manage）
+const canManage = computed(() => hasPermission('plugin:manage'))
 </script>
 
 <template>
   <article class="jpc" :class="`is-${status.key}`" @click="emit('detail')">
     <div class="jpc__head">
       <div class="jpc__icon" :class="[`jpc__icon--${icon.kind}`, `jpc__icon--${plugin.origin}`]">
-        <img v-if="icon.kind === 'img'" :src="iconUrl" :alt="plugin.name || plugin.key" loading="lazy" />
+        <img v-if="icon.kind === 'img' && iconURL" :src="iconURL" :alt="plugin.name || plugin.key" loading="lazy" />
         <component :is="icon.comp" v-else-if="icon.kind === 'icon'" :size="20" />
-        <span v-else>{{ icon.label }}</span>
+        <span v-else>{{ icon.label || (plugin.name || plugin.key).slice(0, 1) }}</span>
       </div>
 
       <div class="jpc__ident">
@@ -79,22 +82,25 @@ const iconUrl = computed(
     </div>
 
     <footer class="jpc__foot" @click.stop>
-      <Popconfirm
-        v-if="plugin.enabled"
-        :content="`禁用「${plugin.key}」？路由会被立即摘除。`"
-        @ok="emit('toggle', false)"
-      >
-        <Button size="small" type="outline" status="warning">禁用</Button>
-      </Popconfirm>
-      <Popconfirm
-        v-else
-        :content="plugin.active_version
-          ? `启用「${plugin.key}」？将挂载 /pjs/${plugin.key}/ 路由。`
-          : `「${plugin.key}」还没有激活版本，启用后不会生效，仍要启用？`"
-        @ok="emit('toggle', true)"
-      >
-        <Button size="small" type="primary">启用</Button>
-      </Popconfirm>
+      <template v-if="canManage">
+        <Popconfirm
+          v-if="plugin.enabled"
+          :content="`禁用「${plugin.key}」？路由会被立即摘除。`"
+          @ok="emit('toggle', false)"
+        >
+          <Button size="small" type="outline" status="warning">禁用</Button>
+        </Popconfirm>
+        <Popconfirm
+          v-else
+          :content="plugin.active_version
+            ? `启用「${plugin.key}」？将挂载 /pjs/${plugin.key}/ 路由。`
+            : `「${plugin.key}」还没有激活版本，启用后不会生效，仍要启用？`"
+          @ok="emit('toggle', true)"
+        >
+          <Button size="small" type="primary">启用</Button>
+        </Popconfirm>
+      </template>
+      <span v-else class="jpc__fact" />
 
       <div class="jpc__links">
         <Button size="small" type="text" @click="emit('detail')">详情</Button>

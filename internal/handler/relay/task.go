@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
 
@@ -27,9 +28,10 @@ import (
 )
 
 var (
-	taskDataProvider    = task.DefaultAsyncProvider
-	taskBillingProvider = billing.NewTaskBillingProvider()
-	relayDataProvider   = relay.NewDataProvider()
+	// 前两者以接口类型持有：分发器/查询链的 HTTP 层单测可临时替换为桩实现
+	taskDataProvider    relay_common.TaskDataProvider    = task.DefaultAsyncProvider
+	taskBillingProvider relay_common.TaskBillingProvider = billing.NewTaskBillingProvider()
+	relayDataProvider                                    = relay.NewDataProvider()
 )
 
 // HandleTaskSubmit 处理异步任务提交（POST /v1/video/generations, POST /suno/submit/:action）
@@ -205,6 +207,14 @@ func writeTaskChannelSelectionError(r *ghttp.Request, err error) {
 // 任务提交是瞬时动作：选定并物化后立即结束调度会话释放租约；
 // 会话绑定已由调度器在选择时写入，提交结果不额外上报健康（与旧行为一致）。
 func selectTaskChannel(r *ghttp.Request, body []byte) (*relay_common.ChannelMeta, error) {
+	return selectTaskChannelFor(r, body, nil)
+}
+
+// selectTaskChannelFor 带候选过滤的渠道选择：accept 返回 false 的候选视为不可用，
+// 上报后取下一候选（与物化失败同路径；过滤不命中不计为渠道健康问题——渠道本身
+// 没坏，只是不属于本次调度的目标集合）。/pjs 分发器用它在同名多插件（sharedModels）
+// 场景下把候选约束为本插件的渠道。
+func selectTaskChannelFor(r *ghttp.Request, body []byte, accept func(*relay_common.ChannelMeta) bool) (*relay_common.ChannelMeta, error) {
 	// 从请求体提取模型名
 	var req struct {
 		Model string `json:"model"`
@@ -258,7 +268,7 @@ func selectTaskChannel(r *ghttp.Request, body []byte) (*relay_common.ChannelMeta
 			}
 			continue
 		}
-		return &relay_common.ChannelMeta{
+		meta := &relay_common.ChannelMeta{
 			ChannelID:         selection.ChannelID,
 			ChannelType:       selection.ChannelType,
 			ChannelName:       selection.ChannelName,
@@ -267,7 +277,17 @@ func selectTaskChannel(r *ghttp.Request, body []byte) (*relay_common.ChannelMeta
 			UpstreamModelName: selection.UpstreamModelName,
 			IsModelMapped:     selection.IsModelMapped,
 			Settings:          selection.Settings,
-		}, nil
+		}
+		if accept != nil && !accept(meta) {
+			// 候选不属于本次调度的目标集合（如 /pjs 分发器约束本插件渠道）：
+			// 上报跳过并取下一候选，不算渠道健康问题
+			dec, _ := sess.Report(ctx, 0, types.NewError(gerror.New("channel filtered: not the target task plugin"), types.ErrorCodeChannelNoAvailableKey), dispatch.DeliveryNotSent, 0, 0)
+			if dec == dispatch.DecisionAbort {
+				return nil, relay_common.ErrChannelUnavailable
+			}
+			continue
+		}
+		return meta, nil
 	}
 }
 

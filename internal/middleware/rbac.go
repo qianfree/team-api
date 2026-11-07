@@ -250,6 +250,9 @@ var adminPermissionRules = []permissionRule{
 	//（精确 path 规则先于 prefix 规则，见 matchPermission 三阶段匹配）
 	{method: "GET", path: "/api/admin/js-plugins", perm: "plugin:upload"},
 	{method: "POST", path: "/api/admin/js-plugins/upload", perm: "plugin:upload"},
+	// 试运行是上传前自检（只编译与样例执行，不落库不发流量），归 upload 权限；
+	// 不加此精确规则会被下方 POST 前缀规则吃成 plugin:manage
+	{method: "POST", path: "/api/admin/js-plugins/dry-run", perm: "plugin:upload"},
 	{method: "GET", prefix: "/api/admin/js-plugins/", perm: "plugin:upload"},
 	{method: "POST", prefix: "/api/admin/js-plugins/", perm: "plugin:manage"},
 	{method: "DELETE", prefix: "/api/admin/js-plugins/", perm: "plugin:upload"},

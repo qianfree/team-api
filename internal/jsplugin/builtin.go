@@ -18,6 +18,17 @@ import (
 //go:embed all:builtin
 var builtinFS embed.FS
 
+// TemplateSource 返回插件作者起步模板：golden 参考实现的源码全文（管理端
+// 模板下载端点用，作者抄它起步、删掉不需要的钩子）。embed 静态资源读取失败
+// 属编译期问题（该文件随二进制分发），此时返回空串由调用方按空源码呈现。
+func TemplateSource() string {
+	data, err := fs.ReadFile(builtinFS, "builtin/golden/plugin.js")
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
 // compileBuiltins 编译全部内置插件（启动 seed 与单测共用）。
 // 单个插件编译失败返回错误——内置插件随版本发布，编译失败属发布缺陷，
 // 启动路径只跳过并记日志（不阻断服务），单测路径直接失败。
@@ -39,6 +50,11 @@ func compileBuiltins(engine Engine) ([]*CompiledPlugin, error) {
 		compiled, err := engine.Compile(string(source))
 		if err != nil {
 			return nil, gerror.Wrapf(err, "内置插件 %s 编译失败", key)
+		}
+		// 目录名必须与 manifest.key 一致：seed 以 compiled.Key 落库，目录名仅用于
+		// 定位文件——不一致时（复制目录忘改 key）同一份源码会以两个 key 重复入库
+		if compiled.Key != key {
+			return nil, gerror.Newf("内置插件目录 %s 的 manifest.key 为 %q，两者必须一致", key, compiled.Key)
 		}
 		out = append(out, compiled)
 	}

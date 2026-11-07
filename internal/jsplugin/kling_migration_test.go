@@ -210,3 +210,115 @@ func TestMigratedKling4Flow(t *testing.T) {
 		t.Fatalf("k4 billing units 异常: %v err=%v", termFacts, err)
 	}
 }
+
+// TestMigratedKlingStandardVideos 标准视频端点解码：v2/v3（seconds→duration、
+// aspect_ratio、参考图→image）与 kling-4.0（contents/settings）双形态；
+// parseSubmitResponse 在标准端点路径下（无 image2video 线索）按归一请求体的
+// image 字段推断 action（与 buildSubmitRequest 同口径）。
+func TestMigratedKlingStandardVideos(t *testing.T) {
+	cleanup, err := PublishForTest(klingSource(t))
+	if err != nil {
+		t.Fatalf("发布失败: %v", err)
+	}
+	t.Cleanup(cleanup)
+	plugin, _ := CurrentGeneration().Plugin("kling")
+
+	call := func(hook string, arg any) map[string]json.RawMessage {
+		t.Helper()
+		args, _ := json.Marshal(arg)
+		out, err := plugin.Pool.Call(context.Background(), hook, args)
+		if err != nil {
+			t.Fatalf("钩子 %s 失败: %v", hook, err)
+		}
+		raw, err := contract.ParseJSONObject(out)
+		if err != nil {
+			t.Fatalf("钩子 %s 返回非对象: %v", hook, err)
+		}
+		return raw
+	}
+
+	// v2/v3：/v1/videos 归一形态（metadata.duration + aspect_ratio + 参考图）
+	decoded, err := contract.ValidateDecoded(call("decodeVideos", contract.StandardEntryContext{
+		Surface: contract.SurfaceOpenAIVideos, Path: "/v1/videos", Model: "kling-v2-6",
+		Body: json.RawMessage(`{"model":"kling-v2-6","prompt":"a cat","seconds":"5","metadata":{"duration":5,"aspect_ratio":"16:9","image":"https://img.example.com/a.png"}}`),
+	}), plugin.Manifest, false)
+	if err != nil || decoded.Model != "kling-v2-6" {
+		t.Fatalf("v2 标准解码失败: %+v err=%v", decoded, err)
+	}
+	var vendor struct {
+		Prompt     string `json:"prompt"`
+		Duration   int    `json:"duration"`
+		Aspect     string `json:"aspect_ratio"`
+		Image      string `json:"image"`
+		VendorBody struct {
+			Prompt   string `json:"prompt"`
+			Duration int    `json:"duration"`
+			Aspect   string `json:"aspect_ratio"`
+			Image    string `json:"image"`
+		} `json:"vendorBody"`
+	}
+	_ = json.Unmarshal(decoded.RequestBody, &vendor)
+	if vendor.VendorBody.Prompt != "a cat" || vendor.VendorBody.Duration != 5 ||
+		vendor.VendorBody.Aspect != "16:9" || vendor.VendorBody.Image != "https://img.example.com/a.png" {
+		t.Fatalf("v2 vendorBody 映射异常: %s", decoded.RequestBody)
+	}
+
+	// 提交链复用：含 image → image2video 端点
+	built, err := contract.ValidateBuiltRequest(call("buildSubmitRequest", contract.BuildSubmitContext{
+		Body: decoded.RequestBody, Model: decoded.Model, ApiKey: "ak|sk",
+	}))
+	if err != nil || built.URL != "/v1/videos/image2video" {
+		t.Fatalf("v2 标准提交应走 image2video: %+v err=%v", built, err)
+	}
+
+	// parse：标准端点路径（/v1/videos）+ vendorBody.image → image_to_video
+	sub, err := contract.ValidateSubmitted(call("parseSubmitResponse", contract.ParseSubmitContext{
+		Status: 200, Path: "/v1/videos", Model: "kling-v2-6",
+		ResponseBody: json.RawMessage(`{"code":0,"data":{"task_id":"k-7"}}`),
+		Body:         decoded.RequestBody,
+	}))
+	if err != nil || sub.TaskID != "k-7" {
+		t.Fatalf("parse 失败: %+v err=%v", sub, err)
+	}
+	var td struct {
+		Action string `json:"_action"`
+	}
+	_ = json.Unmarshal(sub.TaskData, &td)
+	if td.Action != "image_to_video" {
+		t.Fatalf("标准端点 i2v 应推断 image_to_video: %s", sub.TaskData)
+	}
+
+	// kling-4.0：contents + settings 形态
+	decoded4, err := contract.ValidateDecoded(call("decodeVideos", contract.StandardEntryContext{
+		Surface: contract.SurfaceVideoGenerations, Path: "/v1/video/generations", Model: "kling-4.0",
+		Body: json.RawMessage(`{"model":"kling-4.0","prompt":"future city","seconds":10,"metadata":{"size":"720p"}}`),
+	}), plugin.Manifest, false)
+	if err != nil || decoded4.Model != "kling-4.0" {
+		t.Fatalf("k4 标准解码失败: %+v err=%v", decoded4, err)
+	}
+	var vendor4 struct {
+		VendorBody struct {
+			Contents []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"contents"`
+			Settings struct {
+				Duration   int    `json:"duration"`
+				Resolution string `json:"resolution"`
+			} `json:"settings"`
+		} `json:"vendorBody"`
+	}
+	_ = json.Unmarshal(decoded4.RequestBody, &vendor4)
+	if len(vendor4.VendorBody.Contents) != 1 || vendor4.VendorBody.Contents[0].Text != "future city" ||
+		vendor4.VendorBody.Settings.Duration != 10 || vendor4.VendorBody.Settings.Resolution != "720p" {
+		t.Fatalf("k4 vendorBody 映射异常: %s", decoded4.RequestBody)
+	}
+
+	// 缺 prompt 的 v2/v3 标准提交拒绝
+	if _, err := plugin.Pool.Call(context.Background(), "decodeVideos", mustJSON(t, contract.StandardEntryContext{
+		Surface: contract.SurfaceOpenAIVideos, Path: "/v1/videos", Model: "kling-v2-6",
+		Body: json.RawMessage(`{"model":"kling-v2-6"}`),
+	})); err == nil {
+		t.Fatal("v2/v3 缺 prompt 应抛错")
+	}
+}

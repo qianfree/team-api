@@ -187,9 +187,13 @@ var (
 			}
 
 			// JS 任务插件基座：装载已激活版本、构建路由 generation
-			//（与 Go 插件框架并存，见 docs/design/JS异步任务插件设计方案-v1.md）
+			//（与 Go 插件框架并存，体系架构见 docs/JS插件体系架构与调用链分析.md）
 			if jsErr := jsplugin.DefaultRegistry().Bootstrap(ctx); jsErr != nil {
 				g.Log().Errorf(ctx, "jsplugin bootstrap: %v", jsErr)
+			} else {
+				// 跨实例失效订阅：其他实例的插件启停/换版/配置变更经 pub/sub 同步到本实例
+				//（Redis 未配置时不启动，单实例部署无广播需求）
+				jsplugin.DefaultRegistry().StartInvalidateSubscriber()
 			}
 
 			// Global middleware

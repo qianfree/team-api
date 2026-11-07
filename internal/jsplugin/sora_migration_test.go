@@ -167,3 +167,50 @@ func TestMigratedSoraFullFlow(t *testing.T) {
 		t.Fatalf("渲染形态异常: %v", body)
 	}
 }
+
+// TestMigratedSoraStandardVideos 标准视频端点解码：seconds/size/参考图映射与
+// estimateUsage 复用（seconds 数字化后直接进预扣口径）。
+func TestMigratedSoraStandardVideos(t *testing.T) {
+	cleanup, err := PublishForTest(soraSource(t))
+	if err != nil {
+		t.Fatalf("发布失败: %v", err)
+	}
+	t.Cleanup(cleanup)
+	plugin, _ := CurrentGeneration().Plugin("sora")
+
+	args, _ := json.Marshal(contract.StandardEntryContext{
+		Surface: contract.SurfaceOpenAIVideos, Path: "/v1/videos", Model: "sora-2-pro",
+		Body: json.RawMessage(`{"model":"sora-2-pro","prompt":"a cat","seconds":"8","metadata":{"duration":8,"size":"1280x720","image":"https://img.example.com/a.png"}}`),
+	})
+	out, err := plugin.Pool.Call(context.Background(), "decodeVideos", args)
+	if err != nil {
+		t.Fatalf("decodeVideos 失败: %v", err)
+	}
+	raw, err := contract.ParseJSONObject(out)
+	if err != nil {
+		t.Fatalf("decodeVideos 返回非对象: %v", err)
+	}
+	decoded, err := contract.ValidateDecoded(raw, plugin.Manifest, false)
+	if err != nil || decoded.Model != "sora-2-pro" {
+		t.Fatalf("标准解码失败: %+v err=%v", decoded, err)
+	}
+	var body struct {
+		Seconds        float64 `json:"seconds"`
+		Size           string  `json:"size"`
+		InputReference string  `json:"input_reference"`
+	}
+	_ = json.Unmarshal(decoded.RequestBody, &body)
+	if body.Seconds != 8 || body.Size != "1280x720" || body.InputReference != "https://img.example.com/a.png" {
+		t.Fatalf("标准映射异常: %s", decoded.RequestBody)
+	}
+
+	estArgs, _ := json.Marshal(contract.EstimateUsageContext{Body: decoded.RequestBody, Model: decoded.Model})
+	estOut, err := plugin.Pool.Call(context.Background(), "estimateUsage", estArgs)
+	if err != nil {
+		t.Fatalf("estimateUsage 失败: %v", err)
+	}
+	estFacts, err := contract.ValidateUsageFacts(mustRawMap(t, estOut), plugin.Manifest)
+	if err != nil || estFacts["seconds"] != 8 {
+		t.Fatalf("标准入口 estimateUsage 异常: %v err=%v", estFacts, err)
+	}
+}

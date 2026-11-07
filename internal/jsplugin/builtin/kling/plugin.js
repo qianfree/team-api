@@ -33,11 +33,12 @@ export const meta = {
     en: "Kling video generation (text/image-to-video, v2.5-v4.0)",
     zh: "可灵视频生成（文生视频/图生视频，v2.5-v4.0）",
   },
-  version: "1.2.0",
+  version: "1.3.0",
   channelTypes: [50],
   author: "qianfree",
   models: ["kling-v2-5-turbo", "kling-v2-6", "kling-v3", "kling-4.0"],
   fetchMode: "per_task",
+  standardVideos: "decodeVideos",
   usageSchema: {
     units: { type: "number", unit: "count", description: { en: "Resource units deducted", zh: "资源点数消耗（可灵计费单位）" } },
   },
@@ -150,6 +151,57 @@ export function decodeRequest(ctx) {
   return { kind: "submit", model: model, requestBody: { model: model, vendorBody: body } };
 }
 
+// 通用任务体 → 正整数（秒），非法/缺省返回 null（由下游按各自默认处理）
+function standardSeconds(raw, metadata) {
+  const v = raw.seconds != null ? raw.seconds : metadata.duration;
+  const n = typeof v === "string" && v.trim() !== "" ? Number(v) : v;
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
+}
+function standardImage(raw, metadata) {
+  if (Array.isArray(raw.images) && raw.images.length && typeof raw.images[0] === "string") return raw.images[0].trim();
+  return trimmed(metadata.image);
+}
+
+// decodeVideos 标准视频端点解码（meta.standardVideos 指向）：把 /v1/videos 与
+// /v1/video/generations 的通用任务体映射为各自协议的 vendorBody——
+//   v2/v3：{prompt, duration?, mode?, aspect_ratio?, cfg_scale?, negative_prompt?,
+//           camera_control?, sound?, image?}（image 存在时提交链自动走 image2video）
+//   kling-4.0：{contents:[{type:"prompt"},(image)], settings:{duration?, resolution?}}
+// 通用词汇映射：seconds/metadata.duration→duration、metadata.aspect_ratio→aspect_ratio、
+// metadata.sound("on"/"off")→sound、metadata.generate_audio→k4 generate_audio。
+export function decodeVideos(ctx) {
+  const raw = ctx.body && typeof ctx.body === "object" && !Array.isArray(ctx.body) ? ctx.body : {};
+  const metadata = plainObject(raw.metadata);
+  const model = trimmed(ctx.model || raw.model);
+  if (!model) throw new Error("model is required");
+  const seconds = standardSeconds(raw, metadata);
+  const image = standardImage(raw, metadata);
+
+  if (isKling4(model)) {
+    const contents = [{ type: "prompt", text: String(raw.prompt || "") }];
+    if (image) contents.push({ type: "image", url: image });
+    const vendorBody = { contents: contents, settings: {} };
+    if (seconds != null) vendorBody.settings.duration = seconds;
+    const resolution = trimmed(metadata.size).toLowerCase();
+    if (resolution) vendorBody.settings.resolution = resolution;
+    if (metadata.generate_audio != null) vendorBody.generate_audio = metadata.generate_audio;
+    checkKling4Body(vendorBody);
+    return { kind: "submit", model: model, requestBody: { model: model, vendorBody: vendorBody } };
+  }
+
+  if (!trimmed(raw.prompt)) throw new Error("prompt is required");
+  if (seconds != null) validateKlingDuration(seconds);
+  const vendorBody = { prompt: String(raw.prompt) };
+  if (seconds != null) vendorBody.duration = seconds;
+  const ratio = trimmed(metadata.aspect_ratio) || trimmed(metadata.ratio);
+  if (ratio) vendorBody.aspect_ratio = ratio;
+  for (const key of ["mode", "cfg_scale", "negative_prompt", "camera_control", "sound"]) {
+    if (metadata[key] !== undefined && metadata[key] !== null) vendorBody[key] = metadata[key];
+  }
+  if (image) vendorBody.image = image;
+  return { kind: "submit", model: model, requestBody: { model: model, vendorBody: vendorBody } };
+}
+
 // ── 提交链 ────────────────────────────────────────────────
 
 export function estimateUsage(ctx) {
@@ -201,7 +253,12 @@ export function buildSubmitRequest(ctx) {
 export function parseSubmitResponse(ctx) {
   const result = ctx.responseBody || {};
   if (result.code !== 0) throw new Error(result.message || "kling submit failed");
-  const action = String(ctx.path || "").includes("image2video") ? "image_to_video" : "text_to_video";
+  // action 推断与 buildSubmitRequest 同口径：原生路由看路径，标准端点入站路径是
+  // /v1/videos（无 image2video 线索），回落归一请求体里的 image 字段
+  const vendor = plainObject(plainObject(ctx.body).vendorBody);
+  const action = String(ctx.path || "").includes("image2video") || trimmed(vendor.image)
+    ? "image_to_video"
+    : "text_to_video";
   if (result.data && result.data.id && !result.data.task_id) {
     // kling-4.0 回包：data.id；标记形态供轮询判定（宿主 v1 不持久化插件 state）
     return { taskId: String(result.data.id), taskData: Object.assign({}, result, { _kling4: true }) };

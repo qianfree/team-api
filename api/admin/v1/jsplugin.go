@@ -70,6 +70,41 @@ type JSPluginUploadRes struct {
 	Manifest json.RawMessage `json:"manifest" dc:"解析出的插件清单"`
 }
 
+// JSPluginDryRunReq 上传前试运行（不落库、不发布 generation、不发真实 HTTP）
+type JSPluginDryRunReq struct {
+	g.Meta `path:"/js-plugins/dry-run" method:"post" mime:"json" tags:"管理后台-JS插件" summary:"试运行JS插件（上传前自检）"`
+	Source string `json:"source" v:"required" dc:"plugin.js 源码全文"`
+}
+
+// JSPluginDryRunCheck 试运行单项检查结果
+type JSPluginDryRunCheck struct {
+	Name   string `json:"name"`   // compile | hooks | conflict | sample-decode | sample-build | lint-fetch-url
+	Status string `json:"status"` // pass=通过 | warn=提示 | fail=缺陷
+	Detail string `json:"detail"` // 中文说明
+}
+
+// JSPluginDryRunRes 试运行报告（manifest 摘要 + 检查项平铺；编译失败时仅 checks）
+type JSPluginDryRunRes struct {
+	Key       string                `json:"key,omitempty"`
+	Name      string                `json:"name,omitempty"`
+	Version   string                `json:"version,omitempty"`
+	Models    []string              `json:"models,omitempty"`
+	FetchMode string                `json:"fetch_mode,omitempty"`
+	Routes    []JSPluginRouteItem   `json:"routes,omitempty"` // manifest 声明的原始路由（未加 /pjs/{key} 前缀）
+	Checks    []JSPluginDryRunCheck `json:"checks"`
+	Pass      bool                  `json:"pass"` // 无 fail 项即 true（warn 不阻断上传）
+}
+
+// JSPluginTemplateReq 下载插件作者模板（内置 golden 参考实现源码）
+type JSPluginTemplateReq struct {
+	g.Meta `path:"/js-plugins/template" method:"get" mime:"json" tags:"管理后台-JS插件" summary:"下载JS插件模板"`
+}
+
+type JSPluginTemplateRes struct {
+	Source   string `json:"source"`    // 模板源码全文（golden 参考实现）
+	FileName string `json:"file_name"` // 建议保存文件名
+}
+
 // JSPluginActivateReq 激活指定版本
 type JSPluginActivateReq struct {
 	g.Meta  `path:"/js-plugins/{key}/versions/{version}/activate" method:"post" mime:"json" tags:"管理后台-JS插件" summary:"激活JS插件版本"`
@@ -128,4 +163,30 @@ type JSPluginRouteItem struct {
 
 type JSPluginRoutesRes struct {
 	List []JSPluginRouteItem `json:"list"`
+}
+
+// JSPluginOpsStatsReq JS 插件运营统计（任务量/成功率/营收，按天窗口聚合）
+type JSPluginOpsStatsReq struct {
+	g.Meta `path:"/js-plugins/ops-stats" method:"get" mime:"json" tags:"管理后台-JS插件" summary:"JS插件运营统计"`
+	Days   int `json:"days" d:"30" v:"between:1,365" dc:"统计窗口天数（默认 30，范围 1-365）"`
+}
+
+// JSPluginOpsStatsItem 每插件一行的运营统计。营收为本位币（bil_usage_logs 聚合，
+// 实扣优先口径：actual_cost 优先、0/NULL 回退 total_cost）。
+type JSPluginOpsStatsItem struct {
+	PluginKey       string  `json:"plugin_key"`
+	Name            string  `json:"name"`
+	Enabled         bool    `json:"enabled"`          // 当前是否在服务（存在于运行中 generation）
+	TasksTotal      int64   `json:"tasks_total"`      // 窗口内任务总数
+	TasksSuccess    int64   `json:"tasks_success"`    // 成功终态数
+	TasksFailed     int64   `json:"tasks_failed"`     // 失败终态数
+	TasksProcessing int64   `json:"tasks_processing"` // 非终态数（SUBMITTED/IN_PROGRESS 等）
+	SuccessRate     float64 `json:"success_rate"`     // success/(success+failed)，分母 0 时为 0（无终态任务），取值 0-1
+	Revenue         float64 `json:"revenue"`          // 窗口内营收（本位币）
+	LastTaskTime    string  `json:"last_task_time"`   // 窗口内最近一次任务时间，无任务为空串
+	Orphan          bool    `json:"orphan"`           // 任务记录存在但激活 manifest 已不存在（插件被删/换血）
+}
+
+type JSPluginOpsStatsRes struct {
+	List []JSPluginOpsStatsItem `json:"list"`
 }

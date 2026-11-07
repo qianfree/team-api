@@ -71,7 +71,7 @@ export const meta = {
     en: "Alibaba Cloud Bailian image and video generation (Wan, Qwen-Image, Z-Image)",
     zh: "阿里云百炼图片与视频生成（万相、千问图像、Z-Image）",
   },
-  version: "1.5.0",
+  version: "1.6.0",
   author: "qianfree",
   channelTypes: [79],
   models: Object.keys(WAN_MODELS)
@@ -79,6 +79,7 @@ export const meta = {
     .concat(SYNC_IMAGE_MODELS)
     .concat(ASYNC_IMAGE_MODELS),
   fetchMode: "per_task",
+  standardVideos: "decodeVideos",
   usageSchema: {
     seconds: { type: "number", unit: "second", description: { en: "Video generation unit price", zh: "视频生成单价" } },
     resolution: { enum: ["480P", "720P", "1080P"], description: { en: "Output video resolution", zh: "输出视频分辨率" } },
@@ -119,6 +120,55 @@ export function createImage(ctx) {
     throw new Error("stream/interleave is not supported; use the non-streaming API");
   }
   return { kind: "submit", model: model, requestBody: { model: model, vendorBody: body, _image: true, _sync: isSyncImage(model) } };
+}
+
+// decodeVideos 标准视频端点解码（meta.standardVideos 指向）：通用任务体 → DashScope
+// vendorBody（input/parameters 双段）。prompt → input.prompt；参考图（images[0]/
+// metadata.image）→ wan3.0 input.media 数组 / wan2.x input.img_url；seconds/
+// metadata.duration → parameters.duration；metadata.resolution 大写归一按档位校验
+// （与 createTask 同规则）；ratio（metadata.ratio/aspect_ratio）透传；音频开关
+// metadata.generate_audio（bool）优先、回落 metadata.sound（"on"/"off"）。
+// 词汇映射对齐 Go 版 ali 适配器（不含 wan3.0 size 档位折算——请直接配 resolution）。
+export function decodeVideos(ctx) {
+  const raw = ctx.body && typeof ctx.body === "object" && !Array.isArray(ctx.body) ? ctx.body : {};
+  const metadata = plainObject(raw.metadata);
+  const model = trimmed(ctx.model || raw.model);
+  if (!model) throw new Error("model is required");
+  if (!isVideoModel(model)) throw new Error(model + " is not a Wan video model");
+  if (!trimmed(raw.prompt)) throw new Error("prompt is required");
+  const profile = WAN_MODELS[baseModel(model)];
+  if (!profile) throw new Error(model + " is not a Wan video model");
+
+  const input = { prompt: String(raw.prompt) };
+  const image = Array.isArray(raw.images) && raw.images.length && typeof raw.images[0] === "string" ? raw.images[0].trim() : trimmed(metadata.image);
+  if (image) {
+    if (baseModel(model).startsWith("wan3.")) input.media = [{ type: "image", url: image }];
+    else input.img_url = image;
+  }
+
+  const parameters = {};
+  const seconds = raw.seconds != null ? raw.seconds : metadata.duration;
+  const n = typeof seconds === "string" && seconds.trim() !== "" ? Number(seconds) : seconds;
+  if (Number.isFinite(n) && n > 0) parameters.duration = Math.round(n);
+  const resolution = trimmed(metadata.resolution).toUpperCase();
+  if (resolution) {
+    if (!profile.resolutions.includes(resolution)) {
+      throw new Error(model + " resolution must be one of " + profile.resolutions.join(", "));
+    }
+    parameters.resolution = resolution;
+  }
+  const ratio = trimmed(metadata.ratio) || trimmed(metadata.aspect_ratio);
+  if (ratio) parameters.ratio = ratio;
+  if (WAN_AUDIO_VIDEO_MODELS.includes(baseModel(model))) {
+    const audio = metadata.generate_audio != null
+      ? metadata.generate_audio
+      : (trimmed(metadata.sound) ? trimmed(metadata.sound) === "on" : null);
+    if (audio != null) parameters.audio = audio;
+  }
+
+  const vendorBody = { input: input };
+  if (Object.keys(parameters).length) vendorBody.parameters = parameters;
+  return { kind: "submit", model: model, requestBody: { model: model, vendorBody: vendorBody } };
 }
 
 // ── 计费 ──────────────────────────────────────────────────

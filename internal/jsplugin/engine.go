@@ -1,5 +1,5 @@
 // Package jsplugin 实现 JS 任务插件基座：引擎抽象（goja + esbuild）、实例池、
-// 宿主能力注入与注册中心。设计见 docs/design/JS异步任务插件设计方案-v1.md。
+// 宿主能力注入与注册中心。体系架构与调用链见 docs/JS插件体系架构与调用链分析.md。
 package jsplugin
 
 import (
@@ -36,7 +36,7 @@ type CompiledPlugin struct {
 }
 
 // Engine 引擎抽象：编译源码、创建隔离实例。goja 为 v1 唯一实现，
-// 未来可替换为 wasm 实现而不动上层（见设计方案 §二 演进预留）。
+// 未来可替换为 wasm 实现而不动上层（演进预留）。
 type Engine interface {
 	// Compile 编译插件源码：esbuild ESM→IIFE 打包（v1 仅接受零 import 的单文件插件，
 	// 有 import 即在编译期报错——这是上传期安全检查的一部分）并解析校验 manifest。
@@ -83,10 +83,14 @@ func NewHookError(plugin, hook, format string, args ...any) *HookError {
 // ---------------------------------------------------------------------------
 
 // GojaEngine 基于 goja 的引擎实现（纯 Go，无 CGo）。
-type GojaEngine struct{}
+type GojaEngine struct {
+	// probeTimeout Compile 期空 runtime 跑 bundle 求 manifest 的顶层执行上限。
+	// 顶层代码理论上应是纯声明，超时即视为恶意/缺陷插件。测试可注入小值。
+	probeTimeout time.Duration
+}
 
-// NewGojaEngine 创建引擎实例。无状态，可全局复用。
-func NewGojaEngine() *GojaEngine { return &GojaEngine{} }
+// NewGojaEngine 创建引擎实例。无状态（除超时配置），可全局复用。
+func NewGojaEngine() *GojaEngine { return &GojaEngine{probeTimeout: DefaultCallTimeout} }
 
 // Compile 编译插件源码。
 func (e *GojaEngine) Compile(source string) (*CompiledPlugin, error) {
@@ -124,8 +128,16 @@ func (e *GojaEngine) Compile(source string) (*CompiledPlugin, error) {
 
 	// 静态求值 manifest：空 runtime 跑 bundle 取 meta（插件顶层不应有副作用，
 	// utils 缺失时顶层访问会抛错——契约要求 meta 求值不依赖宿主能力）。
+	// 顶层执行同样受超时保护——恶意/缺陷插件的死循环不能挂死上传或启动装载。
 	probe := goja.New()
-	if _, err := probe.RunString(bundle); err != nil {
+	err := runInterruptGuarded(probe, e.probeTimeout, func() error {
+		_, runErr := probe.RunString(bundle)
+		return runErr
+	})
+	if err != nil {
+		if isInterruptedErr(err) {
+			return nil, gerror.Newf("插件顶层执行超时（%s），meta 求值不允许死循环/耗时计算", e.probeTimeout)
+		}
 		return nil, gerror.Wrap(err, "插件顶层执行失败（meta 求值不允许依赖 utils）")
 	}
 	exports := probe.Get(globalName)
@@ -195,7 +207,15 @@ func (i *gojaInstance) init() error {
 	i.utils = newHostUtils(i)
 	i.rt.Set("utils", i.utils.buildObject(i.rt))
 
-	if _, err := i.rt.RunString(i.compiled.Bundle); err != nil {
+	// 顶层执行受 CallTimeout 保护：Compile 的 probe 不注入 utils，实例注入——
+	// 插件可借环境差异（如 typeof utils 判断）在实例侧埋死循环，挂死池调用与启动装载
+	if err := runInterruptGuarded(i.rt, i.callTimeout, func() error {
+		_, runErr := i.rt.RunString(i.compiled.Bundle)
+		return runErr
+	}); err != nil {
+		if isInterruptedErr(err) {
+			return gerror.Newf("插件顶层执行超时（%s），实例创建失败", i.callTimeout)
+		}
 		return gerror.Wrap(err, "插件加载失败")
 	}
 	exports, ok := i.rt.Get(globalName).(*goja.Object)
@@ -236,14 +256,59 @@ func (i *gojaInstance) Call(ctx context.Context, hook string, args json.RawMessa
 		}
 	}
 
-	timer := time.AfterFunc(i.callTimeout, func() { i.rt.Interrupt("hook timeout") })
-	defer timer.Stop()
-
-	result, err := i.invoke(callable, argAny, hook)
-	if err != nil {
+	var result json.RawMessage
+	if err := runInterruptGuarded(i.rt, i.callTimeout, func() error {
+		var callErr error
+		result, callErr = i.invoke(callable, argAny, hook)
+		return callErr
+	}); err != nil {
 		return nil, err
 	}
 	return result, nil
+}
+
+// runInterruptGuarded 带取消闸的执行保护：fn 在 d 内未完成则 Interrupt 中断。
+//
+// 取消闸的必要性：goja 的 Interrupt 标志一旦置位不会自动清除（runtime 空闲时置位，
+// 下次 Run*() 立即中断，须 ClearInterrupt 复位）。回调可能在 fn 已返回、defer 尚未
+// 执行的微秒窗口内拿到锁并 Interrupt——残留标志会让归还池的实例下一次执行假超时。
+// 互斥闸保证 cancelled 置位后回调不再 Interrupt；回调持锁置 interrupted 标志，
+// defer 侧据此精确 ClearInterrupt（标志位在锁内与 Interrupt 同步置位，不存在
+// 「ClearInterrupt 先于 Interrupt 执行」的乱序——Stop 返回值不可信，故不用它判断）。
+func runInterruptGuarded(rt *goja.Runtime, d time.Duration, fn func() error) error {
+	var mu sync.Mutex
+	cancelled := false
+	interrupted := false
+	timer := time.AfterFunc(d, func() {
+		mu.Lock()
+		defer mu.Unlock()
+		if !cancelled {
+			interrupted = true
+			rt.Interrupt("timeout")
+		}
+	})
+	defer func() {
+		mu.Lock()
+		cancelled = true
+		fired := interrupted
+		mu.Unlock()
+		timer.Stop()
+		// 回调已 Interrupt 过：无论 fn 是否因中断失败，都清掉标志——
+		// 成功路径的残留标志会让该 runtime 复用时假超时
+		if fired {
+			rt.ClearInterrupt()
+		}
+	}()
+	return fn()
+}
+
+// isInterruptedErr 判断是否 goja 中断错误（超时/Interrupt 触发）。
+func isInterruptedErr(err error) bool {
+	var interrupted *goja.InterruptedError
+	if gerror.As(err, &interrupted) {
+		return true
+	}
+	return strings.Contains(err.Error(), "interrupted")
 }
 
 // invoke 执行 JS 调用并做 JSON 边界转换，含 panic 与中断恢复。
@@ -256,8 +321,7 @@ func (i *gojaInstance) invoke(callable goja.Callable, argAny any, hook string) (
 	}()
 	v, jsErr := callable(goja.Undefined(), i.rt.ToValue(argAny))
 	if jsErr != nil {
-		var interrupted *goja.InterruptedError
-		if gerror.As(jsErr, &interrupted) || strings.Contains(jsErr.Error(), "interrupted") {
+		if isInterruptedErr(jsErr) {
 			return nil, NewHookError(i.compiled.Key, hook, "执行超时（%s）或被中断", i.callTimeout)
 		}
 		return nil, NewHookError(i.compiled.Key, hook, "%s", sanitizeJSMessage(jsErr.Error()))

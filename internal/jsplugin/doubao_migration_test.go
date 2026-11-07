@@ -158,3 +158,60 @@ func TestMigratedDoubaoImageImmediate(t *testing.T) {
 		t.Fatalf("immediate 用量异常: %v err=%v", imFacts, err)
 	}
 }
+
+// TestMigratedDoubaoStandardVideos 标准视频端点解码：content[] 组装（text +
+// image_url 项）、resolution 档位校验透传、图像模型拒绝。
+func TestMigratedDoubaoStandardVideos(t *testing.T) {
+	cleanup, err := PublishForTest(doubaoSource(t))
+	if err != nil {
+		t.Fatalf("发布失败: %v", err)
+	}
+	t.Cleanup(cleanup)
+	plugin, _ := CurrentGeneration().Plugin("doubao")
+
+	call := func(hook string, arg any) map[string]json.RawMessage {
+		t.Helper()
+		args, _ := json.Marshal(arg)
+		out, err := plugin.Pool.Call(context.Background(), hook, args)
+		if err != nil {
+			t.Fatalf("钩子 %s 失败: %v", hook, err)
+		}
+		raw, err := contract.ParseJSONObject(out)
+		if err != nil {
+			t.Fatalf("钩子 %s 返回非对象: %v", hook, err)
+		}
+		return raw
+	}
+
+	decoded, err := contract.ValidateDecoded(call("decodeVideos", contract.StandardEntryContext{
+		Surface: contract.SurfaceOpenAIVideos, Path: "/v1/videos", Model: "doubao-seedance-2-5-260628",
+		Body: json.RawMessage(`{"model":"doubao-seedance-2-5-260628","prompt":"city","seconds":10,"metadata":{"duration":10,"resolution":"1080p","image":"https://img.example.com/a.png"}}`),
+	}), plugin.Manifest, false)
+	if err != nil {
+		t.Fatalf("标准解码失败: %v", err)
+	}
+	var vendor struct {
+		VendorBody struct {
+			Content []struct {
+				Type     string `json:"type"`
+				ImageURL *struct {
+					URL string `json:"url"`
+				} `json:"image_url"`
+			} `json:"content"`
+			Duration   int    `json:"duration"`
+			Resolution string `json:"resolution"`
+		} `json:"vendorBody"`
+	}
+	_ = json.Unmarshal(decoded.RequestBody, &vendor)
+	if len(vendor.VendorBody.Content) != 2 || vendor.VendorBody.Content[1].ImageURL == nil ||
+		vendor.VendorBody.Duration != 10 || vendor.VendorBody.Resolution != "1080p" {
+		t.Fatalf("vendorBody 映射异常: %s", decoded.RequestBody)
+	}
+
+	if _, err := plugin.Pool.Call(context.Background(), "decodeVideos", mustJSON(t, contract.StandardEntryContext{
+		Surface: contract.SurfaceOpenAIVideos, Path: "/v1/videos", Model: "doubao-seedream-5-0-pro-260628",
+		Body: json.RawMessage(`{"model":"doubao-seedream-5-0-pro-260628","prompt":"x"}`),
+	})); err == nil {
+		t.Fatal("图像模型应拒绝视频端点")
+	}
+}

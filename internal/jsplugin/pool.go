@@ -45,6 +45,30 @@ func NewPluginPool(engine Engine, compiled *CompiledPlugin, opts InstanceOptions
 	}
 }
 
+// release 归还实例到空闲队列。池已关闭（rebuild 整建整拆的窗口期）时直接丢弃：
+// Close 只排空当时的 idle，之后归还进 channel 的实例会滞留到进程结束（channel
+// 持有引用阻 GC），live 计数也不再回零。
+func (p *PluginPool) release(inst Instance) {
+	p.mu.Lock()
+	closed := p.closed
+	p.mu.Unlock()
+	if closed {
+		inst.Close()
+		p.mu.Lock()
+		p.live--
+		p.mu.Unlock()
+		return
+	}
+	select {
+	case p.idle <- inst:
+	default:
+		inst.Close()
+		p.mu.Lock()
+		p.live--
+		p.mu.Unlock()
+	}
+}
+
 // Call 经池调用钩子：准入 → 取/建实例 → 调用 → 归还或丢弃。
 func (p *PluginPool) Call(ctx context.Context, hook string, args json.RawMessage) (json.RawMessage, error) {
 	// 准入（池满等待，超时拒绝）
@@ -91,15 +115,8 @@ func (p *PluginPool) Call(ctx context.Context, hook string, args json.RawMessage
 		return nil, callErr
 	}
 
-	// 归还或丢弃
-	select {
-	case p.idle <- inst:
-	default:
-		inst.Close()
-		p.mu.Lock()
-		p.live--
-		p.mu.Unlock()
-	}
+	// 归还或丢弃（池已关闭时丢弃，避免滞留已关闭池的 channel）
+	p.release(inst)
 	return result, nil
 }
 
@@ -117,14 +134,7 @@ func (p *PluginPool) HasHook(hook string) bool {
 		p.mu.Unlock()
 	}
 	has := inst.HasHook(hook)
-	select {
-	case p.idle <- inst:
-	default:
-		inst.Close()
-		p.mu.Lock()
-		p.live--
-		p.mu.Unlock()
-	}
+	p.release(inst)
 	return has
 }
 

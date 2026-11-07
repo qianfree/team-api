@@ -2,6 +2,8 @@ package contract
 
 import (
 	"encoding/json"
+	"reflect"
+	"strconv"
 	"testing"
 )
 
@@ -250,5 +252,97 @@ func TestAuthorCompat(t *testing.T) {
 	m3.Website = "https://example.com"
 	if err := m3.Validate(); err != nil {
 		t.Fatalf("https website 应通过: %v", err)
+	}
+}
+
+func TestStandardVideosValidation(t *testing.T) {
+	// 缺省（不声明）与合法钩子名均通过
+	m := validManifest()
+	if err := m.Validate(); err != nil {
+		t.Fatalf("未声明 standardVideos 不应报错: %v", err)
+	}
+	m.StandardVideos = "decodeVideos"
+	if err := m.Validate(); err != nil {
+		t.Fatalf("合法 standardVideos 不应报错: %v", err)
+	}
+
+	// 非导出函数名形态（含非法字符/空）应拒绝
+	for _, bad := range []string{"1bad", "has space", "带中文"} {
+		m.StandardVideos = bad
+		if err := m.Validate(); err == nil {
+			t.Fatalf("standardVideos %q 应拒绝", bad)
+		}
+	}
+}
+
+func TestModelsFromConfigValidation(t *testing.T) {
+	// 合法声明：键在 config 中、类型 text、非加密
+	m := validManifest()
+	m.ModelsFromConfig = "extra_models"
+	m.Config = []ConfigField{{Key: "extra_models", Label: "扩展模型", Type: "text"}}
+	if err := m.Validate(); err != nil {
+		t.Fatalf("合法 modelsFromConfig 不应报错: %v", err)
+	}
+
+	// 未在 config 中声明的键
+	m2 := validManifest()
+	m2.ModelsFromConfig = "extra_models"
+	if err := m2.Validate(); err == nil {
+		t.Fatal("未声明的配置键应拒绝")
+	}
+
+	// 类型不可承载名单 + 加密声明
+	m3 := validManifest()
+	m3.ModelsFromConfig = "extra_models"
+	m3.Config = []ConfigField{{Key: "extra_models", Label: "扩展模型", Type: "int"}}
+	if err := m3.Validate(); err == nil {
+		t.Fatal("int 类型应拒绝")
+	}
+	m4 := validManifest()
+	m4.ModelsFromConfig = "extra_models"
+	m4.Config = []ConfigField{{Key: "extra_models", Label: "扩展模型", Type: "text", Encrypted: true}}
+	if err := m4.Validate(); err == nil {
+		t.Fatal("encrypted 声明应拒绝")
+	}
+}
+
+func TestParseConfigModels(t *testing.T) {
+	// 字符串形态：换行/逗号/分号混用、trim、去空、按出现序去重
+	got, err := ParseConfigModels("\n m-a , m-b\n;m-a \nm-c,,\n")
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	want := []string{"m-a", "m-b", "m-c"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("解析异常: %v", got)
+	}
+
+	// JSON 数组形态（json 型配置）
+	if _, err := ParseConfigModels([]any{"m-x", " m-y ", 1}); err == nil {
+		t.Fatal("非字符串元素应报错")
+	}
+	got3, err := ParseConfigModels([]any{"m-x", " m-y "})
+	if err != nil || !reflect.DeepEqual(got3, []string{"m-x", "m-y"}) {
+		t.Fatalf("数组形态解析异常: %v %v", got3, err)
+	}
+
+	// 空值与非法类型
+	if got4, err := ParseConfigModels(nil); err != nil || got4 != nil {
+		t.Fatalf("nil 应返回空: %v %v", got4, err)
+	}
+	if got5, err := ParseConfigModels(""); err != nil || got5 != nil {
+		t.Fatalf("空串应返回空: %v %v", got5, err)
+	}
+	if _, err := ParseConfigModels(42); err == nil {
+		t.Fatal("数值类型应报错")
+	}
+
+	// 超上限拒绝（去重后的互异名超限才触发）
+	big := make([]any, MaxConfigModels+1)
+	for i := range big {
+		big[i] = "m-" + strconv.Itoa(i)
+	}
+	if _, err := ParseConfigModels(big); err == nil {
+		t.Fatal("超上限应报错")
 	}
 }

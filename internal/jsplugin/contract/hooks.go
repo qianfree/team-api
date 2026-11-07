@@ -38,6 +38,26 @@ type FileRef struct {
 	Size     int64  `json:"size"`     // 字节数
 }
 
+// 标准任务端点入口标识（StandardEntryContext.Surface）。
+const (
+	// SurfaceOpenAIVideos POST /v1/videos（OpenAI Videos 协议，入站已归一为通用任务体）
+	SurfaceOpenAIVideos = "openai_videos"
+	// SurfaceVideoGenerations POST /v1/video/generations（通用任务端点，body 客户端原样）
+	SurfaceVideoGenerations = "video_generations"
+)
+
+// StandardEntryContext standardVideos 声明的解码钩子入参：标准任务端点进入的请求。
+// Body 为任务框架通用任务体（{model, prompt, seconds?, metadata.{duration,size,
+// aspect_ratio,sound,image,...}}；/v1/video/generations 为客户端原样 body），
+// 由插件映射为原生 requestBody 后进入既有提交链（estimateUsage/buildSubmitRequest
+// 等下游钩子无感复用）。返回形态与 decodeRequest 相同，kind 恒为 submit。
+type StandardEntryContext struct {
+	Surface string          `json:"surface"` // 入口标识：openai_videos | video_generations
+	Path    string          `json:"path"`    // 标准端点路径（/v1/videos、/v1/video/generations）
+	Body    json.RawMessage `json:"body"`    // 通用任务体
+	Model   string          `json:"model"`   // 请求声明的模型名（body.model，已解析到本插件）
+}
+
 // BuildSubmitContext buildSubmitRequest 入参：构造上游提交请求。
 type BuildSubmitContext struct {
 	Body           json.RawMessage   `json:"body"` // 归一后的请求体（decode 返回的 requestBody）
@@ -58,6 +78,9 @@ type ParseSubmitContext struct {
 	Params       map[string]string `json:"params,omitempty"`       // 提交路由路径参数
 	Model        string            `json:"model,omitempty"`        // 平台模型名
 	ResponseBody json.RawMessage   `json:"responseBody,omitempty"` // 上游响应体（JSON 原文；非 JSON 为字符串）
+	// Body 归一后的提交请求体（decode 返回的 requestBody）：响应不含 action 线索时
+	//（如标准端点入站，path 是 /v1/videos 而非原生路由）由此推断提交形态。
+	Body json.RawMessage `json:"body,omitempty"`
 }
 
 // BuildQueryContext buildQueryRequest 入参：构造上游查询请求。
@@ -157,9 +180,9 @@ func ValidateDecoded(raw map[string]json.RawMessage, m *Manifest, dynamicRoute b
 
 // BuildRequestResult buildSubmitRequest / buildQueryRequest 返回。
 type BuildRequestResult struct {
-	URL     string            `json:"url"`               // 相对路径（拼接到渠道 baseURL）或绝对 URL（host 须在白名单内）
+	URL     string            `json:"url"`               // 相对路径（拼接到渠道 baseURL）或绝对 URL（host 须在白名单：渠道 host ∪ allowedHosts，由 jsbridge 强校验）
 	Method  string            `json:"method,omitempty"`  // 缺省 POST（submit）/POST（query）
-	Headers map[string]string `json:"headers,omitempty"` // 附加请求头（Authorization 由基座管理，此处声明会被忽略）
+	Headers map[string]string `json:"headers,omitempty"` // 附加请求头（Authorization 允许声明：签名类厂商由插件计算鉴权头覆盖默认 Bearer）
 	Body    json.RawMessage   `json:"body,omitempty"`
 }
 
@@ -254,7 +277,7 @@ type TaskHookError struct {
 }
 
 // ArtifactDecl 产物声明：插件只指路（JSON path 指向 taskData 里的上游 URL 或
-// base64 字段），字节永不进 JS——转存由宿主产物流水线完成（设计方案 §七）。
+// base64 字段），字节永不进 JS——转存由宿主产物流水线完成。
 type ArtifactDecl struct {
 	Key      string `json:"key"`                // 任务内唯一，如 "video"
 	MimeType string `json:"mimeType,omitempty"` // 存储内容类型（inline 必填，url 可选覆盖）
@@ -350,7 +373,8 @@ func (a *ArtifactDecl) validate() error {
 }
 
 // ---------------------------------------------------------------------------
-// 计费事实钩子（可选）：estimateUsage（提交预扣）/ extractUsageOnComplete（终态结算）
+// 计费事实钩子（可选）：estimateUsage 提交预扣估算；终态结算事实由 parseQueryResponse
+// 的 items[].usage 内联上报，v1 不设独立的终态用量钩子
 // ---------------------------------------------------------------------------
 
 // EstimateUsageContext estimateUsage 入参。
@@ -358,12 +382,6 @@ type EstimateUsageContext struct {
 	Body   json.RawMessage   `json:"body"`  // 归一后的请求体
 	Model  string            `json:"model"` // 平台标准模型名
 	Params map[string]string `json:"params,omitempty"`
-}
-
-// ExtractUsageContext extractUsageOnComplete 入参。
-type ExtractUsageContext struct {
-	TaskData json.RawMessage `json:"taskData,omitempty"` // 终态上游快照
-	Model    string          `json:"model,omitempty"`
 }
 
 // UsageFacts 用量事实：键必须 ∈ usageSchema 声明。number 型进计费（u() 通道，
@@ -428,8 +446,12 @@ func ValidateRendered(raw map[string]json.RawMessage) (*RenderResult, error) {
 	if err := strictUnmarshal(raw, &r); err != nil {
 		return nil, err
 	}
+	// HTTP 状态码合法区间：超出 [100,599] 的值落进 WriteStatus 会产生非法响应
 	if r.Status < 0 {
 		return nil, gerror.New("status 不能为负")
+	}
+	if r.Status > 0 && (r.Status < 100 || r.Status > 599) {
+		return nil, gerror.Newf("status %d 不在合法 HTTP 状态码区间 [100,599]", r.Status)
 	}
 	if len(r.Body) == 0 {
 		r.Body = json.RawMessage("{}")

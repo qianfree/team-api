@@ -39,24 +39,39 @@ var allowedMethods = map[string]struct{}{
 
 // Manifest 插件清单：plugin.js 的 `export const meta` 解析产物。
 type Manifest struct {
-	APIVersion   int             `json:"apiVersion"`
-	Key          string          `json:"key"`
-	Name         string          `json:"name"`
-	Version      string          `json:"version"`
-	Description  LocalizedString `json:"description,omitempty"` // 兼容本地化对象 {en,zh}（取 zh 优先）
-	Author       Author          `json:"author,omitempty"`      // 兼容字符串形态（视为 {name}）
-	Website      string          `json:"website,omitempty"`
-	Models       []string        `json:"models"`                 // 插件接管的模型（平台标准名）
-	FetchMode    string          `json:"fetchMode,omitempty"`    // batch | per_task（默认 per_task）
-	Routes       []Route         `json:"routes"`                 // 插件原生路由（挂在 /pjs/{key} 下）
-	AllowedHosts []string        `json:"allowedHosts,omitempty"` // utils.fetch 额外允许的 host[:port]
-	UsageSchema  UsageSchema     `json:"usageSchema,omitempty"`  // 计费用量单位声明（兼容数组/map 双形态）
-	Config       []ConfigField   `json:"config,omitempty"`       // 插件配置项（管理端动态表单）
-	Icon         string          `json:"icon,omitempty"`         // 展示图标："text"/"text:<label>" 文字头像，或图标名（前端图标集解析）
+	APIVersion  int             `json:"apiVersion"`
+	Key         string          `json:"key"`
+	Name        string          `json:"name"`
+	Version     string          `json:"version"`
+	Description LocalizedString `json:"description,omitempty"` // 兼容本地化对象 {en,zh}（取 zh 优先）
+	Author      Author          `json:"author,omitempty"`      // 兼容字符串形态（视为 {name}）
+	Website     string          `json:"website,omitempty"`
+	Models      []string        `json:"models"`              // 插件接管的模型（平台标准名，随版本发布的基线清单）
+	FetchMode   string          `json:"fetchMode,omitempty"` // batch | per_task（默认 per_task）
+	Routes      []Route         `json:"routes"`              // 插件原生路由（挂在 /pjs/{key} 下）
+	// StandardVideos 标准视频端点解码钩子名（可选）：声明后插件模型可经 /v1/videos
+	// 与 /v1/video/generations 提交——钩子把通用任务体映射为原生 requestBody，
+	// 返回形态与 decodeRequest 相同。缺省 = 仅插件原生路由入口。
+	StandardVideos string `json:"standardVideos,omitempty"`
+	// ModelsFromConfig 扩展模型承载配置键（可选）：该 config 键的值（换行/逗号分隔
+	// 的模型名，或 JSON 数组）在运行时并入本插件服务清单——上游新增模型无需改插件
+	// 源码，管理后台改配置即刻生效。有效清单 = meta.models ∪ 配置扩展；冲突预检在
+	// 配置保存时执行（模型跨插件独占不因配置入口放宽）。
+	ModelsFromConfig string `json:"modelsFromConfig,omitempty"`
+	// SharedModels 同名模型共享声明（可选）：与其他【同样声明 sharedModels】的插件
+	// 同名声明模型时，激活/配置预检放行（告警）——同名多插件是合法形态：路由归属由
+	// 渠道 settings.plugin_key 决定（渠道调度按模型选渠道、渠道定插件），计费公式按
+	// 模型配置一套且须覆盖全部声明插件的计量键（u() 引用的事实缺失取 0，双项公式
+	// 天然兼容不同计量口径的两家）。任一方未声明时同名冲突仍拒绝（防拼写意外撞名）。
+	SharedModels bool          `json:"sharedModels,omitempty"`
+	AllowedHosts []string      `json:"allowedHosts,omitempty"` // utils.fetch 额外允许的 host[:port]
+	UsageSchema  UsageSchema   `json:"usageSchema,omitempty"`  // 计费用量单位声明（兼容数组/map 双形态）
+	Config       []ConfigField `json:"config,omitempty"`       // 插件配置项（管理端动态表单）
+	Icon         string        `json:"icon,omitempty"`         // 展示图标："text"/"text:<label>" 文字头像，或图标名（前端图标集解析）
 }
 
-// UsageField usageSchema 单位声明：插件管「用了多少」（estimateUsage /
-// extractUsageOnComplete 返回事实），基座管「多少钱」（模型 formula 定价经 u() 引用）。
+// UsageField usageSchema 单位声明：插件管「用了多少」（estimateUsage 提交估算、
+// parseQueryResponse 的 items[].usage 终态上报），基座管「多少钱」（模型 formula 定价经 u() 引用）。
 type UsageField struct {
 	Key         string `json:"key"`                   // 事实键，如 "clips"；公式经 u("clips") 引用
 	Type        string `json:"type"`                  // number（可计费）| enum（仅展示）
@@ -300,6 +315,12 @@ func (m *Manifest) Validate() error {
 	if m.Website != "" && !strings.HasPrefix(m.Website, "https://") {
 		return gerror.New("website 需为 https 绝对地址")
 	}
+	if m.StandardVideos != "" && !ValidateHookName(m.StandardVideos) {
+		return gerror.Newf("standardVideos %q 不合法（需为导出函数名形态）", m.StandardVideos)
+	}
+	if err := m.validateModelsFromConfig(); err != nil {
+		return err
+	}
 	if err := m.validateIcon(); err != nil {
 		return err
 	}
@@ -310,6 +331,79 @@ func (m *Manifest) Validate() error {
 		return err
 	}
 	return nil
+}
+
+// MaxConfigModels modelsFromConfig 扩展模型数上限。
+const MaxConfigModels = 100
+
+// validateModelsFromConfig 校验扩展模型配置声明：键须在 config 中声明、类型可承载
+// 名单（text/string/json）、不允许加密（扩展名单是路由/计费可见的部署数据）。
+func (m *Manifest) validateModelsFromConfig() error {
+	if m.ModelsFromConfig == "" {
+		return nil
+	}
+	if !factKeyPattern.MatchString(m.ModelsFromConfig) {
+		return gerror.Newf("modelsFromConfig %q 不合法（需为配置键形态）", m.ModelsFromConfig)
+	}
+	field := m.ConfigFieldByKey(m.ModelsFromConfig)
+	if field == nil {
+		return gerror.Newf("modelsFromConfig %q 未在 config 中声明", m.ModelsFromConfig)
+	}
+	switch field.Type {
+	case "text", "string", "json":
+	default:
+		return gerror.Newf("modelsFromConfig %q 的配置类型需为 text/string/json（当前 %q）", m.ModelsFromConfig, field.Type)
+	}
+	if field.Encrypted {
+		return gerror.Newf("modelsFromConfig %q 不允许声明 encrypted", m.ModelsFromConfig)
+	}
+	return nil
+}
+
+// ParseConfigModels 解析 modelsFromConfig 配置值为模型名清单：字符串按换行/逗号
+// 拆分（json 型配置兼容数组形态），trim 去空、按出现序去重、上限 MaxConfigModels。
+// 非法值（数组元素非字符串、超上限）返回错误——配置保存入口据此拒绝，装载入口
+// 据此告警降级。
+func ParseConfigModels(value any) ([]string, error) {
+	var raws []string
+	switch v := value.(type) {
+	case nil:
+		return nil, nil
+	case string:
+		for _, part := range strings.FieldsFunc(v, func(r rune) bool { return r == '\n' || r == '\r' || r == ',' || r == ';' }) {
+			raws = append(raws, part)
+		}
+	case []any:
+		for _, item := range v {
+			s, ok := item.(string)
+			if !ok {
+				return nil, gerror.Newf("扩展模型数组元素需为字符串，得到 %T", item)
+			}
+			raws = append(raws, s)
+		}
+	default:
+		return nil, gerror.Newf("扩展模型配置需为字符串或字符串数组，得到 %T", value)
+	}
+	out := make([]string, 0, len(raws))
+	seen := make(map[string]struct{}, len(raws))
+	for _, raw := range raws {
+		name := strings.TrimSpace(raw)
+		if name == "" {
+			continue
+		}
+		if _, dup := seen[name]; dup {
+			continue
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+	if len(out) > MaxConfigModels {
+		return nil, gerror.Newf("扩展模型超过 %d 个上限（当前 %d）", MaxConfigModels, len(out))
+	}
+	if len(out) == 0 {
+		return nil, nil // 空输入归一为 nil（与「未配置」同语义）
+	}
+	return out, nil
 }
 
 // iconPattern 图标名形态：小写字母/数字/连字符（如 "video-camera"）。
@@ -414,6 +508,26 @@ func (m *Manifest) UsageFieldByKey(key string) *UsageField {
 		}
 	}
 	return nil
+}
+
+// OutputSecondsFact 从终态事实中取时长信号（TaskMaterialUsage.OutputSeconds）。
+// 插件可声明多个 unit=second 字段（生成时长 + 输入视频时长分开计费的合法形态，
+// 如 hailuo/xai），时长信号是单值——确定性地优先取约定键 "seconds"（生成时长），
+// 否则取声明序首个有值的 second 字段。此前两处映射点各自循环取"最后命中"，
+// 同名竞争下不稳定且互相不一致。
+func (m *Manifest) OutputSecondsFact(facts map[string]float64) float64 {
+	if v, ok := facts["seconds"]; ok && v > 0 {
+		return v
+	}
+	for _, f := range m.UsageSchema {
+		if f.Unit != "second" {
+			continue
+		}
+		if v, ok := facts[f.Key]; ok && v > 0 {
+			return v
+		}
+	}
+	return 0
 }
 
 // ConfigFieldByKey 按 key 查声明。

@@ -69,8 +69,10 @@ type UpstreamRequestIDExtractor interface {
 // 一次上游往返携带同渠道同插件下全部未终态任务，避免逐任务打满上游配额。
 // 结算/落库与逐任务路径共用 applyTaskPollResult，口径不因轮询模式分叉。
 type BatchTaskPoller interface {
-	// FetchMode 声明轮询模式："batch" 启用批量通道，其余值按逐任务轮询
-	FetchMode() string
+	// FetchModeFor 按任务平台声明轮询模式："batch" 启用批量通道，其余值按逐任务轮询。
+	// 以 platform 为参是因为轮询循环拿到的适配器是工厂新实例（无状态）——按实例
+	// 自身状态判定会恒得默认值，批量通道永远无法激活；同渠道不同插件可异模式。
+	FetchModeFor(platform string) string
 	// FetchBatchTasks 一次查询整批任务（同渠道同插件；platform 一致的分组由轮询循环保证）
 	FetchBatchTasks(ctx context.Context, baseURL, apiKey string, tasks []BatchTaskRef) (*http.Response, error)
 	// ParseBatchTasks 解析批量响应，按上游任务 ID 映射结果；
@@ -131,9 +133,9 @@ type TaskMaterialUsage struct {
 	OutputSeconds     float64 // 输出（生成）时长（秒）
 	Resolution        string  // 实际输出分辨率规格（如 "720P"，对齐 per_second 矩阵键）；空 = 上游未返回
 
-	// Facts 计费用量事实（JS 任务插件经 extractUsageOnComplete 上报，键 ∈ usageSchema
-	// 的 number 型声明）：结算重算时并入公式 u() 通道。unit=second 的事实应同时映射
-	// 到 OutputSeconds（它是结算期公式重跑的触发信号）。
+	// Facts 计费用量事实（JS 任务插件经 parseQueryResponse 的 items[].usage 上报，
+	// 键 ∈ usageSchema 的 number 型声明）：结算重算时并入公式 u() 通道。unit=second
+	// 的事实应同时映射到 OutputSeconds（它是结算期公式重跑的触发信号）。
 	Facts map[string]float64
 }
 

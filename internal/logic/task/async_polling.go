@@ -3,6 +3,7 @@ package task
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"sync"
@@ -18,6 +19,7 @@ import (
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/helper"
 	"github.com/qianfree/team-api/relay/taskchannel"
+	"github.com/qianfree/team-api/relay/taskchannel/jsbridge"
 )
 
 const (
@@ -428,9 +430,23 @@ func processChannelTasks(ctx context.Context, channelID int64, tasks []*common.A
 		return
 	}
 
-	// 批量轮询通道（fetchMode=batch 的适配器，如 JS 任务插件）：整批一次上游往返
-	if batcher, ok := adaptor.(common.BatchTaskPoller); ok && batcher.FetchMode() == "batch" {
-		pollBatchTasks(ctx, batcher, channel, tasks)
+	// 批量轮询通道（fetchMode=batch 的适配器，如 JS 任务插件）：按任务平台判定——
+	// 同渠道可挂多个插件且 fetchMode 可异，批量/逐任务分区处理而不是全有全无
+	if batcher, ok := adaptor.(common.BatchTaskPoller); ok {
+		var batchTasks, singleTasks []*common.AsyncTask
+		for _, t := range tasks {
+			if batcher.FetchModeFor(t.Platform) == "batch" {
+				batchTasks = append(batchTasks, t)
+			} else {
+				singleTasks = append(singleTasks, t)
+			}
+		}
+		if len(batchTasks) > 0 {
+			pollBatchTasks(ctx, batcher, channel, batchTasks)
+		}
+		for _, t := range singleTasks {
+			pollSingleTask(ctx, adaptor, channel, t)
+		}
 		return
 	}
 
@@ -449,6 +465,16 @@ type privateData struct {
 		ModelName string         `json:"model_name"`
 		PreDeduct float64        `json:"pre_deduct"`
 	} `json:"billing_context"`
+}
+
+// jsPluginInactiveFailure 构造「任务所属 JS 插件已停用/删除」的失败终态 TaskInfo。
+// 插件不在当前 generation 时存量任务永远轮询不出结果，立即按失败终态化并退款
+// （applyTaskPollResult 失败分支），不再空转到 30 分钟超时网——预扣资金不被长冻。
+func jsPluginInactiveFailure() *common.TaskInfo {
+	return &common.TaskInfo{
+		Status:     common.TaskStatusFailure,
+		FailReason: "任务所属 JS 插件已停用，自动终止并退款",
+	}
 }
 
 // pollSingleTask 轮询单个任务
@@ -498,6 +524,17 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 
 	resp, err := adaptor.FetchTask(pollCtx, channel.BaseURL, channel.ApiKey, taskData)
 	if err != nil {
+		// 插件停用/删除：任务归属的 JS 插件已不在当前 generation，后续轮询永无结果，
+		// 不等下一轮更不等超时网，立即按失败终态化并退款（applyTaskPollResult 失败分支，
+		// 复用状态 CAS、SettleTaskFailed 退款、用量日志与审计）。body 传任务既有快照，
+		// 避免空 body 把 data 列覆盖为 null
+		if errors.Is(err, jsbridge.ErrPluginNotActive) {
+			g.Log().Warningf(ctx, "poll: js plugin for task %s not active, abort and refund: %v", task.PublicTaskID, err)
+			dbgAttempt.MarkFinal(err)
+			dbgSess.FinalizeAndSubmit(0, 0)
+			applyTaskPollResult(ctx, task, channel, jsPluginInactiveFailure(), task.Data, nil, pd, nil, nil)
+			return
+		}
 		g.Log().Warningf(ctx, "poll: fetch task %s: %v", task.PublicTaskID, err)
 		dbgAttempt.MarkFinal(err)
 		dbgSess.FinalizeAndSubmit(0, 0)
@@ -770,6 +807,17 @@ func pollBatchTasks(ctx context.Context, batcher common.BatchTaskPoller, channel
 
 		resp, err := batcher.FetchBatchTasks(ctx, channel.BaseURL, channel.ApiKey, refs)
 		if err != nil {
+			// 插件停用/删除：整批任务立即按失败终态化并退款（不等超时网），逐任务走
+			// applyTaskPollResult 失败分支。body 传各任务既有快照，避免空 body 把
+			// data 列覆盖为 null（批量路径无逐任务调试会话，dbg 参数与既有调用一致传 nil）
+			if errors.Is(err, jsbridge.ErrPluginNotActive) {
+				g.Log().Warningf(ctx, "poll: js plugin for channel %d platform %s not active, abort and refund %d tasks: %v",
+					channel.ID, platform, len(refs), err)
+				for _, w := range wrapped {
+					applyTaskPollResult(ctx, w.task, channel, jsPluginInactiveFailure(), w.task.Data, nil, w.pd, nil, nil)
+				}
+				continue
+			}
 			g.Log().Warningf(ctx, "poll: batch fetch channel %d platform %s (%d tasks): %v", channel.ID, platform, len(refs), err)
 			continue
 		}
@@ -793,7 +841,13 @@ func pollBatchTasks(ctx context.Context, batcher common.BatchTaskPoller, channel
 				g.Log().Debugf(ctx, "poll: batch task %s not reported upstream this round", w.task.PublicTaskID)
 				continue
 			}
-			applyTaskPollResult(ctx, w.task, channel, info, body, respHeaders, w.pd, nil, nil)
+			// 审计只落本任务快照：整批 body 含同渠道其他租户的任务数据，
+			// 原样写进每个任务的审计行会构成跨租户泄漏（与 FinalizeTaskImmediate 同口径）
+			auditBody := info.Data
+			if len(auditBody) == 0 {
+				auditBody = w.task.Data
+			}
+			applyTaskPollResult(ctx, w.task, channel, info, auditBody, respHeaders, w.pd, nil, nil)
 		}
 	}
 }

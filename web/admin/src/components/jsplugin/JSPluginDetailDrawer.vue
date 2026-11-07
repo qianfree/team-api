@@ -2,18 +2,22 @@
 // JS 插件详情抽屉：摘要 + 快捷操作 + 基本信息 + 计费单位 + 路由 + 版本历史。
 // 数据以 props.plugin 为单一来源（父页面列表对象），激活/启停后 emit('changed')
 // 由父页面刷新列表，prop 更新后自动重算，无需抽屉内维护副本。
-import { computed, h, ref, watch } from 'vue'
+import { computed, h, ref, toRef, watch } from 'vue'
 import {
   Button, Drawer, Message, Popconfirm, Space, Table, Tag,
 } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import { IconCopy, IconLink } from '@arco-design/web-vue/es/icon'
 import request from '@/utils/request'
+import { downloadTextFile } from '@/utils/download'
 import JSPluginSourceModal from './JSPluginSourceModal.vue'
 import {
   pluginStatus, resolvePluginIcon, fetchModeLabel,
   type JSPlugin, type JSPluginRoute, type JSPluginVersion,
 } from './pluginMeta'
+import { usePluginIcon } from './usePluginIcon'
+import { hasPermission } from '@/utils/permission'
+import { useIsMobile } from '@/composables/useIsMobile'
 
 const props = defineProps<{
   visible: boolean
@@ -29,6 +33,9 @@ const emit = defineEmits<{
 const routes = ref<JSPluginRoute[]>([])
 const routesLoading = ref(false)
 const busyVersion = ref('')
+// 源码下载按版本防抖：与激活/删除的 busy 分开，避免互相顶掉 loading 态
+const downloadingVersion = ref('')
+const isMobile = useIsMobile()
 
 // 源码查看弹窗状态：sourceVersion 记录待查看版本号
 const sourceVisible = ref(false)
@@ -43,9 +50,11 @@ const status = computed(() => (props.plugin ? pluginStatus(props.plugin) : null)
 const icon = computed(() => (props.plugin ? resolvePluginIcon(props.plugin) : null))
 const versions = computed<JSPluginVersion[]>(() => props.plugin?.versions || [])
 
-const iconUrl = computed(
-  () => `/api/admin/js-plugins/${props.plugin?.key || ''}/icon?v=${props.plugin?.active_version || ''}`,
-)
+// 品牌图标经 blob 加载（端点要求 Authorization 头，<img> 直连必 401）
+const iconURL = usePluginIcon(toRef(props, 'plugin'))
+
+// 与后端 rbac 对齐：激活/启停需 plugin:manage，删除版本需 plugin:upload
+const canManage = computed(() => hasPermission('plugin:manage'))
 
 const basicItems = computed(() => {
   const p = props.plugin
@@ -78,6 +87,12 @@ watch(
   ([visible, key]) => {
     if (visible && key) loadRoutes(key)
     else routes.value = []
+    // 抽屉关闭同步复位嵌套源码弹窗：unmount-on-close 只卸载 body 槽内容，
+    // 弹窗开着关抽屉时 sourceVisible 残留 true，下次开抽屉会莫名弹出旧源码
+    if (!visible) {
+      sourceVisible.value = false
+      sourceVersion.value = ''
+    }
   },
   { immediate: true },
 )
@@ -123,6 +138,29 @@ async function removeVersion(version: string) {
   }
 }
 
+// 版本列表行内下载：拉取源码全文直接存为 {key}-{version}.js（不打开源码弹窗）
+async function downloadSource(version: string) {
+  if (!props.plugin) return
+  downloadingVersion.value = version
+  try {
+    const res: any = await request.get(`/admin/js-plugins/${props.plugin.key}/versions/${version}/source`)
+    const d = res.data?.data
+    if (!d?.source) {
+      Message.warning('未获取到源码内容')
+      return
+    }
+    downloadTextFile(
+      d.source,
+      `${d.key || props.plugin.key}-${d.version || version}.js`,
+      'text/javascript;charset=utf-8',
+    )
+  } catch {
+    // 拦截器已提示
+  } finally {
+    downloadingVersion.value = ''
+  }
+}
+
 const versionColumns: TableColumnData[] = [
   {
     title: '版本',
@@ -155,7 +193,7 @@ const versionColumns: TableColumnData[] = [
   {
     title: '操作',
     dataIndex: 'actions',
-    width: 200,
+    width: 240,
     align: 'right',
     render: ({ record }: any) => {
       const btns: any[] = []
@@ -164,13 +202,21 @@ const versionColumns: TableColumnData[] = [
           size: 'mini', type: 'text', onClick: () => viewSource(record.version),
         }, () => '源码'),
       )
+      btns.push(
+        h(Button, {
+          size: 'mini', type: 'text', loading: downloadingVersion.value === record.version,
+          onClick: () => downloadSource(record.version),
+        }, () => '下载'),
+      )
       if (!record.active) {
-        btns.push(
-          h(Popconfirm, {
-            content: `激活 ${record.version}？当前激活版本将被替换。`,
-            onOk: () => activate(record.version),
-          }, () => h(Button, { size: 'mini', type: 'primary', loading: busyVersion.value === record.version }, () => '激活')),
-        )
+        if (canManage.value) {
+          btns.push(
+            h(Popconfirm, {
+              content: `激活 ${record.version}？当前激活版本将被替换。`,
+              onOk: () => activate(record.version),
+            }, () => h(Button, { size: 'mini', type: 'primary', loading: busyVersion.value === record.version }, () => '激活')),
+          )
+        }
         if (record.origin !== 'builtin') {
           btns.push(
             h(Popconfirm, {
@@ -191,7 +237,7 @@ const versionColumns: TableColumnData[] = [
 <template>
   <Drawer
     :visible="visible"
-    :width="720"
+    :width="isMobile ? '100%' : 720"
     :footer="false"
     unmount-on-close
     @cancel="close"
@@ -199,9 +245,9 @@ const versionColumns: TableColumnData[] = [
     <template #title>
       <div v-if="plugin" class="jd-head">
         <div class="jd-icon" :class="[`jd-icon--${icon?.kind}`, `jd-icon--${plugin.origin}`]">
-          <img v-if="icon?.kind === 'img'" :src="iconUrl" :alt="plugin.name" />
+          <img v-if="icon?.kind === 'img' && iconURL" :src="iconURL" :alt="plugin.name" />
           <component :is="icon?.comp" v-else-if="icon?.kind === 'icon'" :size="24" />
-          <span v-else>{{ icon?.label }}</span>
+          <span v-else>{{ icon?.label || (plugin.name || plugin.key).slice(0, 1) }}</span>
         </div>
         <div class="jd-ident">
           <div class="jd-name-row">
@@ -222,14 +268,16 @@ const versionColumns: TableColumnData[] = [
       <p class="jd-desc">{{ plugin.description || '该插件未填写描述。' }}</p>
 
       <div class="jd-actions">
-        <Popconfirm
-          v-if="plugin.enabled"
-          content="禁用后路由会被立即摘除，确定？"
-          @ok="emit('toggle', false)"
-        >
-          <Button type="outline" status="warning">禁用插件</Button>
-        </Popconfirm>
-        <Button v-else type="primary" @click="emit('toggle', true)">启用插件</Button>
+        <template v-if="canManage">
+          <Popconfirm
+            v-if="plugin.enabled"
+            content="禁用后路由会被立即摘除，确定？"
+            @ok="emit('toggle', false)"
+          >
+            <Button type="outline" status="warning">禁用插件</Button>
+          </Popconfirm>
+          <Button v-else type="primary" @click="emit('toggle', true)">启用插件</Button>
+        </template>
         <Button
           v-if="plugin.active_version"
           type="secondary"
@@ -317,7 +365,7 @@ const versionColumns: TableColumnData[] = [
           :pagination="false"
           size="small"
           row-key="id"
-          :scroll="{ x: 680 }"
+          :scroll="{ x: 720 }"
         />
       </section>
     </div>
@@ -577,9 +625,15 @@ const versionColumns: TableColumnData[] = [
   background: var(--color-primary-1);
 }
 
-.jd-route__type.is-poll {
+/* 路由类型差异化配色：submit=主色 / query=天蓝 / dynamic=紫（契约枚举只有这三种） */
+.jd-route__type.is-query {
   color: #0369a1;
   background: rgba(6, 182, 212, 0.12);
+}
+
+.jd-route__type.is-dynamic {
+  color: #7c3aed;
+  background: rgba(124, 58, 237, 0.1);
 }
 
 .jd-route__method {

@@ -83,3 +83,36 @@ func TestPollDebugLogEnabled(t *testing.T) {
 		t.Error("租户过滤不匹配应拒绝")
 	}
 }
+
+// TestJsPluginInactiveFailure 「JS 插件已停用」失败终态构造（表驱动）：
+// 必须是终态 FAILURE + 固定中文失败原因（走 applyTaskPollResult 失败分支退款），
+// 且相对任何非终态存量状态都构成状态变化（触发调试记录提交与 CAS 转移）
+func TestJsPluginInactiveFailure(t *testing.T) {
+	cases := []struct {
+		name       string
+		taskStatus string
+	}{
+		{"进行中任务", "IN_PROGRESS"},
+		{"排队中任务", "QUEUED"},
+		{"已提交任务", "SUBMITTED"},
+		{"未开始任务", "NOT_START"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			info := jsPluginInactiveFailure()
+			if info == nil || info.Status != common.TaskStatusFailure {
+				t.Fatalf("状态必须为 FAILURE，得到: %+v", info)
+			}
+			if !info.Status.IsTerminal() {
+				t.Fatal("必须是终态（触发退款与审计路径）")
+			}
+			if info.FailReason != "任务所属 JS 插件已停用，自动终止并退款" {
+				t.Fatalf("失败原因不符: %q", info.FailReason)
+			}
+			task := &common.AsyncTask{Status: c.taskStatus}
+			if !pollStateChanged(info, task) {
+				t.Fatalf("相对存量状态 %s 应视为状态变化", c.taskStatus)
+			}
+		})
+	}
+}

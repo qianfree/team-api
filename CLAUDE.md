@@ -333,6 +333,7 @@ cmd（路由注册）
 | `spt_` | 客户支持（工单+帮助+反馈） | 三/六 | `spt_tickets` `spt_replies` `spt_attachments` `spt_categories` `spt_articles` `spt_feedbacks` |
 | `ops_` | 运维监控 | 四 | `ops_alert_rules` `ops_alert_events` `ops_system_metrics` |
 | `tsk_` | 异步任务 | 四 | `tsk_tasks` `tsk_task_logs` `tsk_model_tasks` |
+| `js_` | JS 任务插件（异步任务的插件化扩展，v0.3 新增功能模型） | 四 | `js_plugin_versions` `js_task_artifacts` |
 | `fil_` | 文件存储 | 四 | `fil_files` |
 | `opn_` | 开放平台 + Webhook | 五 | `opn_apps` `opn_webhook_configs` `opn_webhook_events` `opn_webhook_delivery_logs` |
 | `clg_` | 更新日志 | 六 | `clg_changelogs` |

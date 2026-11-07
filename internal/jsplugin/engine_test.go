@@ -265,6 +265,33 @@ func TestUnknownTopLevelFieldRejected(t *testing.T) {
 	}
 }
 
+// TestCompileTopLevelLoopTimesOut 顶层死循环必须被 probe 超时拦截——否则挂死上传请求
+// 与启动装载（Bootstrap 同步执行 Compile）。
+func TestCompileTopLevelLoopTimesOut(t *testing.T) {
+	src := `while (true) {}` + "\n" +
+		`export const meta = { apiVersion: 1, key: "loop-x", name: "X", version: "1.0.0", models: ["m"], routes: [{method:"POST",path:"/s",type:"submit"}] };`
+	engine := &GojaEngine{probeTimeout: 300 * time.Millisecond}
+	if _, err := engine.Compile(src); err == nil {
+		t.Fatal("顶层死循环应当在 probe 超时被拒绝")
+	}
+}
+
+// TestInstanceInitLoopTimesOut probe 与实例环境不同（utils 仅实例侧注入）：
+// 借 typeof utils 差异埋死循环的插件能通过 Compile，必须在 NewInstance 被超时拦下。
+func TestInstanceInitLoopTimesOut(t *testing.T) {
+	src := `if (typeof utils !== "undefined") { while (true) {} }` + "\n" +
+		`export const meta = { apiVersion: 1, key: "loop-y", name: "Y", version: "1.0.0", models: ["m"], routes: [{method:"POST",path:"/s",type:"submit"}] };` + "\n" +
+		`export function decodeRequest() { return { kind: "submit", model: "m" }; }`
+	engine := &GojaEngine{probeTimeout: 2 * time.Second}
+	compiled, err := engine.Compile(src)
+	if err != nil {
+		t.Fatalf("probe 无 utils，应当编译通过: %v", err)
+	}
+	if _, err := engine.NewInstance(compiled, InstanceOptions{CallTimeout: 300 * time.Millisecond}); err == nil {
+		t.Fatal("实例侧死循环应当在 init 超时被拒绝（不能留下可挂死池调用的实例）")
+	}
+}
+
 func mustJSON(t *testing.T, v any) json.RawMessage {
 	t.Helper()
 	data, err := json.Marshal(v)

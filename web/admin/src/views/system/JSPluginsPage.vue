@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// JS 任务插件管理页（Phase 3）：
+// JS 任务插件管理页：
 // 上传 plugin.js 源码 → 激活版本 → 启用进 generation → /pjs/{key}/... 生效。
 // 与 Go 插件管理页（PluginsPage）并列入口；权限：页面 plugin:upload，
 // 启停/激活由后端 plugin:manage 校验。
@@ -10,7 +10,7 @@ import { computed, h, onMounted, ref } from 'vue'
 import { Button, Input, Message, Popconfirm, Select, Space, Tag } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import {
-  IconApps, IconBarChart, IconList, IconRefresh, IconSearch, IconUpload,
+  IconApps, IconBarChart, IconDashboard, IconList, IconRefresh, IconSearch, IconUpload,
 } from '@arco-design/web-vue/es/icon'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
@@ -20,6 +20,7 @@ import JSPluginCard from '@/components/jsplugin/JSPluginCard.vue'
 import JSPluginUploadModal from '@/components/jsplugin/JSPluginUploadModal.vue'
 import JSPluginDetailDrawer from '@/components/jsplugin/JSPluginDetailDrawer.vue'
 import JSPluginMetricsDrawer from '@/components/jsplugin/JSPluginMetricsDrawer.vue'
+import JSPluginOpsDrawer from '@/components/jsplugin/JSPluginOpsDrawer.vue'
 import { fetchModeLabel, pluginStatus, type JSPlugin } from '@/components/jsplugin/pluginMeta'
 import request from '@/utils/request'
 
@@ -100,26 +101,34 @@ async function fetchData() {
     const res: any = await request.get('/admin/js-plugins')
     data.value = res.data?.data?.list || res.data?.list || []
   } catch {
-    data.value = []
+    // 拉取失败保留旧列表：清空会让开着的详情抽屉（以列表对象为数据源）内容闪没
   } finally {
     loading.value = false
   }
 }
 
 // ── 生命周期动作 ──────────────────────────────────────────
+// 启停防抖：卡片/详情抽屉/表格三处入口可能连点，per-key busy 阻止并发请求
+const enablingKeys = ref(new Set<string>())
+
 async function doEnable(key: string, enabled: boolean) {
+  if (enablingKeys.value.has(key)) return
+  enablingKeys.value.add(key)
   try {
     await request.post(`/admin/js-plugins/${key}/enable`, { enabled })
     Message.success(enabled ? '已启用，路由将在 generation 重载后生效' : '已禁用，路由已摘除')
     fetchData()
   } catch {
     // 拦截器已提示
+  } finally {
+    enablingKeys.value.delete(key)
   }
 }
 
 // ── 弹层状态 ──────────────────────────────────────────────
 const showUpload = ref(false)
 const showMetrics = ref(false)
+const showOps = ref(false)
 const showConfigModal = ref(false)
 const configPluginKey = ref('')
 
@@ -293,6 +302,9 @@ onMounted(fetchData)
         <Button type="secondary" @click="showMetrics = true">
           <template #icon><IconBarChart /></template>运行指标
         </Button>
+        <Button type="secondary" @click="showOps = true">
+          <template #icon><IconDashboard /></template>运营统计
+        </Button>
         <Button :loading="loading" title="刷新列表" @click="fetchData">
           <template #icon><IconRefresh /></template>
         </Button>
@@ -439,6 +451,8 @@ onMounted(fetchData)
     />
 
     <JSPluginMetricsDrawer v-model:visible="showMetrics" />
+
+    <JSPluginOpsDrawer v-model:visible="showOps" />
 
     <JSPluginConfigModal
       v-model:visible="showConfigModal"

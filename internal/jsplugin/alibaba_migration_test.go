@@ -150,3 +150,79 @@ func TestMigratedAlibabaSyncImage(t *testing.T) {
 		t.Fatalf("_image_urls 异常: %v", td["_image_urls"])
 	}
 }
+
+// TestMigratedAlibabaStandardVideos 标准视频端点解码：wan2.x（input.img_url +
+// parameters 双段）与 wan3.0（input.media + 音频开关）双形态。
+func TestMigratedAlibabaStandardVideos(t *testing.T) {
+	cleanup, err := PublishForTest(alibabaSource(t))
+	if err != nil {
+		t.Fatalf("发布失败: %v", err)
+	}
+	t.Cleanup(cleanup)
+	plugin, _ := CurrentGeneration().Plugin("alibaba")
+
+	call := func(hook string, arg any) map[string]json.RawMessage {
+		t.Helper()
+		args, _ := json.Marshal(arg)
+		out, err := plugin.Pool.Call(context.Background(), hook, args)
+		if err != nil {
+			t.Fatalf("钩子 %s 失败: %v", hook, err)
+		}
+		raw, err := contract.ParseJSONObject(out)
+		if err != nil {
+			t.Fatalf("钩子 %s 返回非对象: %v", hook, err)
+		}
+		return raw
+	}
+
+	decoded, err := contract.ValidateDecoded(call("decodeVideos", contract.StandardEntryContext{
+		Surface: contract.SurfaceOpenAIVideos, Path: "/v1/videos", Model: "wan2.6-i2v",
+		Body: json.RawMessage(`{"model":"wan2.6-i2v","prompt":"forest","seconds":8,"metadata":{"duration":8,"resolution":"1080P","ratio":"16:9","image":"https://img.example.com/a.png"}}`),
+	}), plugin.Manifest, false)
+	if err != nil {
+		t.Fatalf("wan2.x 标准解码失败: %v", err)
+	}
+	var wan2 struct {
+		VendorBody struct {
+			Input struct {
+				ImgURL string `json:"img_url"`
+			} `json:"input"`
+			Parameters struct {
+				Duration   int    `json:"duration"`
+				Resolution string `json:"resolution"`
+				Ratio      string `json:"ratio"`
+			} `json:"parameters"`
+		} `json:"vendorBody"`
+	}
+	_ = json.Unmarshal(decoded.RequestBody, &wan2)
+	if wan2.VendorBody.Input.ImgURL == "" || wan2.VendorBody.Parameters.Duration != 8 ||
+		wan2.VendorBody.Parameters.Resolution != "1080P" || wan2.VendorBody.Parameters.Ratio != "16:9" {
+		t.Fatalf("wan2.x vendorBody 映射异常: %s", decoded.RequestBody)
+	}
+
+	decoded3, err := contract.ValidateDecoded(call("decodeVideos", contract.StandardEntryContext{
+		Surface: contract.SurfaceVideoGenerations, Path: "/v1/video/generations", Model: "wan3.0-video",
+		Body: json.RawMessage(`{"model":"wan3.0-video","prompt":"city night","seconds":10,"metadata":{"duration":10,"image":"https://img.example.com/b.png","sound":"on"}}`),
+	}), plugin.Manifest, false)
+	if err != nil {
+		t.Fatalf("wan3.0 标准解码失败: %v", err)
+	}
+	var wan3 struct {
+		VendorBody struct {
+			Input struct {
+				Media []struct {
+					Type string `json:"type"`
+					URL  string `json:"url"`
+				} `json:"media"`
+			} `json:"input"`
+			Parameters struct {
+				Audio *bool `json:"audio"`
+			} `json:"parameters"`
+		} `json:"vendorBody"`
+	}
+	_ = json.Unmarshal(decoded3.RequestBody, &wan3)
+	if len(wan3.VendorBody.Input.Media) != 1 || wan3.VendorBody.Input.Media[0].Type != "image" ||
+		wan3.VendorBody.Parameters.Audio == nil || !*wan3.VendorBody.Parameters.Audio {
+		t.Fatalf("wan3.0 vendorBody 映射异常: %s", decoded3.RequestBody)
+	}
+}

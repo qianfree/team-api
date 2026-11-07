@@ -14,13 +14,13 @@ type MdlPricing struct {
 	g.Meta          `orm:"table:mdl_pricing, do:true"`
 	Id              any         //
 	ModelId         any         // 关联模型ID
-	BillingMode     any         // 计费模式：token=按量；per_request=按次；tiered=阶梯；per_second=按秒（视频）；special=特殊计费；formula=表达式计费（pricing JSONB formula 键）
+	BillingMode     any         // 计费模式：token=按量；per_request=按次；tiered=阶梯；per_second=按秒（视频）；special=特殊计费（pricing JSONB 顶层 scheme 声明计费方案，如 custom:minimax-material）
 	CreatedAt       *gtime.Time //
 	UpdatedAt       *gtime.Time //
 	PriceNote       any         // 价格说明（仅管理后台可见，调价背景等内部备注），仅 min_tokens=0 锚点行使用，NULL=无
 	DiscountLabel   any         // 折扣标签（对外展示，如"7折起"、"限时5折"），仅 min_tokens=0 锚点行使用，NULL/空=不展示
 	PriceChangeNote any         // 价格调整说明（对外展示，提示用户价格有变动，如"9月1日起输入价下调"），仅 min_tokens=0 锚点行使用，NULL/空=不展示
-	Pricing         any         // 计费详情（JSONB，按 billing_mode 单模式存储）：token={input_price,output_price,cache_read_price,cache_creation_price}；tiered={tiers:[{min_tokens,max_tokens,input_price,output_price}],cache_read_price,cache_creation_price}；per_request={price}；per_second={unit:"second",prices:{分辨率规格:每秒单价,"*":兜底价}}；顶层可含 time_segments（时段定价）与 scheme（特殊计费方案）
+	Pricing         any         // 计费详情（JSONB，按 billing_mode 单模式存储）：token={input_price,output_price,cache_read_price,cache_creation_price}；tiered={tiers:[{min_tokens,max_tokens,input_price,output_price}],cache_read_price,cache_creation_price}；per_request={price}；per_second={unit:"second",prices:{分辨率规格:每秒单价,"*":兜底价}}；顶层可含 time_segments（时段定价）
 	OfficialPricing any         // 官方参考定价 JSONB（结构与 pricing 一致 + billing_mode 键，本位币；仅作定价折扣计算基准与几折展示，非计费依据）
 	SortPrice       any         // 价格排序基准价（pricing JSONB 派生：token/tiered=输入价首档，per_request=按次单价，per_second=最低档每秒单价；NULL=未配价，排序落尾部）。由定价写入路径维护，存量由本迁移回填
 }

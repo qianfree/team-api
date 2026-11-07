@@ -128,3 +128,45 @@ func TestMigratedXaiGenerationFlow(t *testing.T) {
 	}
 	_ = strings.TrimSpace
 }
+
+// TestMigratedXaiStandardVideos 标准视频端点解码：复用 generationRequest 全套
+// 校验；参考图 → image_to_video action；metadata.size → resolution。
+func TestMigratedXaiStandardVideos(t *testing.T) {
+	cleanup, err := PublishForTest(xaiSource(t))
+	if err != nil {
+		t.Fatalf("发布失败: %v", err)
+	}
+	t.Cleanup(cleanup)
+	plugin, _ := CurrentGeneration().Plugin("xai")
+
+	args, _ := json.Marshal(contract.StandardEntryContext{
+		Surface: contract.SurfaceOpenAIVideos, Path: "/v1/videos", Model: "grok-imagine-video",
+		Body: json.RawMessage(`{"model":"grok-imagine-video","prompt":"race","seconds":6,"metadata":{"duration":6,"size":"720p","aspect_ratio":"16:9","image":"https://img.example.com/a.png"}}`),
+	})
+	out, err := plugin.Pool.Call(context.Background(), "decodeVideos", args)
+	if err != nil {
+		t.Fatalf("decodeVideos 失败: %v", err)
+	}
+	raw, err := contract.ParseJSONObject(out)
+	if err != nil {
+		t.Fatalf("decodeVideos 返回非对象: %v", err)
+	}
+	decoded, err := contract.ValidateDecoded(raw, plugin.Manifest, false)
+	if err != nil || decoded.Model != "grok-imagine-video" {
+		t.Fatalf("标准解码失败: %+v err=%v", decoded, err)
+	}
+	var body struct {
+		Duration    int    `json:"duration"`
+		Resolution  string `json:"resolution"`
+		AspectRatio string `json:"aspect_ratio"`
+		Image       *struct {
+			URL string `json:"url"`
+		} `json:"image"`
+		Action string `json:"_action"`
+	}
+	_ = json.Unmarshal(decoded.RequestBody, &body)
+	if body.Duration != 6 || body.Resolution != "720p" || body.AspectRatio != "16:9" ||
+		body.Image == nil || body.Image.URL != "https://img.example.com/a.png" || body.Action != "image_to_video" {
+		t.Fatalf("标准映射异常: %s", decoded.RequestBody)
+	}
+}

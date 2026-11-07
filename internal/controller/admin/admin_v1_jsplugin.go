@@ -38,3 +38,14 @@ func (c *ControllerV1) JSPluginMetrics(ctx context.Context, req *v1.JSPluginMetr
 func (c *ControllerV1) JSPluginSource(ctx context.Context, req *v1.JSPluginSourceReq) (res *v1.JSPluginSourceRes, err error) {
 	return service.Admin().JSPluginSource(ctx, req)
 }
+
+func (c *ControllerV1) JSPluginDryRun(ctx context.Context, req *v1.JSPluginDryRunReq) (res *v1.JSPluginDryRunRes, err error) {
+	return service.Admin().JSPluginDryRun(ctx, req)
+}
+
+func (c *ControllerV1) JSPluginTemplate(ctx context.Context, req *v1.JSPluginTemplateReq) (res *v1.JSPluginTemplateRes, err error) {
+	return service.Admin().JSPluginTemplate(ctx, req)
+}
+func (c *ControllerV1) JSPluginOpsStats(ctx context.Context, req *v1.JSPluginOpsStatsReq) (res *v1.JSPluginOpsStatsRes, err error) {
+	return service.Admin().JSPluginOpsStats(ctx, req)
+}

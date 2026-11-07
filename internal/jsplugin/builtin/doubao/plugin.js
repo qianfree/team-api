@@ -45,11 +45,15 @@ export const meta = {
     en: "Volcengine Doubao Seedance video generation and Seedream image generation",
     zh: "火山引擎豆包 Seedance 视频生成与 Seedream 图片生成",
   },
-  version: "1.4.0",
+  version: "1.6.0",
   author: "qianfree",
   channelTypes: [51],
   models: Object.keys(VIDEO_MODELS).concat(Object.keys(IMAGE_MODELS)),
   fetchMode: "per_task",
+  standardVideos: "decodeVideos",
+  // 同名模型共享：与其他声明 sharedModels 的插件（如经销商类 JS 插件）同名声明
+  // Seedance 模型时预检放行——路由归属由渠道 plugin_key 决定
+  sharedModels: true,
   usageSchema: {
     tokens: { type: "number", unit: "count", description: { en: "Ark tokens (official formula)", zh: "Ark tokens（官方公式计费单位）" } },
     resolution: { enum: SEEDANCE_RESOLUTIONS, description: { en: "Output video resolution", zh: "输出视频分辨率" } },
@@ -101,6 +105,44 @@ export function createImage(ctx) {
   if (!IMAGE_MODELS[model]) throw new Error(model + " is not a Seedream image model");
   if (body.stream === true) throw new Error("stream is not supported; use the non-streaming image API");
   return { kind: "submit", model: model, requestBody: { model: model, vendorBody: body, _image: true } };
+}
+
+// decodeVideos 标准视频端点解码（meta.standardVideos 指向）：通用任务体 → Ark
+// vendorBody（content[] 多模态）。prompt → text 项；images[]/metadata.image →
+// image_url 项；seconds/metadata.duration → duration；metadata.resolution 按档位校验
+// （与 createTask 同规则）；ratio（顶层/metadata.ratio）与 generate_audio 透传。
+// 词汇映射与 Go 版 volcengine 适配器同口径。
+export function decodeVideos(ctx) {
+  const raw = ctx.body && typeof ctx.body === "object" && !Array.isArray(ctx.body) ? ctx.body : {};
+  const metadata = plainObject(raw.metadata);
+  const model = trimmed(ctx.model || raw.model);
+  if (!model) throw new Error("model is required");
+  if (IMAGE_MODELS[model]) throw new Error(model + " is an image model; video endpoints are not supported");
+
+  const prompt = String(raw.prompt || "").trim();
+  if (!prompt) throw new Error("prompt is required");
+  const content = [{ type: "text", text: prompt }];
+  const images = Array.isArray(raw.images) && raw.images.length
+    ? raw.images.filter(function (u) { return typeof u === "string" && u.trim(); })
+    : (trimmed(metadata.image) ? [trimmed(metadata.image)] : []);
+  for (const url of images) content.push({ type: "image_url", image_url: { url: url.trim() } });
+
+  const vendorBody = { content: content };
+  const seconds = raw.seconds != null ? raw.seconds : metadata.duration;
+  const n = typeof seconds === "string" && seconds.trim() !== "" ? Number(seconds) : seconds;
+  if (Number.isFinite(n) && n > 0) vendorBody.duration = Math.round(n);
+  const profile = videoProfile(model);
+  const resolution = trimmed(metadata.resolution).toLowerCase();
+  if (resolution) {
+    if (SEEDANCE_RESOLUTIONS.includes(resolution) && !profile.resolutions.includes(resolution)) {
+      throw new Error(model + " resolution must be one of " + profile.resolutions.join(", "));
+    }
+    vendorBody.resolution = resolution;
+  }
+  const ratio = trimmed(raw.ratio) || trimmed(metadata.ratio);
+  if (ratio) vendorBody.ratio = ratio;
+  if (metadata.generate_audio != null) vendorBody.generate_audio = metadata.generate_audio;
+  return { kind: "submit", model: model, requestBody: { model: model, vendorBody: vendorBody } };
 }
 
 // ── 计费 ──────────────────────────────────────────────────

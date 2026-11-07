@@ -7,6 +7,7 @@ import type { TableColumnData } from '@arco-design/web-vue'
 import { IconRefresh } from '@arco-design/web-vue/es/icon'
 import request from '@/utils/request'
 import { latestHookError, type JSPluginMetricsItem } from './pluginMeta'
+import { useIsMobile } from '@/composables/useIsMobile'
 
 const props = defineProps<{ visible: boolean }>()
 const emit = defineEmits<{ (e: 'update:visible', v: boolean): void }>()
@@ -15,6 +16,7 @@ const list = ref<JSPluginMetricsItem[]>([])
 const since = ref('')
 const loading = ref(false)
 const updatedAt = ref('')
+const isMobile = useIsMobile()
 
 let timer: ReturnType<typeof setInterval> | null = null
 
@@ -26,7 +28,8 @@ async function fetchData() {
     since.value = res.data?.data?.since || ''
     updatedAt.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
   } catch {
-    list.value = []
+    // 轮询失败保留旧数据（stale-while-error）：一次瞬时错误清空整表
+    // 会让开着的面板内容闪没，updatedAt 停在旧值即「数据非最新」的信号
   } finally {
     loading.value = false
   }
@@ -131,6 +134,7 @@ const columns: TableColumnData[] = [
   },
   {
     title: '错误率',
+    // 派生列：render 内联计算（数据源无 err_rate 键，dataIndex 仅作列标识）
     dataIndex: 'err_rate',
     width: 88,
     align: 'right',
@@ -151,6 +155,7 @@ const columns: TableColumnData[] = [
   },
   {
     title: '任务 成/进/败',
+    // 聚合列：render 内联拼接 tasks_success/active/failed（数据源无 tasks 键）
     dataIndex: 'tasks',
     width: 140,
     align: 'right',
@@ -194,7 +199,7 @@ const columns: TableColumnData[] = [
 <template>
   <Drawer
     :visible="visible"
-    :width="1000"
+    :width="isMobile ? '100%' : 1000"
     :footer="false"
     unmount-on-close
     @cancel="emit('update:visible', false)"

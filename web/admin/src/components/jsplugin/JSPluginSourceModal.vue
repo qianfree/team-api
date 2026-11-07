@@ -5,6 +5,7 @@ import { computed, ref, watch } from 'vue'
 import { Message, Modal, Spin, Tag } from '@arco-design/web-vue'
 import { IconCopy, IconDownload } from '@arco-design/web-vue/es/icon'
 import request from '@/utils/request'
+import { downloadTextFile } from '@/utils/download'
 
 const props = defineProps<{
   visible: boolean
@@ -62,7 +63,9 @@ async function load(key: string, version: string) {
   data.value = null
   try {
     const res: any = await request.get(`/admin/js-plugins/${key}/versions/${version}/source`)
-    data.value = res.data?.data || res.data
+    // 统一响应体 {code,message,data}：拦截器返回完整 axios response，
+    // 载荷在 res.data.data——原 `|| res.data` 兜底会把整个 envelope 绑成源码对象
+    data.value = res.data?.data || null
   } catch (err: any) {
     loadError.value = err?.message || '加载源码失败'
   } finally {
@@ -86,13 +89,7 @@ async function copyAll() {
 
 function download() {
   if (!data.value) return
-  const blob = new Blob([data.value.source], { type: 'text/javascript;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `${data.value.key}-${data.value.version}.plugin.js`
-  a.click()
-  URL.revokeObjectURL(url)
+  downloadTextFile(data.value.source, `${data.value.key}-${data.value.version}.js`, 'text/javascript;charset=utf-8')
 }
 </script>
 

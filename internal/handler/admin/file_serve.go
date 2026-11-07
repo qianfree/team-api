@@ -88,8 +88,10 @@ func HandleFileServe(r *ghttp.Request) {
 
 // writeServeError 在流式写入开始前返回 JSON 错误（与统一响应格式一致）。
 // 一旦开始 io.Copy，响应头已发出，错误只能记日志。
+// WriteHeader 仅记录状态码：WriteStatus 不带内容会把状态文本（如 "Not Found"）
+// 写进响应体，污染后续 WriteJson 的 JSON。
 func writeServeError(r *ghttp.Request, status int, msg string) {
-	r.Response.WriteStatus(status)
+	r.Response.WriteHeader(status)
 	r.Response.WriteJson(g.Map{"code": status, "message": msg})
 }
 

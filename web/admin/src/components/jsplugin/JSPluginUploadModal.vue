@@ -1,10 +1,17 @@
 <script setup lang="ts">
 // JS 插件上传弹窗：拖拽/选择 plugin.js → 读取源码 → 可选品牌图标与备注 → 上传校验。
 // 上传只做 esbuild 编译 + manifest 契约校验，入库后默认未启用（需在列表激活 + 启用）。
+// 上传前可先「试运行」（dry-run 端点）：不落库的自检报告，存在 fail 项时上传按钮
+// 弱化为警示色并要求二次确认（不强制阻止，最终决定权留给操作者）。
 import { computed, ref, watch } from 'vue'
 import { Button, Message, Modal } from '@arco-design/web-vue'
-import { IconClose, IconDown, IconFile, IconUpload } from '@arco-design/web-vue/es/icon'
+import {
+  IconCheckCircle, IconClose, IconCloseCircle, IconDown, IconDownload,
+  IconExclamationCircle, IconExperiment, IconFile, IconUpload,
+} from '@arco-design/web-vue/es/icon'
 import request from '@/utils/request'
+import { downloadTextFile } from '@/utils/download'
+import { fetchModeLabel } from './pluginMeta'
 
 const props = defineProps<{ visible: boolean }>()
 const emit = defineEmits<{
@@ -42,6 +49,85 @@ watch(
   },
 )
 
+// ── 试运行（dry-run）──────────────────────────────────────
+interface DryRunCheck {
+  name: string
+  status: 'pass' | 'warn' | 'fail'
+  detail: string
+}
+
+interface DryRunResult {
+  key?: string
+  name?: string
+  version?: string
+  models?: string[]
+  fetch_mode?: string
+  routes?: { method: string; path: string; type: string }[]
+  checks: DryRunCheck[]
+  pass: boolean
+}
+
+const dryRun = ref<DryRunResult | null>(null)
+const dryRunning = ref(false)
+const templateLoading = ref(false)
+
+const failCount = computed(() => dryRun.value?.checks.filter((c) => c.status === 'fail').length || 0)
+const warnCount = computed(() => dryRun.value?.checks.filter((c) => c.status === 'warn').length || 0)
+const passCount = computed(() => dryRun.value?.checks.filter((c) => c.status === 'pass').length || 0)
+const hasFail = computed(() => failCount.value > 0)
+// 报告整体色调：全过=绿 / 仅有提示=橙 / 有缺陷=红
+const dryRunVariant = computed(() => {
+  if (!dryRun.value) return ''
+  if (hasFail.value) return 'is-fail'
+  if (warnCount.value) return 'is-warn'
+  return 'is-ok'
+})
+
+// 源码一旦改动，上一份试运行报告即失效，立即清空避免拿着旧结论上传
+watch(source, () => {
+  dryRun.value = null
+})
+
+async function runDryRun() {
+  if (!canSubmit.value) {
+    Message.warning('请先选择 plugin.js 文件或粘贴源码')
+    return
+  }
+  dryRunning.value = true
+  try {
+    const res: any = await request.post('/admin/js-plugins/dry-run', { source: source.value })
+    dryRun.value = res.data?.data || null
+    if (dryRun.value?.pass) Message.success('试运行通过，可以上传')
+    else if (dryRun.value) Message.warning(`试运行发现 ${failCount.value} 项缺陷，建议先修复`)
+  } catch {
+    // 拦截器已提示（编译失败等场景后端也可能以 code!=0 返回）
+  } finally {
+    dryRunning.value = false
+  }
+}
+
+// 下载作者模板：GET template → 前端存为 file_name（后端建议名，兜底 plugin.template.js）
+async function downloadTemplate() {
+  templateLoading.value = true
+  try {
+    const res: any = await request.get('/admin/js-plugins/template')
+    const d = res.data?.data || {}
+    if (!d.source) {
+      Message.warning('模板内容为空')
+      return
+    }
+    downloadTextFile(
+      String(d.source),
+      d.file_name || 'plugin.template.js',
+      'text/javascript;charset=utf-8',
+    )
+  } catch {
+    // 拦截器已提示
+  } finally {
+    templateLoading.value = false
+  }
+}
+
 function reset() {
   source.value = ''
   remark.value = ''
@@ -51,6 +137,7 @@ function reset() {
   iconName.value = ''
   dragging.value = false
   showMore.value = false
+  dryRun.value = null
 }
 
 function close() {
@@ -123,6 +210,12 @@ function onIconChange(ev: Event) {
     iconURI.value = String(reader.result || '')
     iconName.value = file.name
   }
+  reader.onerror = () => {
+    // 读取失败必须提示：静默会让用户以为图标已选上，提交后却没有图标
+    Message.warning('图标读取失败，请重试')
+    iconURI.value = ''
+    iconName.value = ''
+  }
   reader.readAsDataURL(file)
 }
 
@@ -155,6 +248,21 @@ async function submit(): Promise<boolean> {
     uploading.value = false
   }
 }
+
+// 试运行存在 fail 时不强制阻止上传：按钮弱化为警示色，点击给二次确认
+function onUploadClick() {
+  if (hasFail.value) {
+    Modal.confirm({
+      title: '试运行发现缺陷，仍要上传？',
+      content: `当前源码试运行有 ${failCount.value} 项缺陷（fail），上传大概率会被契约校验拒绝或生成不可用插件。建议先按报告修复。`,
+      okText: '仍要上传',
+      cancelText: '返回修改',
+      onOk: () => submit(),
+    })
+    return
+  }
+  submit()
+}
 </script>
 
 <template>
@@ -163,10 +271,6 @@ async function submit(): Promise<boolean> {
     title="上传 JS 任务插件"
     :width="800"
     :mask-closable="false"
-    :ok-text="'上传并校验'"
-    :ok-loading="uploading"
-    :ok-button-props="{ disabled: !canSubmit }"
-    :on-before-ok="submit"
     @cancel="close"
     @update:visible="(v: boolean) => emit('update:visible', v)"
   >
@@ -203,9 +307,20 @@ async function submit(): Promise<boolean> {
     <div class="up-editor">
       <div class="up-editor__head">
         <span>源码</span>
-        <span class="up-editor__meta">
-          {{ lineCount }} 行 · {{ source.length.toLocaleString() }} 字符
-          <em v-if="fileName">（已从文件载入，可直接修改）</em>
+        <span class="up-editor__tools">
+          <button
+            type="button"
+            class="up-editor__tpl"
+            :disabled="templateLoading"
+            title="下载内置的插件作者模板（golden 参考实现）"
+            @click="downloadTemplate"
+          >
+            <IconDownload />{{ templateLoading ? '获取中…' : '下载模板' }}
+          </button>
+          <span class="up-editor__meta">
+            {{ lineCount }} 行 · {{ source.length.toLocaleString() }} 字符
+            <em v-if="fileName">（已从文件载入，可直接修改）</em>
+          </span>
         </span>
       </div>
       <textarea
@@ -214,6 +329,37 @@ async function submit(): Promise<boolean> {
         spellcheck="false"
         placeholder="// 在此粘贴 plugin.js 源码，或从上方拖入文件…"
       />
+    </div>
+
+    <!-- 试运行报告：manifest 摘要 + 检查项平铺；源码改动即清空 -->
+    <div v-if="dryRun" class="up-dryrun" :class="dryRunVariant">
+      <div class="up-dryrun__head">
+        <span class="up-dryrun__title">试运行报告</span>
+        <span class="up-dryrun__verdict">
+          {{ passCount }} 项通过<template v-if="warnCount"> · {{ warnCount }} 项提示</template><template v-if="failCount"> · {{ failCount }} 项缺陷</template>
+        </span>
+      </div>
+      <!-- 编译失败时后端只回 checks，无 manifest 摘要 -->
+      <div v-if="dryRun.key" class="up-dryrun__manifest">
+        <code class="up-dryrun__key">{{ dryRun.key }}</code>
+        <span class="up-dryrun__name">{{ dryRun.name }}</span>
+        <span class="up-dryrun__ver">v{{ dryRun.version }}</span>
+        <span class="up-dryrun__sep">·</span>
+        <span>模型 {{ (dryRun.models || []).length }} 个</span>
+        <span class="up-dryrun__sep">·</span>
+        <span>路由 {{ (dryRun.routes || []).length }} 条</span>
+        <span class="up-dryrun__sep">·</span>
+        <span>{{ fetchModeLabel(dryRun.fetch_mode) }}</span>
+      </div>
+      <ul class="up-dryrun__checks">
+        <li v-for="c in dryRun.checks" :key="c.name" class="up-dryrun__check" :class="`is-${c.status}`">
+          <IconCheckCircle v-if="c.status === 'pass'" class="up-dryrun__ico" />
+          <IconExclamationCircle v-else-if="c.status === 'warn'" class="up-dryrun__ico" />
+          <IconCloseCircle v-else class="up-dryrun__ico" />
+          <span class="up-dryrun__cname">{{ c.name }}</span>
+          <span class="up-dryrun__cdetail" :title="c.detail">{{ c.detail }}</span>
+        </li>
+      </ul>
     </div>
 
     <button type="button" class="up-more" @click="showMore = !showMore">
@@ -247,6 +393,25 @@ async function submit(): Promise<boolean> {
         <input v-model="remark" class="up-input" maxlength="200" placeholder="本次改动说明，便于在版本历史里辨认" />
       </div>
     </div>
+
+    <!-- 自定义底部：试运行（左）+ 取消/上传（右）；有 fail 项时上传弱化为警示色 -->
+    <template #footer>
+      <div class="up-footer">
+        <Button :loading="dryRunning" :disabled="!canSubmit || uploading" @click="runDryRun">
+          <template #icon><IconExperiment /></template>试运行
+        </Button>
+        <span v-if="hasFail" class="up-footer__warn">试运行有 {{ failCount }} 项缺陷</span>
+        <span class="up-footer__spacer" />
+        <Button :disabled="uploading || dryRunning" @click="close">取消</Button>
+        <Button
+          :type="hasFail ? 'outline' : 'primary'"
+          :status="hasFail ? 'warning' : undefined"
+          :loading="uploading"
+          :disabled="!canSubmit || dryRunning"
+          @click="onUploadClick"
+        >上传并校验</Button>
+      </div>
+    </template>
   </Modal>
 </template>
 
@@ -395,6 +560,169 @@ async function submit(): Promise<boolean> {
 .up-editor__meta em {
   font-style: normal;
   color: var(--color-primary-6);
+}
+
+.up-editor__tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+/* 下载模板：编辑器头部的小动作按钮，与 meta 同行 */
+.up-editor__tpl {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 1px 8px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--color-text-2);
+  transition: color var(--ta-duration-fast) var(--ta-ease),
+    background var(--ta-duration-fast) var(--ta-ease);
+}
+
+.up-editor__tpl:hover:not(:disabled) {
+  color: var(--color-primary-6);
+  background: var(--color-primary-1);
+}
+
+.up-editor__tpl:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── 试运行报告 ─────────────────────────────────── */
+.up-dryrun {
+  margin-top: 12px;
+  border: 1px solid var(--color-border-2);
+  border-left: 3px solid rgb(var(--green-6));
+  border-radius: var(--ta-radius);
+  background: var(--color-fill-1);
+  overflow: hidden;
+}
+
+.up-dryrun.is-warn {
+  border-left-color: rgb(var(--orange-6));
+}
+
+.up-dryrun.is-fail {
+  border-left-color: rgb(var(--red-6));
+}
+
+.up-dryrun__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border-2);
+}
+
+.up-dryrun__title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-text-1);
+}
+
+.up-dryrun__verdict {
+  font-size: 12px;
+  color: var(--color-text-3);
+}
+
+.up-dryrun__manifest {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px dashed var(--color-border-2);
+  font-size: 12px;
+  color: var(--color-text-2);
+}
+
+.up-dryrun__key {
+  font-family: 'JetBrains Mono', Consolas, monospace;
+  color: var(--color-primary-6);
+}
+
+.up-dryrun__name {
+  font-weight: 500;
+  color: var(--color-text-1);
+}
+
+.up-dryrun__ver {
+  color: var(--color-text-3);
+}
+
+.up-dryrun__sep {
+  color: var(--color-text-4);
+}
+
+.up-dryrun__checks {
+  list-style: none;
+  margin: 0;
+  padding: 6px 12px;
+}
+
+.up-dryrun__check {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.up-dryrun__check .up-dryrun__ico {
+  flex-shrink: 0;
+  align-self: center;
+}
+
+.up-dryrun__check.is-pass .up-dryrun__ico {
+  color: rgb(var(--green-6));
+}
+
+.up-dryrun__check.is-warn .up-dryrun__ico {
+  color: rgb(var(--orange-6));
+}
+
+.up-dryrun__check.is-fail .up-dryrun__ico {
+  color: rgb(var(--red-6));
+}
+
+.up-dryrun__cname {
+  flex-shrink: 0;
+  font-family: 'JetBrains Mono', Consolas, monospace;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-2);
+}
+
+.up-dryrun__cdetail {
+  min-width: 0;
+  color: var(--color-text-3);
+  word-break: break-all;
+}
+
+/* ── 底部操作条 ─────────────────────────────────── */
+.up-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.up-footer__warn {
+  font-size: 12px;
+  color: rgb(var(--orange-6));
+}
+
+.up-footer__spacer {
+  flex: 1;
 }
 
 .up-editor__area {

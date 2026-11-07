@@ -178,7 +178,20 @@ func (h *hostUtils) fetch(rt *goja.Runtime, call goja.FunctionCall) goja.Value {
 		panic(rt.NewGoError(errString("fetch 不在钩子调用上下文内")))
 	}
 
+	// 相对路径：按本次调用注入的渠道 baseUrl 拼接（与主链路 build*Request 的
+	// resolveUpstreamURL 同语义），拼接后统一走 scheme/host/白名单校验——
+	// 解析结果 host 必为渠道 host，天然在白名单内，不扩大出网面
 	rawURL, _ := arg["url"].(string)
+	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
+		base, _ := h.ctx.Value(baseURLKey{}).(string)
+		if base == "" {
+			panic(rt.NewGoError(errString("相对 url 需要渠道上下文（本钩子未注入渠道 baseUrl）：" + rawURL)))
+		}
+		if !strings.HasPrefix(rawURL, "/") {
+			rawURL = "/" + rawURL
+		}
+		rawURL = strings.TrimRight(base, "/") + rawURL
+	}
 	parsed, err := url.Parse(rawURL)
 	if err != nil || parsed.Scheme != "http" && parsed.Scheme != "https" || parsed.Host == "" {
 		panic(rt.NewGoError(errString("url 不合法：" + rawURL)))
@@ -237,13 +250,15 @@ func (h *hostUtils) fetch(rt *goja.Runtime, call goja.FunctionCall) goja.Value {
 	started := time.Now()
 	resp, err := client.Do(req)
 	h.fetchSpent += time.Since(started)
-	if h.fetchSpent > fetchTotalBudget {
-		panic(rt.NewGoError(errString("超过单次钩子调用的抓取总时长（30s）")))
-	}
 	if err != nil {
 		panic(rt.NewGoError(errString("请求失败：" + err.Error())))
 	}
+	// 关闭前置于预算检查：此处 panic 的响应若不关，连接滞留到 GC，
+	// 持续触发会耗尽连接池
 	defer resp.Body.Close()
+	if h.fetchSpent > fetchTotalBudget {
+		panic(rt.NewGoError(errString("超过单次钩子调用的抓取总时长（30s）")))
+	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxFetchResponseMiB+1))
 	if err != nil {
@@ -293,6 +308,16 @@ func WithAllowedHosts(ctx context.Context, hosts []string) context.Context {
 	return context.WithValue(ctx, allowedHostsKey{}, normalizeHosts(hosts))
 }
 
+// baseURLKey 每调用 utils.fetch 相对路径解析基准（渠道 baseUrl）的 context 键：
+// 与 allowedHostsKey 同思路，由桥接层在有渠道上下文的钩子调用时通过 WithBaseURL 注入。
+type baseURLKey struct{}
+
+// WithBaseURL 为本次调用注入渠道 baseUrl（utils.fetch 相对路径的解析基准）。
+// 未注入时相对路径被拒——decode/render 等无渠道上下文的钩子内不可用相对路径。
+func WithBaseURL(ctx context.Context, baseURL string) context.Context {
+	return context.WithValue(ctx, baseURLKey{}, strings.TrimSpace(baseURL))
+}
+
 // hostAllowed 报告 host[:port] 是否命中白名单。无端口的条目匹配任意端口。
 func (h *hostUtils) hostAllowed(hostPort string) bool {
 	hostPort = strings.ToLower(hostPort)
@@ -314,6 +339,14 @@ func matchHostSet(set map[string]struct{}, hostPort string) bool {
 		}
 	}
 	return false
+}
+
+// HostAllowed 判断 host[:port] 是否命中白名单条目集合——与 utils.fetch 的
+// hostAllowed 同语义（条目不带端口匹配任意端口，IPv6 字面量除外）。
+// 供 jsbridge 主链路（build*Request 返回的绝对 URL、重定向目标）复用，
+// 兑现契约 v1「绝对 URL host 须在白名单内」的声明。
+func HostAllowed(allowed []string, hostPort string) bool {
+	return matchHostSet(normalizeHosts(allowed), strings.ToLower(strings.TrimSpace(hostPort)))
 }
 
 // log utils.log.{info,warn,error}(message, fields?) → g.Log + 任务日志回调（observe 注入）。

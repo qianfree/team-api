@@ -26,11 +26,12 @@ export const meta = {
     en: "OpenAI Sora video generation (text-to-video, image-to-video, and remix)",
     zh: "OpenAI Sora 视频生成（文生视频、图生视频、remix）",
   },
-  version: "1.1.0",
+  version: "1.2.0",
   channelTypes: [55, 1],
   author: "qianfree",
   models: ["sora-2", "sora-2-pro"],
   fetchMode: "per_task",
+  standardVideos: "decodeVideos",
   usageSchema: {
     seconds: { type: "number", unit: "second", description: { en: "Video generation unit price", zh: "视频生成单价" } },
     size: {
@@ -62,6 +63,27 @@ export function decodeRequest(ctx) {
   if (!isRemix && !trimmed(req.prompt)) throw new Error("field prompt is required");
   const body = Object.assign({}, req, { model: model });
   if (isRemix) body.remix_of = String(ctx.params.task_id);
+  return { kind: "submit", model: model, requestBody: body };
+}
+
+// decodeVideos 标准视频端点解码（meta.standardVideos 指向）：通用任务体 → 本插件
+// 原生 requestBody（OpenAI 形态）。seconds/metadata.duration→seconds、metadata.size→size、
+// 参考图（metadata.image / images[0]）→ input_reference（与原生路由同词汇，仅支持 URL 形态）。
+export function decodeVideos(ctx) {
+  const raw = ctx.body && typeof ctx.body === "object" && !Array.isArray(ctx.body) ? ctx.body : {};
+  const metadata = raw.metadata && typeof raw.metadata === "object" && !Array.isArray(raw.metadata) ? raw.metadata : {};
+  const model = trimmed(ctx.model || raw.model) || "sora-2";
+  if (!["sora-2", "sora-2-pro"].includes(model)) {
+    throw new Error("model must be sora-2 or sora-2-pro");
+  }
+  if (!trimmed(raw.prompt)) throw new Error("field prompt is required");
+  const body = { model: model, prompt: String(raw.prompt) };
+  const seconds = raw.seconds != null ? raw.seconds : metadata.duration;
+  const n = typeof seconds === "string" && seconds.trim() !== "" ? Number(seconds) : seconds;
+  if (Number.isFinite(n) && n > 0) body.seconds = n;
+  if (trimmed(metadata.size)) body.size = trimmed(metadata.size);
+  const image = trimmed(metadata.image) || (Array.isArray(raw.images) && raw.images.length && typeof raw.images[0] === "string" ? raw.images[0].trim() : "");
+  if (image) body.input_reference = image;
   return { kind: "submit", model: model, requestBody: body };
 }
 

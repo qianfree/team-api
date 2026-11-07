@@ -100,36 +100,141 @@ func GetConfigView(ctx context.Context, pluginKey string, m *contract.Manifest) 
 	return out
 }
 
+// validateEncryptedConfigTypes 校验加密配置字段类型：encrypted 仅支持 string/text
+// （configValueFromAny 的加密分支只覆盖这两型，读取侧 loadPluginConfig 却对
+// encrypted 一律 GetSecret 解密——其余类型声明加密会明文落库）。上传期与配置
+// 写入期两个入口都调用。
+func validateEncryptedConfigTypes(m *contract.Manifest) error {
+	for _, f := range m.Config {
+		if f.Encrypted && f.Type != "string" && f.Type != "text" {
+			return gerror.Newf("配置项 %q 声明 encrypted，但加密仅支持 string/text 类型（当前 %q）", f.Key, f.Type)
+		}
+	}
+	return nil
+}
+
 // UpdateConfig 管理端更新配置：空串/掩码 = 保持现值（加密字段），其余覆盖写入；
 // 成功后由调用方触发 rebuildGeneration（新实例装载新值）。
+// 两阶段执行：先对全部提交值完成「保持现值判定 + 类型校验/加密」，再统一落库——
+// 中途失败不会留下半更新状态（加密/校验失败时一个键都不写）。
 func UpdateConfig(ctx context.Context, pluginKey string, m *contract.Manifest, values map[string]any) error {
 	if len(values) == 0 {
 		return gerror.New("配置值不能为空")
+	}
+	// 写入期防御：拦截存量坏行（加密声明 + 非 string/text 类型——加密写路径
+	// 只覆盖 string/text，其余类型会明文落库而读取侧却走解密）
+	if err := validateEncryptedConfigTypes(m); err != nil {
+		return err
 	}
 	for k := range values {
 		if m.ConfigFieldByKey(k) == nil {
 			return gerror.Newf("配置项 %q 未在 manifest.config 中声明", k)
 		}
 	}
+	// modelsFromConfig 扩展模型预检：冲突在此拒绝，而不是落库后 generation 重建
+	// 时静默遮蔽（详见 precheckModelsConfig）
+	if err := precheckModelsConfig(ctx, pluginKey, m, values); err != nil {
+		return err
+	}
+	type pendingWrite struct {
+		key string
+		val string
+	}
+	writes := make([]pendingWrite, 0, len(values))
 	for _, field := range m.Config {
 		v, ok := values[field.Key]
 		if !ok {
+			continue
+		}
+		// 掩码/空值 = 保持现值。必须在加密前对原始值判断：configValueFromAny 对加密
+		// 字段返回的是密文，密文与掩码/空串永不相等——加密后判断会让整表单保存把
+		// 真实密钥静默替换成 "********" 的密文（语义对齐 internal/plugin/config.go）。
+		if keepCurrentValue(field, v) {
 			continue
 		}
 		str, err := configValueFromAny(ctx, field, v)
 		if err != nil {
 			return gerror.Wrapf(err, "配置项 %q", field.Key)
 		}
-		key := configKey(pluginKey, field.Key)
-		// 空值/掩码 = 保持现值（加密字段掩码语义，与 Go 插件一致）
-		if (field.Encrypted && strings.TrimSpace(str) == "") || str == configMask {
-			continue
-		}
-		if err := lcommon.Config().SetOption(ctx, key, str); err != nil {
-			return gerror.Wrapf(err, "写入配置 %s 失败", key)
+		writes = append(writes, pendingWrite{key: configKey(pluginKey, field.Key), val: str})
+	}
+	for _, w := range writes {
+		if err := lcommon.Config().SetOption(ctx, w.key, w.val); err != nil {
+			return gerror.Wrapf(err, "写入配置 %s 失败", w.key)
 		}
 	}
 	return nil
+}
+
+// precheckModelsConfig modelsFromConfig 保存预检：合成保存后的有效模型集，与其他
+// 激活且启用插件的有效集做独占比对（精确 + 大小写折叠），冲突拒绝保存——比让
+// generation 重建时静默遮蔽（回落解析按后者）更早更明确。竞态窗口（两个管理员
+// 并发保存）由 buildGeneration 的兜底告警暴露，属管理端低频操作可接受。
+func precheckModelsConfig(ctx context.Context, pluginKey string, m *contract.Manifest, submitted map[string]any) error {
+	if m.ModelsFromConfig == "" {
+		return nil
+	}
+	// 合成保存后的本插件配置值：当前全量值 + 本次提交覆盖（保持现值的语义与主写入
+	// 循环一致——掩码/加密空串不覆盖）
+	current, err := loadPluginConfig(ctx, m)
+	if err != nil {
+		return gerror.Wrap(err, "读取插件配置失败")
+	}
+	merged := make(map[string]any, len(current)+len(submitted))
+	for k, v := range current {
+		merged[k] = v
+	}
+	for k, v := range submitted {
+		if field := m.ConfigFieldByKey(k); field != nil && !keepCurrentValue(*field, v) {
+			merged[k] = v
+		}
+	}
+	setA, err := effectiveModelSet(m, merged)
+	if err != nil {
+		return gerror.Wrapf(err, "扩展模型配置 %q", m.ModelsFromConfig)
+	}
+
+	// 其他激活且启用插件的有效集（与 generation 实际装载口径一致；未启用插件
+	// 不在运行时清单内，不构成冲突）。其他插件的配置扩展解析失败时按静态集
+	// 参与（其装载侧同样会降级，口径一致）
+	rows, err := DefaultRegistry().loadActiveRows(ctx)
+	if err != nil {
+		return gerror.Wrap(err, "读取激活插件失败")
+	}
+	others := make([]modelSetParty, 0, len(rows))
+	for i := range rows {
+		row := rows[i]
+		if row.PluginKey == pluginKey || !row.Enabled {
+			continue
+		}
+		var otherM contract.Manifest
+		if json.Unmarshal(row.Manifest, &otherM) != nil {
+			continue // 坏行不参与预检（装载侧自会跳过并告警）
+		}
+		otherSet := otherM.Models
+		if otherM.ModelsFromConfig != "" {
+			if cfg, cfgErr := loadPluginConfig(ctx, &otherM); cfgErr == nil {
+				if eff, effErr := effectiveModelSet(&otherM, cfg); effErr == nil {
+					otherSet = eff
+				}
+			}
+		}
+		others = append(others, modelSetParty{key: row.PluginKey, models: otherSet, shared: otherM.SharedModels})
+	}
+	return checkModelSetConflict(modelSetParty{key: pluginKey, models: setA, shared: m.SharedModels}, others)
+}
+
+// keepCurrentValue 判断提交值是否表示「保持现值」：加密字段空串/掩码、
+// 非加密字段掩码（前端整表单回显掩码时不变更明文值）。
+func keepCurrentValue(field contract.ConfigField, v any) bool {
+	s, isStr := v.(string)
+	if !isStr {
+		return false
+	}
+	if s == configMask {
+		return true
+	}
+	return field.Encrypted && strings.TrimSpace(s) == ""
 }
 
 // encryptConfigValue 加密写入口（UpdateConfig 加密分支经 SetOption 不会自动加密——
@@ -177,10 +282,13 @@ func configValueFromAny(ctx context.Context, field contract.ConfigField, v any) 
 		case float64:
 			return strconv.FormatInt(int64(n), 10), nil
 		case string:
-			return n, nil // gvalid 风格宽松处理
+			// 字符串形态必须是合法整数——原样入库会让 parseConfigValue 静默归 0
+			if _, err := strconv.ParseInt(strings.TrimSpace(n), 10, 64); err != nil {
+				return "", gerror.Newf("需要整数，得到 %q", n)
+			}
+			return strings.TrimSpace(n), nil
 		default:
-			b, _ := json.Marshal(n)
-			return string(b), nil
+			return "", gerror.New("需要整数")
 		}
 	case "bool":
 		b, ok := v.(bool)

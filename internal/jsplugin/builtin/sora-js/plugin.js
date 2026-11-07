@@ -11,12 +11,14 @@ export const meta = {
   apiVersion: 1,
   key: "sora-js",
   name: "Sora 视频生成（JS 示例）",
-  version: "1.0.0",
+  version: "1.1.0",
   description: "视频任务插件完整示例：按秒计费 + 产物转存 + 配置项",
   icon: "video",
   author: "qianfree",
   models: ["sora-2-js"],
   fetchMode: "per_task",
+  // 标准视频端点支持：声明后模型可经 /v1/videos 与 /v1/video/generations 提交
+  standardVideos: "decodeVideos",
   usageSchema: [
     { key: "seconds", type: "number", unit: "second", description: "生成视频时长秒数（计费按秒）" },
     { key: "quality", type: "enum", description: "清晰度档位（展示用）" },
@@ -35,6 +37,28 @@ export const meta = {
 };
 
 // ── 提交链 ────────────────────────────────────────────────
+
+// decodeVideos 标准视频端点解码（meta.standardVideos 指向）：把 /v1/videos 与
+// /v1/video/generations 的通用任务体（{model, prompt, seconds?, metadata.*}）映射为
+// 本插件原生 requestBody（对齐 decodeRequest 的归一形态），下游钩子
+// （estimateUsage/buildSubmitRequest）无感复用。metadata.image 参考图上游协议
+// 不支持，静默忽略。
+export function decodeVideos(ctx) {
+  const raw = ctx.body || {};
+  const metadata = raw.metadata || {};
+  const body = {
+    model: String(ctx.model || raw.model || "sora-2-js"),
+    prompt: String(raw.prompt || ""),
+  };
+  // 时长：顶层 seconds 优先，缺省回落 metadata.duration（/v1/videos 双写两处）
+  const seconds = raw.seconds != null ? raw.seconds : metadata.duration;
+  if (seconds != null && Number(seconds) > 0) body.seconds = Number(seconds);
+  if (metadata.size) body.size = String(metadata.size);
+  if (!body.prompt.trim()) {
+    throw new Error("prompt is required");
+  }
+  return { kind: "submit", model: body.model, requestBody: body };
+}
 
 export function decodeRequest(ctx) {
   const body = Object.assign({}, ctx.body || {});

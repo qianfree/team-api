@@ -11,6 +11,7 @@ import (
 
 	"github.com/shopspring/decimal"
 
+	"github.com/qianfree/team-api/internal/jsplugin"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
 )
@@ -67,9 +68,30 @@ func (s *stubVideosSubmitProvider) GetTaskByPublicIDAndUser(_ context.Context, p
 }
 
 // TestHandleTaskSubmit_JSPluginModelRejectsStandardEntry JS 插件模型经标准任务端点
-// （/v1/videos 等）提交：无 /pjs 分发器注入的解码计划，应在平台判定阶段拒绝并在
-// 错误信息中指明插件原生路由入口，而非走到 jsbridge 才报晦涩的 dispatcher 错误。
+// （/v1/videos 等）提交且插件未声明 standardVideos：应在平台判定阶段拒绝并在错误
+// 信息中指明插件原生路由入口与声明指引，而非走到 jsbridge 才报晦涩的 dispatcher
+// 错误。渠道显式绑定 plugin_key（覆盖按模型解析）的场景同口径。
 func TestHandleTaskSubmit_JSPluginModelRejectsStandardEntry(t *testing.T) {
+	// 渠道绑定的插件未声明 standardVideos → 不支持标准端点
+	cleanup, err := jsplugin.PublishForTest(`export const meta = {
+  apiVersion: 1, key: "kling-pro", name: "KlingPro", version: "1.0.0",
+  models: ["kling-v2-master"], fetchMode: "per_task",
+  routes: [{ method: "POST", path: "/submit", type: "submit" }],
+};
+export function decodeRequest(ctx) {
+  return { kind: "submit", model: "kling-v2-master", requestBody: ctx.body || {} };
+}
+export function buildSubmitRequest() { return { url: "/s", method: "POST", body: {} }; }
+export function parseSubmitResponse() { return { taskId: "t" }; }
+export function buildQueryRequest() { return { url: "/q", method: "GET" }; }
+export function parseQueryResponse(ctx) {
+  return { items: [{ taskId: (ctx.tasks || [])[0].taskId, done: false }] };
+}`)
+	if err != nil {
+		t.Fatalf("发布插件失败: %v", err)
+	}
+	t.Cleanup(cleanup)
+
 	rec := httptest.NewRecorder()
 	rc := &TaskRelayContext{
 		TenantID:  1,
@@ -96,8 +118,8 @@ func TestHandleTaskSubmit_JSPluginModelRejectsStandardEntry(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "/pjs/kling-pro") {
-		t.Fatalf("error should point to native route /pjs/kling-pro, got: %s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "/pjs/kling-pro") || !strings.Contains(rec.Body.String(), "standardVideos") {
+		t.Fatalf("error should point to native route /pjs/kling-pro and standardVideos hint, got: %s", rec.Body.String())
 	}
 }
 

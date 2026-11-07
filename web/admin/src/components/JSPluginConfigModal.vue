@@ -61,7 +61,10 @@ async function load() {
     const initial: Record<string, string> = {}
     for (const field of list) {
       // 值已内联（加密字段为掩码/空串）；掩码提交=不改动现值
-      const v = field.value ?? field.default ?? ''
+      let v: any = field.value ?? field.default ?? ''
+      // int 字段归一为数字：AInputNumber 必须绑数字值（字符串值会导致无法输入），
+      // 后端 Default/Value 契约是 any，manifest 把默认值写成字符串数字时会踩坑
+      if (field.type === 'int') v = Number(v) || 0
       next[field.key] = v
       if (field.encrypted) initial[field.key] = String(v ?? '')
     }

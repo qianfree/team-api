@@ -66,12 +66,46 @@ func (s *sAdmin) JSPluginList(ctx context.Context, _ *v1.JSPluginListReq) (*v1.J
 }
 
 func (s *sAdmin) JSPluginUpload(ctx context.Context, req *v1.JSPluginUploadReq) (*v1.JSPluginUploadRes, error) {
-	manifest, err := jsplugin.DefaultRegistry().Upload(ctx, req.Source, req.Icon)
+	manifest, err := jsplugin.DefaultRegistry().Upload(ctx, req.Source, req.Icon, req.Remark)
 	if err != nil {
 		return nil, err
 	}
 	data, _ := json.Marshal(manifest)
 	return &v1.JSPluginUploadRes{Manifest: data}, nil
+}
+
+// JSPluginDryRun 上传前试运行：编译 / 钩子齐备性 / 跨插件冲突预检 / 样例执行 /
+// 静态 lint（见 jsplugin.DryRun）。不落库、不发布 generation、不发真实 HTTP，
+// 所有失败都体现在检查项里，接口本身始终成功返回。
+func (s *sAdmin) JSPluginDryRun(_ context.Context, req *v1.JSPluginDryRunReq) (*v1.JSPluginDryRunRes, error) {
+	report := jsplugin.DryRun(req.Source)
+	res := &v1.JSPluginDryRunRes{
+		Checks: make([]v1.JSPluginDryRunCheck, 0, len(report.Checks)),
+		Pass:   !report.HasFail(),
+	}
+	if report.Manifest != nil {
+		m := report.Manifest
+		res.Key = m.Key
+		res.Name = m.Name
+		res.Version = m.Version
+		res.Models = m.Models
+		res.FetchMode = m.EffectiveFetchMode()
+		res.Routes = make([]v1.JSPluginRouteItem, 0, len(m.Routes))
+		for _, route := range m.Routes {
+			res.Routes = append(res.Routes, v1.JSPluginRouteItem{
+				Method: route.Method, Path: route.Path, Type: string(route.Type),
+			})
+		}
+	}
+	for _, c := range report.Checks {
+		res.Checks = append(res.Checks, v1.JSPluginDryRunCheck{Name: c.Name, Status: c.Status, Detail: c.Detail})
+	}
+	return res, nil
+}
+
+// JSPluginTemplate 模板下载：内置 golden 参考实现源码（作者抄它起步，删掉不需要的钩子）。
+func (s *sAdmin) JSPluginTemplate(_ context.Context, _ *v1.JSPluginTemplateReq) (*v1.JSPluginTemplateRes, error) {
+	return &v1.JSPluginTemplateRes{Source: jsplugin.TemplateSource(), FileName: "plugin.template.js"}, nil
 }
 
 func (s *sAdmin) JSPluginActivate(ctx context.Context, req *v1.JSPluginActivateReq) (*v1.JSPluginActivateRes, error) {
@@ -120,7 +154,11 @@ func (s *sAdmin) JSPluginSource(ctx context.Context, req *v1.JSPluginSourceReq) 
 // 不依赖当前 generation——禁用状态下也要能看见端点信息（启用后按同一路径挂载）。
 func (s *sAdmin) JSPluginRoutes(ctx context.Context, req *v1.JSPluginRoutesReq) (*v1.JSPluginRoutesRes, error) {
 	manifest, err := jsplugin.DefaultRegistry().ActiveManifest(ctx, req.Key)
-	if err != nil || manifest == nil {
+	if err != nil {
+		// DB 错误如实上抛（区别于「插件不存在」——那不是错误，返回空列表）
+		return nil, err
+	}
+	if manifest == nil {
 		return &v1.JSPluginRoutesRes{List: []v1.JSPluginRouteItem{}}, nil
 	}
 	out := make([]v1.JSPluginRouteItem, 0, len(manifest.Routes))
@@ -151,11 +189,13 @@ func (s *sAdmin) JSPluginMetrics(ctx context.Context, _ *v1.JSPluginMetricsReq) 
 				AvgMs: h.AvgMs, LastErr: h.LastErr, LastErrAt: h.LastErrAt,
 			}
 		}
-		// 任务量统计（platform 维度）
+		// 任务量统计（platform 维度）——统计失败不阻断指标返回，但必须留痕
 		platform := "js:" + m.Key
 		taskRows, err := g.DB().Model("tsk_model_tasks").Ctx(ctx).
 			Where("platform", platform).Fields("status, count(*) as cnt").Group("status").All()
-		if err == nil {
+		if err != nil {
+			g.Log().Warningf(ctx, "jsplugin metrics task stats %s: %v", m.Key, err)
+		} else {
 			for _, row := range taskRows {
 				cnt := row["cnt"].Int64()
 				switch row["status"].String() {
@@ -172,7 +212,9 @@ func (s *sAdmin) JSPluginMetrics(ctx context.Context, _ *v1.JSPluginMetricsReq) 
 		// 产物转存统计
 		artRows, err := g.DB().Model("js_task_artifacts").Ctx(ctx).
 			Where("plugin_key", m.Key).Fields("status, count(*) as cnt").Group("status").All()
-		if err == nil {
+		if err != nil {
+			g.Log().Warningf(ctx, "jsplugin metrics artifact stats %s: %v", m.Key, err)
+		} else {
 			for _, row := range artRows {
 				switch row["status"].String() {
 				case "stored":

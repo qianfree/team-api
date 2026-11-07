@@ -1,8 +1,7 @@
 // jsdispatcher.go JS 任务插件路由分发器（/pjs/{key}/{原生路径}）。
 //
 // 挂载方式：一条静态通配路由 + generation 原子快照匹配——运行期启停/换版插件
-// 只重建 generation，永不触碰 GoFrame 路由表（gf 路由表无锁不可运行期写，
-// 见 docs/design/JS异步任务插件设计方案-v1.md §一）。
+// 只重建 generation，永不触碰 GoFrame 路由表（gf 路由表无锁不可运行期写）。
 // 提交链：先调插件 decodeRequest 得模型 → 注入 body 副本 → 复用 selectTaskChannel
 // 与 relay_handler.HandleTaskSubmit 全链（预扣/提交/落库/审计不变）。
 package relay
@@ -114,7 +113,7 @@ func handleJSDynamicQuery(r *ghttp.Request, plugin *jsplugin.ActivePlugin, route
 	}
 
 	renderHook := route.ResolveRender("renderTasks")
-	if plugin.Pool.HasHook(renderHook) {
+	if plugin.HasHook(renderHook) {
 		renderArgs, _ := json.Marshal(contract.RenderTasksContext{Tasks: renderTasks})
 		out, err := plugin.Pool.Call(r.Context(), renderHook, renderArgs)
 		if err != nil {
@@ -131,8 +130,8 @@ func handleJSDynamicQuery(r *ghttp.Request, plugin *jsplugin.ActivePlugin, route
 			writeJSError(r, http.StatusBadGateway, renderHook+": "+err.Error())
 			return
 		}
-		r.Response.WriteStatus(rend.Status)
-		r.Response.Write(rend.Body)
+		// 状态码与内容须一次写入：WriteStatus 不带内容会把状态文本（如 "OK"）写进响应体
+		r.Response.WriteStatus(rend.Status, []byte(rend.Body))
 		return
 	}
 
@@ -207,16 +206,15 @@ func handleJSTaskSubmit(r *ghttp.Request, plugin *jsplugin.ActivePlugin, route c
 		KeyUsedQuota:    r.GetCtxVar(middleware.CtxKeyApiKeyUsedQuota).Float64(),
 	}
 
-	// 4) 渠道选择（复用既有逻辑）+ JS 渠道约束
-	channelMeta, err := selectTaskChannel(r, body2)
+	// 4) 渠道选择：候选约束为本插件的 JS 渠道——同名多插件（sharedModels）场景下，
+	// 同一模型可能有多家插件的渠道，调度在候选层过滤而非选中后 400（顺带消灭了
+	// 选中他家渠道时报晦涩绑定错误的旧路径）
+	channelMeta, err := selectTaskChannelFor(r, body2, func(meta *relay_common.ChannelMeta) bool {
+		return relay_constant.ProviderType(meta.ChannelType) == relay_constant.ProviderJSTask &&
+			meta.Settings.PluginKey == plugin.Key
+	})
 	if err != nil {
 		writeTaskChannelSelectionError(r, err)
-		return
-	}
-	if relay_constant.ProviderType(channelMeta.ChannelType) != relay_constant.ProviderJSTask ||
-		channelMeta.Settings.PluginKey != plugin.Key {
-		writeJSError(r, http.StatusBadRequest,
-			"model is not bound to this js plugin channel (check channel type/plugin_key/abilities)")
 		return
 	}
 
@@ -252,10 +250,10 @@ func handleJSTaskSubmit(r *ghttp.Request, plugin *jsplugin.ActivePlugin, route c
 	}
 
 	// 提交成功且插件导出渲染钩子 → 钩子输出替换标准响应；否则透传扣住的标准输出
-	if rc.TaskID != "" && plugin.Pool.HasHook(renderHook) {
+	if rc.TaskID != "" && plugin.HasHook(renderHook) {
 		if rendered := callSubmitRenderer(r.Context(), plugin, renderHook, rc.TaskID, decoded.Model, taskStatus); rendered != nil {
-			r.Response.WriteStatus(rendered.Status)
-			r.Response.Write(rendered.Body)
+			// 状态码与内容须一次写入：WriteStatus 不带内容会把状态文本（如 "OK"）写进响应体
+			r.Response.WriteStatus(rendered.Status, []byte(rendered.Body))
 			hold.discard()
 			return
 		}
@@ -293,18 +291,12 @@ func finalizeImmediateTask(ctx context.Context, plan *jsplugin.SubmitPlan, plugi
 	} else {
 		info.Data = t.Data
 	}
-	// 用量事实（unit=second 映射 OutputSeconds，其余进 Facts）——与桥的终态映射同口径
+	// 用量事实——与桥的终态映射同口径（时长信号经 OutputSecondsFact 确定性映射）
 	if len(im.Usage) > 0 {
 		if usageRaw, uErr := contract.ParseJSONObject(im.Usage); uErr == nil {
 			if facts, fErr := contract.ValidateUsageFacts(usageRaw, plugin.Manifest); fErr == nil && len(facts) > 0 {
 				usage := &relay_common.TaskMaterialUsage{Facts: facts}
-				for _, f := range plugin.Manifest.UsageSchema {
-					if f.Unit == "second" {
-						if v, ok := facts[f.Key]; ok && v > 0 {
-							usage.OutputSeconds = v
-						}
-					}
-				}
+				usage.OutputSeconds = plugin.Manifest.OutputSecondsFact(facts)
 				info.MaterialUsage = usage
 			}
 		}
@@ -366,6 +358,13 @@ func (w *holdWriter) WriteHeader(code int) {
 func (w *holdWriter) Write(p []byte) (int, error) { return w.buf.Write(p) }
 
 func (w *holdWriter) flushTo(resp *ghttp.Response) {
+	// 回放扣留期间记录的状态码——不回放的话，HandleTaskSubmit 写出的
+	// 429/402/502 等错误会以默认 200 送达客户端，SDK 的重试语义全坏。
+	// 用 WriteHeader 仅记录状态码：WriteStatus 不带内容会把状态文本（如 "OK"）
+	// 写进响应体，污染后续追加的标准任务输出
+	if w.status != 0 {
+		resp.WriteHeader(w.status)
+	}
 	if w.buf.Len() == 0 {
 		return
 	}
@@ -546,7 +545,7 @@ func handleJSTaskQuery(r *ghttp.Request, plugin *jsplugin.ActivePlugin, route co
 	renderCtx, _ := json.Marshal(contract.RenderTaskContext{Task: buildRenderTask(task)})
 
 	renderHook := route.ResolveRender(contract.HookNameRenderTask)
-	if plugin.Pool.HasHook(renderHook) {
+	if plugin.HasHook(renderHook) {
 		out, err := plugin.Pool.Call(r.Context(), renderHook, renderCtx)
 		if err != nil {
 			writeJSHookError(r, err)
@@ -562,8 +561,8 @@ func handleJSTaskQuery(r *ghttp.Request, plugin *jsplugin.ActivePlugin, route co
 			writeJSError(r, http.StatusBadGateway, renderHook+": "+err.Error())
 			return
 		}
-		r.Response.WriteStatus(rend.Status)
-		r.Response.Write(rend.Body)
+		// 状态码与内容须一次写入：WriteStatus 不带内容会把状态文本（如 "OK"）写进响应体
+		r.Response.WriteStatus(rend.Status, []byte(rend.Body))
 		return
 	}
 
@@ -583,18 +582,22 @@ func handleJSTaskQuery(r *ghttp.Request, plugin *jsplugin.ActivePlugin, route co
 
 func writeJSNotFound(r *ghttp.Request) {
 	r.Response.WriteStatus(404, g.Map{
-		"error": g.Map{"type": "invalid_request_error", "message": "js plugin route not found"},
+		"error":      g.Map{"type": "invalid_request_error", "message": "js plugin route not found"},
+		"request_id": r.GetCtxVar("RequestId").String(),
 	})
 }
 
 func writeJSError(r *ghttp.Request, status int, message string) {
 	r.Response.WriteStatus(status, g.Map{
-		"error": g.Map{"type": "js_plugin_error", "message": message},
+		"error":      g.Map{"type": "js_plugin_error", "message": message},
+		"request_id": r.GetCtxVar("RequestId").String(),
 	})
 }
 
+// writeJSHookError 钩子执行错误（502）：消息经 SanitizeHookMessage 净化——插件异常
+// 是面向用户的业务文案通道，但可能意外内嵌密钥/签名片段，脱敏+截断后透出，不泛化。
 func writeJSHookError(r *ghttp.Request, err error) {
-	writeJSError(r, http.StatusBadGateway, err.Error())
+	writeJSError(r, http.StatusBadGateway, jsplugin.SanitizeHookMessage(err.Error()))
 }
 
 // injectModelField 把模型名写入 body 副本（不改原请求）。

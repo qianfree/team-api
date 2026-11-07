@@ -21,18 +21,20 @@ type JsPluginVersionsDao struct {
 
 // JsPluginVersionsColumns defines and stores column names for the table js_plugin_versions.
 type JsPluginVersionsColumns struct {
-	Id         string //
+	Id         string // 主键
 	PluginKey  string // 插件标识（meta.key）
-	Version    string //
-	Source     string //
-	SourceHash string //
+	Version    string // 插件版本（semver，key+version 唯一）
+	Source     string // plugin.js 源码原文（上传/内置 embed）
+	SourceHash string // 源码 SHA-256（同版本不可改内容的校验依据）
 	Compiled   string // esbuild IIFE 编译产物（激活时编译缓存，可空）
 	Manifest   string // 解析校验后的 meta 清单
+	Origin     string // 版本来源：builtin=内置（go:embed 随二进制，不可删除）/ upload=管理端上传
+	Icon       string // 插件图标（data URI，仅上传版本；内置版本用 manifest.icon）
 	Enabled    string // 插件级开关（active 版本行上生效）
 	Active     string // 激活版本（每 plugin_key 至多一行）
-	Remark     string //
-	CreatedAt  string //
-	UpdatedAt  string //
+	Remark     string // 管理端备注
+	CreatedAt  string // 创建时间
+	UpdatedAt  string // 更新时间
 }
 
 // jsPluginVersionsColumns holds the columns for the table js_plugin_versions.
@@ -44,6 +46,8 @@ var jsPluginVersionsColumns = JsPluginVersionsColumns{
 	SourceHash: "source_hash",
 	Compiled:   "compiled",
 	Manifest:   "manifest",
+	Origin:     "origin",
+	Icon:       "icon",
 	Enabled:    "enabled",
 	Active:     "active",
 	Remark:     "remark",

@@ -40,7 +40,7 @@ const (
 	ProviderNewAPI     ProviderType = 41
 	ProviderSub2API    ProviderType = 42
 	// ProviderJSTask JS 任务插件渠道：adaptor 由 relay/taskchannel/jsbridge 提供，
-	// 具体插件由 settings.plugin_key 绑定（见 docs/design/JS异步任务插件设计方案-v1.md）。
+	// 具体插件由 settings.plugin_key 绑定（见 docs/JS插件体系架构与调用链分析.md）。
 	ProviderJSTask ProviderType = 43
 )
 

@@ -59,7 +59,9 @@ export function parseQueryResponse(ctx) {
 }
 `
 
-// TestBatchFetchMode 批量插件：FetchMode 反映 manifest 声明。
+// TestBatchFetchMode 批量插件：FetchModeFor 反映 manifest 声明。
+// 以 platform 判定（轮询循环拿到的是工厂新实例，pluginKey 未初始化——
+// 旧按实例状态判定的实现恒得 per_task，批量通道从未激活过）。
 func TestBatchFetchMode(t *testing.T) {
 	cleanup, err := jsplugin.PublishForTest(batchPluginSource)
 	if err != nil {
@@ -67,10 +69,15 @@ func TestBatchFetchMode(t *testing.T) {
 	}
 	t.Cleanup(cleanup)
 
-	a := &Adaptor{}
-	a.pluginKey = "batch-demo" // 轮询路径由 platform 推导，此处直接指定
-	if a.FetchMode() != "batch" {
-		t.Fatalf("FetchMode 应为 batch: %s", a.FetchMode())
+	a := &Adaptor{} // 工厂新实例，不预置任何状态
+	if got := a.FetchModeFor("js:batch-demo"); got != "batch" {
+		t.Fatalf("FetchModeFor(js:batch-demo) 应为 batch: %s", got)
+	}
+	if got := a.FetchModeFor("js:not-published"); got != "per_task" {
+		t.Fatalf("未激活插件应回落 per_task: %s", got)
+	}
+	if got := a.FetchModeFor("suno"); got != "per_task" {
+		t.Fatalf("非 JS 平台应回落 per_task: %s", got)
 	}
 }
 

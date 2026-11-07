@@ -18,14 +18,14 @@ func PublishForTest(sources ...string) (func(), error) {
 		if _, exists := lookupTestPlugin(plugins, compiled.Key); exists {
 			return nil, gerror.Newf("duplicate plugin key %q", compiled.Key)
 		}
+		opts := InstanceOptions{AllowedHosts: compiled.Manifest.AllowedHosts}
 		plugins = append(plugins, &ActivePlugin{
-			Key:      compiled.Key,
-			Version:  compiled.Version,
-			Manifest: compiled.Manifest,
-			Compiled: compiled,
-			Pool: NewPluginPool(engine, compiled, InstanceOptions{
-				AllowedHosts: compiled.Manifest.AllowedHosts,
-			}),
+			Key:       compiled.Key,
+			Version:   compiled.Version,
+			Manifest:  compiled.Manifest,
+			Compiled:  compiled,
+			Pool:      NewPluginPool(engine, compiled, opts),
+			hookCache: buildHookCache(engine, compiled, opts),
 		})
 	}
 	old := CurrentGeneration()
