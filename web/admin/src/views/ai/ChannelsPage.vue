@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, h } from 'vue'
 import { useRouter } from 'vue-router'
-import { Tag, Button, Space, Popconfirm, Message, Radio, InputNumber, Select, Tooltip } from '@arco-design/web-vue'
-import { IconInfoCircle } from '@arco-design/web-vue/es/icon'
+import { Tag, Button, Space, Switch, Dropdown, Doption, Modal, Message, Radio, InputNumber, Select, Tooltip } from '@arco-design/web-vue'
+import { IconInfoCircle, IconRefresh, IconDelete } from '@arco-design/web-vue/es/icon'
 import type { TableColumnData } from '@arco-design/web-vue'
 import type { FormInstance } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
@@ -168,23 +168,48 @@ const columns: TableColumnData[] = [
       return h(Tooltip, null, { default: () => trigger, content })
     },
   },
-  { title: '创建时间', dataIndex: 'created_at', width: 170 },  {
-    // 启停按钮文字即状态：显示「禁用」= 当前启用，显示「启用」= 当前禁用/测试中
-    title: '操作', dataIndex: 'actions', width: 260, fixed: 'right',
+  {
+    // 启停独立成列：开关状态即渠道状态（active=开）。开关受控（modelValue 绑 record.status），
+    // 点击只弹确认框，确认后由 toggleStatus 乐观更新驱动开关联动；取消则开关不动。
+    title: '状态', dataIndex: 'status', width: 110,
     render({ record }) {
-      const isActive = record.status === 'active'
-      const action = isActive ? '禁用' : '启用'
-      // 破坏性写操作按钮按权限点渲染（super_admin 在 hasPermission 内直接放行）。
       const nodes = [
-        hasPermission('channel:edit')
-          ? h(Popconfirm, {
-              content: `确定${action}该渠道？`,
-              onOk: () => toggleStatus(record),
-            }, () => h(Button, {
-              size: 'small',
-              status: isActive ? 'normal' : 'success',
-            }, () => action))
-          : null,
+        h(Switch, {
+          modelValue: record.status === 'active',
+          size: 'small',
+          loading: !!record._toggling,
+          disabled: !hasPermission('channel:edit'),
+          onChange: () => confirmAction(
+            `确定${record.status === 'active' ? '禁用' : '启用'}该渠道？`,
+            () => toggleStatus(record)),
+        }),
+      ]
+      // testing 渠道开关为关，但语义是「测试中」而非「禁用」，补标签区分
+      if (record.status === 'testing') {
+        nodes.push(h(Tag, { color: 'orange', size: 'small' }, () => '测试中'))
+      }
+      return h('span', { style: 'display:inline-flex;align-items:center;gap:6px' }, nodes)
+    },
+  },
+  {
+    // 日常动作（检测/详情）常驻；低频/危险动作（重置健康度/删除）收进「更多」下拉，避免操作列撑爆换行
+    title: '操作', dataIndex: 'actions', width: 200, fixed: 'right',
+    render({ record }) {
+      // 破坏性写操作按权限点渲染（super_admin 在 hasPermission 内直接放行）。
+      const moreItems = []
+      if (hasPermission('channel:edit')) {
+        moreItems.push(h(Doption, {
+          onClick: () => confirmAction('确定重置该渠道健康度？', () => resetHealth(record)),
+        }, { icon: () => h(IconRefresh), default: () => '重置健康度' }))
+      }
+      if (hasPermission('channel:delete')) {
+        // 删除不可逆，在下拉里标红，避免顺手点到
+        moreItems.push(h(Doption, {
+          class: 'doption-danger',
+          onClick: () => confirmAction('确定删除该渠道？', () => deleteChannel(record), true),
+        }, { icon: () => h(IconDelete), default: () => '删除' }))
+      }
+      const nodes = [
         h(Button, {
           size: 'small',
           onClick: () => openChannelTest(record),
@@ -194,20 +219,14 @@ const columns: TableColumnData[] = [
           type: 'primary',
           onClick: () => openDetail(record),
         }, () => '详情'),
-        hasPermission('channel:edit')
-          ? h(Popconfirm, {
-              content: '确定重置该渠道健康度？',
-              onOk: () => resetHealth(record),
-            }, () => h(Button, {
-              size: 'small',
-              status: 'warning',
-            }, () => '恢复'))
-          : null,
-        hasPermission('channel:delete')
-          ? h(Popconfirm, { content: '确定删除该渠道？', onOk: () => deleteChannel(record) }, () =>
-              h(Button, { size: 'small', status: 'danger' }, () => '删除'))
-          : null,
-      ].filter(Boolean)
+      ]
+      if (moreItems.length) {
+        // 文字按钮 + 悬停展开：日常视线焦点留在检测/详情，更多低频动作悬停即现
+        nodes.push(h(Dropdown, { trigger: 'hover' }, {
+          default: () => h(Button, { size: 'small', type: 'text' }, () => '更多'),
+          content: () => moreItems,
+        }))
+      }
       return h(Space, { size: 4 }, () => nodes)
     },
   },
@@ -305,6 +324,23 @@ async function resetHealth(row: any) {
     message.success('已重置健康度')
     fetchData()
   } catch { /* interceptor handles error toast */ }
+}
+
+/**
+ * 下拉菜单 / 状态开关里的二次确认。
+ *
+ * 这些动作原先用 Popconfirm 包按钮，但 Popconfirm 依附于触发元素，放进下拉里会随菜单
+ * 收起一起消失；开关自带状态也不适合包 Popconfirm。统一改用 Modal.confirm，与其他页面一致。
+ */
+function confirmAction(content: string, onOk: () => void, danger = false) {
+  Modal.confirm({
+    title: '确认操作',
+    content,
+    okText: '确定',
+    cancelText: '取消',
+    okButtonProps: danger ? { status: 'danger' } : undefined,
+    onOk,
+  })
 }
 
 // 快捷启用/禁用渠道：复用 PUT /admin/channels/{id}。
@@ -529,14 +565,14 @@ const { exporting, exportFile } = useExport({
         :columns="columns"
         :data="data"
         :loading="loading"
-        :scroll="{ x: 1300 }"
+        :scroll="{ x: 1310 }"
         :stripe="true"
         row-key="id"
         :row-click="openDetail"
         card-title-key="name"
         card-subtitle-key="base_url"
         card-badge-key="tier"
-        :card-fields="['type', 'health_score', 'breaker_state', 'weight']"
+        :card-fields="['type', 'status', 'health_score', 'breaker_state', 'weight']"
       />
       <div class="table-footer">
         <TableStats :total="pagination.total" />
@@ -771,5 +807,15 @@ const { exporting, exportFile } = useExport({
   padding-left: 8px;
   border-left: 3px solid #165dff;
   line-height: 1.2;
+}
+</style>
+
+<style>
+/* 下拉里的危险动作：颜色是唯一的视觉区分，必须标出来。
+   弹层由 Trigger teleport 到 body 下，页面 scoped 样式够不到，只能全局定义；
+   hover 覆盖 Arco 自带的 .arco-dropdown-option:not(…disabled):hover 颜色回置。 */
+.arco-dropdown-option.doption-danger,
+.arco-dropdown-option.doption-danger:not(.arco-dropdown-option-disabled):hover {
+  color: rgb(var(--red-6));
 }
 </style>
