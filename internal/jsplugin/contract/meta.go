@@ -79,7 +79,7 @@ type ConfigField struct {
 }
 
 // Author 插件作者：{name, url?}。反序列化兼容字符串形态（"xxx" 等价 {name:"xxx"}），
-// 与 new-api 对齐的同时不破坏已上传的 string author 插件。
+// 便于手写 manifest 与只写作者名的插件。
 type Author struct {
 	Name string `json:"name"`
 	URL  string `json:"url,omitempty"`
@@ -108,7 +108,7 @@ func (a *Author) UnmarshalJSON(data []byte) error {
 }
 
 // LocalizedString 本地化文案：反序列化兼容字符串与 {en, zh, ...} 对象两种形态
-// （new-api 插件用对象；取 zh 优先，回退 en，再回退首个非空值）。
+// （对象形态取 zh 优先，回退 en，再回退首个非空值）。
 type LocalizedString string
 
 // UnmarshalJSON 兼容 string / 本地化对象。
@@ -151,8 +151,8 @@ func (l *LocalizedString) UnmarshalJSON(data []byte) error {
 func (l LocalizedString) String() string { return string(l) }
 
 // UsageSchema 计费用量声明列表；反序列化兼容两种形态：
-//   - 我们的数组形态：[{key, type, unit, description}]
-//   - new-api 的 map 形态：{clips: {type:"number", unit:"count", description:{en,zh}},
+//   - 数组形态（推荐）：[{key, type, unit, description}]
+//   - map 形态（兼容）：{clips: {type:"number", unit:"count", description:{en,zh}},
 //     action: {enum:[...], enumLabels:{...}}}——键→key、enum→type:"enum"、
 //     description 兼容字符串/本地化对象，enumLabels 丢弃（仅 UI 展示）
 type UsageSchema []UsageField
@@ -192,7 +192,7 @@ func (u *UsageSchema) UnmarshalJSON(data []byte) error {
 		f.Key = key
 		f.Type = entry.Type
 		if len(entry.Enum) > 0 {
-			f.Type = "enum" // new-api 用 enum 数组表达枚举
+			f.Type = "enum" // 出现 enum 数组即视为枚举型（映射后统一为 type:"enum"）
 		}
 		f.Unit = entry.Unit
 		if len(entry.Description) > 0 {
@@ -209,8 +209,8 @@ func (u *UsageSchema) UnmarshalJSON(data []byte) error {
 
 // Route 一条插件原生路由。钩子名在 v1 为固定约定（decodeRequest / buildSubmitRequest /
 // parseSubmitResponse / buildQueryRequest / parseQueryResponse / renderSubmit / renderTask），
-// 路由可选经 decode/render 声明别名（new-api 兼容：routes[].decode/render 指向插件
-// 任意导出函数，缺省回落固定钩子名，见 ResolveDecode/ResolveRender）。
+// 路由可选经 decode/render 声明别名（routes[].decode/render 指向插件任意导出函数，
+// 缺省回落固定钩子名，见 ResolveDecode/ResolveRender）。
 type Route struct {
 	Method string    `json:"method"` // HTTP 方法，大写
 	Path   string    `json:"path"`   // 原生路径，支持 :param 段，如 /submit/:action

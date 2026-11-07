@@ -8,7 +8,7 @@ import (
 	"github.com/gogf/gf/v2/errors/gerror"
 )
 
-// 图标上传通道的安全校验（对齐 new-api 的规则：见 docs/plugin-api 与设计方案 §十八）。
+// 图标上传通道的安全校验（规则见 docs/plugin-api/v1.md）。
 // 存储 data URI（data:image/svg+xml;base64,... / data:image/png;base64,...），
 // 读取端点解码后以声明的 Content-Type 写出——前端仅 <img> 渲染，绝不 innerHTML。
 

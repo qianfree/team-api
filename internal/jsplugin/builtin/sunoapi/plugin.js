@@ -1,23 +1,27 @@
-// sunoapi：自 new-api plugins/tasks/sunoapi/plugin.js 移植（迁移验证样本）。
+// sunoapi：SunoAPI 音乐与歌词生成插件（submit/:action + 批量查询）。
 // 上游为 Suno-API 项目（https://github.com/Suno-API/Suno-API）。
 //
-// ── 迁移差异日志（vs new-api 原版，全文其余保持一致）──────────────────
-// ① meta：channelTypes/protocols/upstreams 保留原样（宿主宽容忽略）；
-//    description 本地化对象与 usageSchema map 形态直接沿用（宿主兼容垫片解析）；
-//    仅 routes 路径去掉 /suno 前缀（宿主统一挂 /pjs/sunoapi 下）。
-// ② buildSubmitRequest：ctx 形态适配（requestBody→body、去掉 requestHeaders/
-//    apiKey/baseUrl——宿主注入鉴权与渠道地址）；去掉 Authorization 头与 action 字段。
-// ③ parseSubmitResponse：双参 (ctx, resp) → 单参 ctx.responseBody。
-// ④ buildQueryRequest：改用宿主契约 ctx.tasks（批量任务引用）。
-// ⑤ 新增 parseQueryResponse 包装：把 new-api 的 parseBatchResult 条目映射为宿主
-//    items 契约（done/usage/artifacts 终态映射）。
-// ⑥ 新增 estimateUsage 包装（new-api extractUsage 的宿主契约名）。
-// ⑦ 渲染钩子：native.renderSubmit/renderTask/renderTasks 包一层 {status, body}，
-//    并以顶级导出暴露（宿主按路由别名解析顶级导出）。
-// ⑧ 删除：protocols 对象（openai_responses SSE 渲染，宿主未实现该协议认领）。
-//    listArtifacts/buildContentRequest 保留原样（宿主产物走 items[].artifacts 声明，
-//    这两个导出在本宿主不被调用，保留以最小化差异）。
-// ──────────────────────────────────────────────────────────────────────
+// 上游协议：
+//   POST {base}/suno/submit/{MUSIC|LYRICS} → {code:"success",data:"<task_id>"}
+//   POST {base}/suno/fetch → {code,data:[{task_id,status,data}]}
+//   GET  {base}/suno/fetch/{task_id} → {code,data:{task_id,status,data}}
+//
+// 实现要点：
+// ① meta：usageSchema 为 map 形态（clips 计费段数 + action 枚举）；
+//    channelTypes / description 的本地化对象由宿主垫片解析。
+// ② routes：提交 `/submit/:action`、批量查询 `/fetch`（dynamic）、单任务查询
+//    `/fetch/:task_id`；路径不带 /suno 前缀（宿主统一挂在 /pjs/sunoapi 下）。
+// ③ buildSubmitRequest：用 ctx.body 取请求体，鉴权与渠道地址由宿主注入，
+//    不自己拼 Authorization 与 action 字段。
+// ④ parseSubmitResponse / parseQueryResponse / estimateUsage 均为单参形态，
+//    上游响应取自 ctx.responseBody，批量查询的任务引用取自 ctx.tasks。
+// ⑤ parseQueryResponse 把 parseBatchResult 的逐条结果映射为宿主 items 契约
+//    （done / usage / artifacts 终态），estimateUsage 负责提交前预扣
+//    （固定口径：MUSIC 2 段 / LYRICS 1 段）。
+// ⑥ 渲染钩子 renderSubmit/renderTask/renderTasks 统一返回 {status, body}，
+//    并以顶级导出暴露（宿主按路由别名解析）。
+// ⑦ listArtifacts/buildContentRequest 宿主当前不调用——产物走 items[].artifacts
+//    声明式配置，这两个导出仅保留以维持既有导出面。
 export const meta = {
   apiVersion: 1,
   key: "sunoapi",
@@ -60,7 +64,7 @@ function actionName(ctx) {
   return String((ctx.params || {}).action || ctx.action || "").toUpperCase();
 }
 
-// ── 解码（new-api decodeNativeSubmit 的宿主契约形态：body 为原始 JSON）──
+// ── 解码（decodeSubmit：body 为原始 JSON，action 取自路径参数）──
 export function decodeSubmit(ctx) {
   if (!ctx.body || typeof ctx.body !== "object") throw new Error("JSON body required");
   const action = actionName(ctx);
@@ -72,14 +76,14 @@ export function decodeSubmit(ctx) {
   };
 }
 
-// dynamic 路由解码：POST /fetch 的 ids 列表 → 存量任务批量查询（new-api decodeNativeBatch）
+// dynamic 路由解码：POST /fetch 的 ids 列表 → 存量任务批量查询
 export function decodeBatch(ctx) {
   const body = ctx.body || {};
   const ids = Array.isArray(body.ids) ? body.ids : [];
   return { kind: "query", taskIds: ids.map(String) };
 }
 
-// 预扣估算（new-api extractUsage 的宿主契约名；固定口径：MUSIC 2 段 / LYRICS 1 段）
+// 预扣估算（固定口径：MUSIC 2 段 / LYRICS 1 段）
 export function estimateUsage(ctx) {
   const action = (actionName(ctx) || "MUSIC").toLowerCase();
   return { clips: action === "lyrics" ? 1 : 2, action: action };
@@ -130,7 +134,7 @@ export function buildQueryRequest(ctx) {
   };
 }
 
-// parseBatchResult：new-api 原版逐条解析（保持不变），供 parseQueryResponse 包装
+// parseBatchResult：逐条解析上游批量查询结果，供 parseQueryResponse 映射
 function parseBatchResult(body) {
   if (body.code !== "success") throw new Error(String(body.message || ""));
   return (body.data || []).map(function (item) {
@@ -174,7 +178,7 @@ export function parseQueryResponse(ctx) {
   return { items: items };
 }
 
-// ── 渲染（new-api native.render* 的宿主契约包装：{status, body}）────────
+// ── 渲染（包装为 {status, body} 形态，宿主按路由别名调用）────────
 
 function nativeTask(t) {
   return {

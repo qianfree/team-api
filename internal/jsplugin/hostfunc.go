@@ -21,7 +21,8 @@ import (
 	relaycommon "github.com/qianfree/team-api/relay/common"
 )
 
-// utils.fetch 限额（与 new-api 对齐，见设计方案 §十一）。
+// utils.fetch 限额：预算按「每次钩子调用」重置，避免插件把一次 hook 拖成无界抓取。
+// 口径与 docs/plugin-api/v1.md「宿主能力 utils」一节一致。
 const (
 	maxFetchesPerCall   = 4                // 每次钩子调用最多抓取次数
 	fetchTimeout        = 15 * time.Second // 单次抓取超时
@@ -77,7 +78,7 @@ func (h *hostUtils) buildObject(rt *goja.Runtime) *goja.Object {
 	})
 	_ = obj.Set("config", configObj)
 
-	// utils.crypto（new-api 对齐：签名类厂商如 Kling AK/SK 需要；纯计算无网络）+ uuid
+	// utils.crypto：加签类厂商（如 kling 的 AK/SK）需要，纯计算无网络；另附 uuid
 	cryptoObj := rt.NewObject()
 	_ = cryptoObj.Set("hmacSHA256", func(call goja.FunctionCall) goja.Value {
 		return h.wrapSync(rt, call, "hmacSHA256", 2, func(args []goja.Value) any {
@@ -141,7 +142,7 @@ func (h *hostUtils) wrapSync(rt *goja.Runtime, call goja.FunctionCall, name stri
 }
 
 // signJWTHS256 签发 HS256 JWT（header 固定 {alg:HS256,typ:JWT}；claims 原样写入，
-// exp/nbf 等时效字段由调用方给定——与 new-api jwtSignHS256 同语义）。
+// exp/nbf 等时效字段由调用方给定）。
 func signJWTHS256(claims map[string]any, secret string) (string, error) {
 	header := map[string]any{"alg": "HS256", "typ": "JWT"}
 	headerJSON, err := json.Marshal(header)

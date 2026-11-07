@@ -1,23 +1,27 @@
-// hailuo：自 new-api plugins/tasks/hailuo/plugin.js 移植（迁移批次 4/6）。
-// MiniMax 海螺视频：v1 API（2.3/02/01 系列九模型）+ H3 多模态参考（/v2）。
+// hailuo：MiniMax 海螺视频生成插件，v1 API（2.3 / 02 / 01 系列九模型）+ H3 多模态参考（/v2）。
 //
-// ── 迁移差异日志（vs new-api 原版，998 行）──────────────────
-// ① meta：icon 改宿主名（video）；usageProfiles/usageExamples 保留（忽略）；
-//    usageSchema map 形态沿用（联合档位）。
-// ② routes：两条提交（v1/v2 按模型分流）+ 一条统一查询（URL 由模型判定）。
-// ③ 解码：createTask/createH3Task（原生体校验模型归属后 vendorBody 透传）。
-// ④ buildSubmitRequest：相对 URL + 宿主默认 Bearer（无签名）。
-// ⑤ parseSubmitResponse：双参→单参；v1 base_resp 信封校验 / v2 裸 task_id。
-// ⑥ parseQueryResponse：双 API 状态映射 + 终态产物——v1 的 file_id 经
-//    utils.fetch(/v1/files/retrieve，渠道域白名单内) 换取签名 download_url
-//    写入 taskData._video_url（宿主产物流水线裸下载签名 URL）；H3 直接
-//    content.url。用量：H3 按响应 usage 精确结算；v1 无响应用量 → 走预扣
-//    即终价（与原版 extractUsageOnComplete 的 v1 行为等价）。
-// ⑦ estimateUsage ← extractUsage（H3 内容计数含 input_video_seconds 上限保留）。
-// ⑧ renderSubmit/renderTask ← taskCreated/taskStatus 包装。
-// ⑨ 删除：protocols、listArtifacts/buildContentRequest（声明式产物替代；
-//    v1 网关中转产物路径不支持——直连渠道形态）。
-// ─────────────────────────────────────────────────────────────
+// 上游协议：
+//   POST {base}/v1/video_generation → {base_resp,task_id}
+//   GET  {base}/v1/query/video_generation?task_id= → {base_resp,status,file_id}
+//   GET  {base}/v1/files/retrieve?file_id= → {file:{download_url}}
+//   POST {base}/v2/video_generation → {task_id}
+//   GET  {base}/v2/query/video_generation/{id} → {task_id,status,content}
+//
+// 实现要点：
+// ① meta：icon 用宿主图标名 video；usageSchema 为 map 形态（秒数 + 分辨率联合档位）。
+// ② routes：两条提交（/v1 与 /v2 按模型分流）+ 一条统一查询，
+//    查询地址按 taskData._isH3 判定。
+// ③ 解码：createTask/createH3Task 校验模型归属后原样透传 vendorBody；
+//    H3 时长限制在 4–15 秒。
+// ④ buildSubmitRequest：相对 URL，鉴权走渠道默认 Bearer（MiniMax 无需签名）。
+// ⑤ parseSubmitResponse：v1 校验 base_resp 信封，v2 取裸 task_id。
+// ⑥ parseQueryResponse：两套 API 的状态映射。v1 只给 file_id，需再调
+//    /v1/files/retrieve 换签名 download_url 并写入 taskData._video_url
+//    （供产物直链下载）；H3 直接取 content.url。
+// ⑦ 用量：H3 按响应 usage 精确结算；v1 上游不返回用量，预扣即终价。
+//    estimateUsage 按秒预扣，H3 另计 input_images / input_video_seconds。
+// ⑧ renderSubmit/renderTask：taskCreated/taskStatus 形态的 {status, body} 渲染。
+// ⑨ 产物仅支持直连渠道形态：经网关中转的 v1 产物路径未实现。
 const VIDEO_SECONDS_FIELD = { type: "number", unit: "second", description: { en: "Video generation unit price", zh: "视频生成单价" } };
 const RESOLUTION_DESCRIPTION = { en: "Output video resolution", zh: "输出视频分辨率" };
 

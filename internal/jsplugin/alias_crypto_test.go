@@ -46,7 +46,7 @@ func TestRouteHookAlias(t *testing.T) {
 	}
 }
 
-// TestCryptoHostFunctions crypto 宿主函数与 Go 标准库计算值对照（new-api 签名对齐）。
+// TestCryptoHostFunctions crypto 宿主函数的计算结果与 Go 标准库对照。
 func TestCryptoHostFunctions(t *testing.T) {
 	src := `
 export const meta = { apiVersion: 1, key: "crypto-demo", name: "C", version: "1.0.0",

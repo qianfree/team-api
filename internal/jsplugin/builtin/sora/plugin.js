@@ -1,22 +1,22 @@
-// sora：自 new-api plugins/tasks/sora/plugin.js 移植（迁移批次 1/6）。
-// OpenAI Sora 视频生成（文生视频/图生视频 URL/remix）。
+// sora：OpenAI Sora 视频生成插件（文生视频 / 图生视频 / remix）。
 //
-// ── 迁移差异日志（vs new-api 原版）────────────────────────────
-// ① meta：icon 改宿主图标名（video）；channelTypes 保留（宽容忽略）；
-//    usageSchema map 形态/description 本地化对象直接沿用（宿主垫片）。
-// ② routes：新增三条（原版无原生路由，走宿主协议）；remix 经路径参数。
-// ③ decodeRequest：openai_video 协议解码的宿主契约形态（body 为原始 JSON）。
-// ④ buildSubmitRequest：相对 URL + 去 Authorization（宿主注入）；
-//    multipart parts 形态不支持（宿主未实现 bodyType multipart）——
-//    图生视频走 input_reference URL 形态，文件上传形态暂缺。
-// ⑤ parseSubmitResponse：双参→单参（ctx.responseBody）。
-// ⑥ parseQueryResponse：包装 parseTaskResult 状态映射 + 终态 usage/artifacts；
-//    产物为需渠道鉴权的相对路径 /v1/videos/{id}/content（source.auth=channel-bearer）。
-// ⑦ estimateUsage：extractUsage 的宿主契约名。
-// ⑧ renderSubmit/renderTask：openai_video 形态包装 {status, body}。
-// ⑨ 删除：protocols 对象（SSE 认领）、listArtifacts/buildContentRequest
-//    （宿主产物走声明式 items[].artifacts）。
-// ─────────────────────────────────────────────────────────────
+// 上游协议：
+//   POST {base}/v1/videos → {id|task_id}
+//   POST {base}/v1/videos/{id}/remix → {id|task_id}
+//   GET  {base}/v1/videos/{id} → {status,progress,error?}
+//
+// 实现要点：
+// ① meta：icon 用宿主图标名 video；channelTypes 仅作信息性声明；
+//    usageSchema 以 map 形态声明计费事实（seconds 时长、size 输出尺寸）。
+// ② routes：三条原生路由（提交 / remix / 查询），remix 的任务 ID 取自路径参数。
+// ③ decodeRequest：openai_video 协议解码，body 即原始 JSON。
+// ④ buildSubmitRequest：返回相对 URL，不带 Authorization（宿主注入渠道鉴权）。
+//    宿主未实现 multipart 上传，图生视频只支持 input_reference 的 URL 形态。
+// ⑤ parseSubmitResponse：单参形态，上游响应取自 ctx.responseBody。
+// ⑥ parseQueryResponse：状态映射 + 终态回填 usage/artifacts；产物为需渠道鉴权的
+//    相对路径 /v1/videos/{id}/content（source.auth=channel-bearer）。
+// ⑦ estimateUsage：提交前按秒预扣估算。
+// ⑧ renderSubmit/renderTask：openai_video 形态渲染，统一返回 {status, body}。
 export const meta = {
   apiVersion: 1,
   key: "sora",

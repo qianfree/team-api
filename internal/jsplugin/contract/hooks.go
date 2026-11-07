@@ -29,7 +29,7 @@ type DecodeContext struct {
 	Files []FileRef `json:"files,omitempty"`
 }
 
-// FileRef 客户端上传文件的引用描述（new-api FileReference 对齐形态）。
+// FileRef 客户端上传文件的引用描述：ref 为请求级不透明句柄，文件字节永不进 JS。
 type FileRef struct {
 	Ref      string `json:"ref"`      // 如 request_file:input_reference（首个）/ request_file:images#1（后续）
 	Field    string `json:"field"`    // multipart 字段名
@@ -45,8 +45,8 @@ type BuildSubmitContext struct {
 	Model          string            `json:"model"`                   // 平台标准模型名（计费键）
 	UpstreamModel  string            `json:"upstreamModel,omitempty"` // 渠道映射后的上游模型名
 	ChannelBaseURL string            `json:"channelBaseUrl"`          // 渠道 base URL
-	// ApiKey 渠道密钥（如 kling 的 accessKey|secretKey）：供签名类插件经 utils.crypto
-	// 计算鉴权头（new-api 同语义；信任边界=上传即信任）。
+	// ApiKey 渠道密钥（如 kling 的 accessKey|secretKey）：加签类插件用它经 utils.crypto
+	// 计算鉴权头后再覆盖基座默认 Bearer。信任边界=上传即信任，插件可读该值。
 	ApiKey string          `json:"apiKey,omitempty"`
 	State  json.RawMessage `json:"state,omitempty"` // 插件状态（提交阶段通常为空）
 }
@@ -178,8 +178,8 @@ func ValidateBuiltRequest(raw map[string]json.RawMessage) (*BuildRequestResult, 
 	if len(r.Body) > MaxPassthroughBytes {
 		return nil, gerror.Newf("body 超过 %d 字节上限", MaxPassthroughBytes)
 	}
-	// Authorization 允许声明：签名类厂商（kling JWT 等）由插件经 utils.crypto
-	// 计算鉴权头后覆盖基座默认 Bearer（ctx.apiKey 只读传入，new-api 同语义）。
+	// Authorization 允许声明：加签类厂商（如 kling 的 JWT）由插件用 ctx.apiKey
+	// 经 utils.crypto 算出鉴权头，覆盖基座默认 Bearer。
 	if r.Method != "" {
 		if _, ok := allowedMethods[strings.ToUpper(r.Method)]; !ok {
 			return nil, gerror.Newf("method %q 不合法", r.Method)
@@ -326,8 +326,8 @@ func ValidateQueried(raw map[string]json.RawMessage, want []QueryTaskRef) (*Quer
 	return &r, nil
 }
 
-// artifactKeyPattern 产物 key 形态：字母数字开头，允许连字符/下划线（对齐 DB 列宽 128，
-// new-api 的产物 key 形如 "audio-<hash>" 带连字符）。
+// artifactKeyPattern 产物 key 形态：字母数字开头，允许连字符/下划线（对齐 DB 列宽 128；
+// 常见取值形如 "audio-0"、"cover-1"、"video"）。
 var artifactKeyPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$`)
 
 // validate 校验单条产物声明。

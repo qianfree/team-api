@@ -1,22 +1,23 @@
-// doubao：自 new-api plugins/tasks/doubao/plugin.js 移植（迁移批次 5/6）。
-// 火山引擎豆包：Seedance 视频 + Seedream 图片（同步）。
+// doubao：火山引擎豆包插件，Seedance 视频生成 + Seedream 图片生成（同步）。
 //
-// ── 迁移差异日志（vs new-api 原版，1281 行）─────────────────
-// ① 视频（Seedance）完整迁移：提交纯 JSON（SSE 仅图片流式用，视频本就 JSON）。
-// ② 图片（Seedream）非流式迁移：走宿主 immediate（同步即完成）；流式（stream:true）
-//    降级拒绝——宿主无 SSE 提交响应钩子（P3 待评估项）。
-// ③ 计费口径保留：tokens = 秒 × 宽 × 高 × 24 / 1024（官方公式）估算 + 终态
-//    completion_tokens 精确结算；video_input 枚举（video/none）与
-//    video_input_ratio 折算保留（ratio 进 formula_facts 供表达式引用）。
-// ④ usageSchema map 形态：tokens(number)+resolution(enum)+video_input(enum)
-//    +generate_audio(boolean)+video_input_ratio(number)。
-// ⑤ routes：视频提交/查询 + 图片提交（immediate）。
-// ⑥ fileRef：视频参考图（content[].image_url 的 fileRef 占位）支持。
-// ⑦ renderSubmit/renderTask ← Ark 信封包装。
-// ⑧ 删除：protocols（openai_responses SSE 认领）、requiredCapabilities
-//    （duration-auto，宿主以 maxDuration 保留口径替代）、draft 任务改写
-//    （rewriteDraftTaskContent/originTasks——无宿主对应概念）。
-// ─────────────────────────────────────────────────────────────
+// 上游协议：
+//   POST {base}/api/v3/contents/generations/tasks → {id,status}
+//   GET  {base}/api/v3/contents/generations/tasks/{id} → {status,usage,content}
+//   POST {base}/api/v3/images/generations → {data:[{url}]}
+//
+// 实现要点：
+// ① 视频（Seedance）：提交纯 JSON（SSE 只用于图片流式，视频本就是 JSON）。
+// ② 图片（Seedream）：仅非流式——走宿主 immediate 同步链路，提交时强制
+//    stream=false，请求带 stream:true 直接拒绝（宿主无 SSE 提交响应钩子）；
+//    上游不给任务 ID，用 "sync-xxxx" 占位。
+// ③ 计费：tokens 按 秒 × 宽 × 高 × 24 / 1024 估算，终态优先用响应
+//    usage.total_tokens 回填并取 usage.video_resolution；video_input 枚举
+//    （video/none）与 video_input_ratio 一并写入计费事实，ratio 可在计费表达式中引用。
+// ④ usageSchema 为 map 形态：tokens(number) / resolution(enum) / video_input(enum) /
+//    generate_audio(boolean) / video_input_ratio(number)。
+// ⑤ routes：视频提交 + 视频查询 + 图片提交（immediate）。
+// ⑥ fileRef：视频参考图支持 content[].image_url 的 fileRef 占位。
+// ⑦ renderSubmit/renderImage/renderTask：Ark 信封形态的 {status, body} 渲染。
 const VIDEO_MODELS = {
   "doubao-seedance-1-0-pro-250528": { resolutions: ["480p", "720p", "1080p"], maxDuration: 12 },
   "doubao-seedance-1-0-lite-t2v": { resolutions: ["480p", "720p", "1080p"], maxDuration: 12 },

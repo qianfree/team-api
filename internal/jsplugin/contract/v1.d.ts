@@ -36,7 +36,7 @@ export interface Route {
   /** 原生路径，支持 :param 段，如 /submit/:action */
   path: string;
   type: RouteType;
-  /** submit 路由的 decodeRequest 钩子别名（new-api 兼容，缺省 decodeRequest） */
+  /** submit 路由的 decodeRequest 钩子别名，缺省 decodeRequest */
   decode?: string;
   /** 渲染钩子名（submit→renderSubmit、query→renderTask），缺省走默认透传 */
   render?: string;

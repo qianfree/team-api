@@ -12,7 +12,7 @@ import (
 	"github.com/qianfree/team-api/internal/jsplugin/contract"
 )
 
-// ── 迁移验证：new-api sunoapi 插件（原版 + 兼容垫片 + 钩子适配）跑通宿主全链 ──
+// ── sunoapi 插件端到端验证：meta 兼容解析 + 别名钩子 + 提交 / 批量查询 / 渲染全链 ──
 
 func sunoapiSource(t *testing.T) string {
 	t.Helper()
@@ -23,7 +23,7 @@ func sunoapiSource(t *testing.T) string {
 	return string(data)
 }
 
-// TestMigratedSunoapiManifest meta 兼容垫片验证：本地化 description / map 形态
+// TestMigratedSunoapiManifest meta 兼容解析验证：本地化 description / map 形态
 // usageSchema / 对象 author / 保留的 channelTypes（宽容忽略）/ dynamic 路由。
 func TestMigratedSunoapiManifest(t *testing.T) {
 	compiled := mustCompile(t, sunoapiSource(t))
@@ -99,7 +99,7 @@ func mockSunoAPI(t *testing.T) *httptest.Server {
 func TestMigratedSunoapiFullFlow(t *testing.T) {
 	cleanup, err := PublishForTest(sunoapiSource(t))
 	if err != nil {
-		t.Fatalf("发布迁移插件失败: %v", err)
+		t.Fatalf("发布 sunoapi 插件失败: %v", err)
 	}
 	t.Cleanup(cleanup)
 	plugin, ok := CurrentGeneration().Plugin("sunoapi")
@@ -198,7 +198,7 @@ func TestMigratedSunoapiFullFlow(t *testing.T) {
 		t.Fatalf("终态 usage 异常: %v err=%v", facts, err)
 	}
 
-	// 6) 渲染三钩子（new-api native 形态包装为 {status, body}）
+	// 6) 渲染三钩子（包装为 {status, body} 形态）
 	rend, err := contract.ValidateRendered(call("renderSubmit", contract.RenderTaskContext{
 		Task: contract.RenderTask{PublicTaskID: "task_pub_1", TaskID: "suno-task-1", Status: "SUBMITTED", Data: sub.TaskData},
 	}))

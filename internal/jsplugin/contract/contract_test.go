@@ -232,7 +232,7 @@ func TestAuthorCompat(t *testing.T) {
 		t.Fatalf("字符串 author 解析异常: %+v", m1.Author)
 	}
 
-	// 对象形态（new-api 对齐）
+	// 对象形态（规范形态）
 	var m2 Manifest
 	if err := json.Unmarshal([]byte(`{"author":{"name":"qian","url":"https://example.com"}}`), &m2); err != nil {
 		t.Fatalf("对象 author 解析失败: %v", err)

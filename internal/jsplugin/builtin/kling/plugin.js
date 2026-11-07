@@ -1,24 +1,29 @@
-// kling：自 new-api plugins/tasks/kling/plugin.js 移植（迁移批次 2/6）。
-// 可灵视频生成：kling-v2.5/v2.6/v3（/v1/videos/* API）+ kling-4.0（/{endpoint}/kling-4.0 API）。
+// kling：可灵视频生成插件，覆盖 kling-v2.5/v2.6/v3（/v1/videos/*）与 kling-4.0（/{endpoint}/kling-4.0）。
 //
-// ── 迁移差异日志（vs new-api 原版，833 行）──────────────────
-// ① meta：icon 改宿主图标名（video）；usageProfiles 删除（宿主无此机制）；
-//    usageSchema 用 map 形态声明 units（渠道密钥 accessKey|secretKey 在管理端渠道配置）。
-// ② routes：五条提交（v2/v3 两条 + kling-4.0 三条）+ 一条统一查询
-//    （v2/v3 原版按 action 分两条查询路由，此处合并——action 从 taskData._action 恢复）。
-// ③ tokenFor：去 viaGateway 分支（宿主无 new_api 链式渠道）；JWT 经
-//    utils.crypto.jwtSignHS256（宿主 P0 对齐能力），Authorization 覆盖基座默认。
-// ④ decodeSubmit：v2/v3 原生形态（model_name 必填）；kling-4.0 路由按 ctx.path
-//    分流 vendorBody 透传（decodeKling4Submit 的宿主契约形态）。
-// ⑤ buildSubmitRequest：相对 URL + Authorization 由插件签名计算。
-// ⑥ parseSubmitResponse：kling-4.0 的 state.resolution 改为 taskData._kling4 分标
-//    （宿主 v1 未持久化插件 state，按响应形态识别——与原版渲染器同判定）。
-// ⑦ parseQueryResponse：包装 parseTaskResult（两套 API 状态映射 + units 结算 +
-//    产物 URL 声明）；v2/v3 查询 URL 的 action 从 taskData._action 恢复。
-// ⑧ extractUsage/extractUsageOnComplete → estimateUsage / items[].usage。
-// ⑨ renderSubmit/renderTask：native.taskCreated/taskStatus 形态包装。
-// ⑩ 删除：protocols（SSE 认领）、listArtifacts/buildContentRequest（声明式产物替代）。
-// ─────────────────────────────────────────────────────────────
+// 上游协议：
+//   POST {base}/v1/videos/text2video → {code,data:{task_id}}
+//   POST {base}/v1/videos/image2video → {code,data:{task_id}}
+//   GET  {base}/v1/videos/{action}/{task_id} → {code,data:{task_status,task_result}}
+//   POST {base}/{endpoint}/kling-4.0 → {code,data:{id}}（endpoint：text-to-video / image-to-video / omni-video）
+//   GET  {base}/tasks?task_ids={id} → {code,data:[{status,...}]}
+//
+// 实现要点：
+// ① meta：usageSchema 以 map 形态声明 units（可灵计费点数）；
+//    渠道密钥 accessKey|secretKey 在管理端渠道配置中维护。
+// ② routes：五条提交（v2/v3 两条 + kling-4.0 三条）+ 一条统一查询；
+//    action 由 taskData._action 恢复，据此拼出对应的上游查询地址。
+// ③ tokenFor：渠道密钥为 accessKey|secretKey 时用 utils.crypto.jwtSignHS256 现签
+//    JWT（iss=ak，30 分钟有效），单段密钥则原样使用；结果以 Authorization
+//    请求头覆盖渠道默认鉴权。
+// ④ decodeSubmit：v2/v3 走原生形态（model_name 必填）；kling-4.0 按 ctx.path
+//    分流三条路由，vendorBody 原样透传。
+// ⑤ buildSubmitRequest：相对 URL；kling-4.0 的端点按 contents 形态判定
+//    （纯文本→text-to-video、含图→image-to-video、含视频输入→omni-video）。
+// ⑥ parseSubmitResponse：v2/v3 记 _action；kling-4.0 响应只有 data.id，
+//    打 _kling4 标记供轮询与渲染识别（宿主不持久化插件 state）。
+// ⑦ parseQueryResponse：两套 API 的状态映射 + units 结算 + 产物 URL 声明。
+// ⑧ 用量：提交前 estimateUsage 预扣，终态结算写入 items[].usage。
+// ⑨ renderSubmit/renderTask：taskCreated/taskStatus 形态的 {status, body} 渲染。
 export const meta = {
   apiVersion: 1,
   key: "kling",

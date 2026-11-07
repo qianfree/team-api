@@ -1,21 +1,24 @@
-// xai：自 new-api plugins/tasks/xai/plugin.js 移植（迁移批次 3/6）。
-// xAI Grok Imagine 视频生成（文生/图生/参考生视频、视频编辑、视频延长）。
+// xai：xAI Grok Imagine 视频生成插件（文生 / 图生 / 参考生视频、视频编辑、视频延长）。
 //
-// ── 迁移差异日志（vs new-api 原版，787 行）──────────────────
-// ① meta：icon 改宿主名（video）；usageExamples/usageProfiles 保留（宽容忽略）；
-//    usageSchema map 形态含 boolean 型（moderated——宿主信息性声明）。
-// ② routes：4 条原样（查询路由参数名 :request_id——宿主已支持任意参数名）。
-// ③ 解码：createGeneration/createEdit/createExtension 别名（generationRequest/
-//    videoInputRequest 校验逻辑原样，身份判定改 ctx.model）。
-// ④ buildSubmitRequest：相对 URL；鉴权走宿主默认 Bearer（xai 无签名）。
-// ⑤ parseSubmitResponse：双参→单参；extension 的 state.extension_seconds
-//    改存 taskData._extension_seconds（宿主 v1 不持久化插件 state）。
-// ⑥ parseQueryResponse：包装 parseTaskResult + extractUsageOnComplete（含
-//    MP4 moov/tkhd 头探测输出分辨率——utils.fetch Range 读，宿主支持 bytes）。
-// ⑦ estimateUsage ← extractUsage（去 billing_ratios 分支）。
-// ⑧ renderSubmit/renderTask ← videoCreated/videoStatus 包装。
-// ⑨ 删除：protocols（SSE 认领）、listArtifacts/buildContentRequest（声明式产物）。
-// ─────────────────────────────────────────────────────────────
+// 上游协议：
+//   POST {base}/v1/videos/generations → {request_id}
+//   POST {base}/v1/videos/edits → {request_id}
+//   POST {base}/v1/videos/extensions → {request_id}
+//   GET  {base}/v1/videos/{request_id} → {status,data:{video:{url}},...}
+//
+// 实现要点：
+// ① meta：icon 用宿主图标名 video；usageSchema 为 map 形态，含 boolean 型
+//    moderated（信息性声明，不参与计费）。
+// ② routes：四条（三种提交 + 一条查询），查询路由参数名用 :request_id。
+// ③ 解码：createGeneration/createEdit/createExtension 三个入口共用 decodeByPath，
+//    generationRequest / videoInputRequest 负责字段校验，模型身份以 ctx.model 判定。
+// ④ buildSubmitRequest：相对 URL，鉴权走渠道默认 Bearer（xAI 无需签名）。
+// ⑤ parseSubmitResponse：任务 ID 取响应的 request_id；视频延长的 extension_seconds
+//    记入 taskData._extension_seconds（宿主不持久化插件 state，只能随任务数据传递）。
+// ⑥ parseQueryResponse：状态映射 + 终态结算；输出分辨率靠 utils.fetch 走 Range
+//    读 MP4 的 moov/tkhd 头推算（宿主渠道文件读取支持 bytes）。
+// ⑦ estimateUsage：提交前预扣估算，按动作分别取编辑 / 延长 / 生成的时长口径。
+// ⑧ renderSubmit/renderTask：videoCreated/videoStatus 形态的 {status, body} 渲染。
 const VIDEO_MODELS = {
   "grok-imagine-video": { resolutions: ["480p", "720p"], videoInput: true },
   "grok-imagine-video-1.5": { resolutions: ["480p", "720p", "1080p"] },

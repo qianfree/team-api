@@ -1,20 +1,24 @@
-// alibaba：自 new-api plugins/tasks/alibaba/plugin.js 移植（迁移批次 6/6）。
-// 阿里云百炼 DashScope：万相视频（wan2.2-3.0 全系）+ 千问图像（同步）。
+// alibaba：阿里云百炼 DashScope 插件，万相视频（wan2.2–wan3.0 全系）+ 千问/Z-Image 图像。
 //
-// ── 迁移差异日志（vs new-api 原版，1674 行，最大幅度裁剪）─────
-// ① 视频（万相全系）完整迁移：X-DashScope-Async 异步任务 + GET /api/v1/tasks/{id}
-//    轮询；计费 seconds/resolution/audio 保留 wan3.0 的 input+output 双段口径。
-// ② 图片：千问系（multimodal-generation 同步）走 immediate 非流式；
-//    交错流式（enable_interleave/stream）降级拒绝——宿主无 SSE 提交钩子。
-//    wan2.x 异步图像系（t2i/legacy/image26 等）走异步任务（同一轮询端点）。
-// ③ models 表保留全系（17 视频 + 图像）；dated snapshot 归并逻辑简化为
-//    前缀匹配（wan2.7-t2v-2026-04-25 → wan2.7-t2v）。
-// ④ fileRef：视频参考图/图（input.media 与图像 url 的占位）支持。
-// ⑤ renderSubmit/renderTask ← DashScope 信封包装。
-// ⑥ 删除：protocols（openai_responses SSE）、parseSubmitEventDelta（流式增量）、
-//    oss:// 资源头透传简化（X-DashScope-OssResourceResolve 支持保留在 header 白名单外——
-//    由客户端经 metadata 自带，v1 不透传）、多服务网关分流（/ali 前缀）。
-// ─────────────────────────────────────────────────────────────
+// 上游协议（除同步图像外均带请求头 X-DashScope-Async: enable）：
+//   POST {base}/api/v1/services/aigc/video-generation/video-synthesis  → {output:{task_id},usage}
+//   POST {base}/api/v1/services/aigc/image2video/video-synthesis       → {output:{task_id},usage}
+//        （kf2v / s2v 系走 image2video，其余视频模型走 video-generation）
+//   POST {base}/api/v1/services/aigc/text2image/image-synthesis        → {output:{task_id}}（异步）
+//   POST {base}/api/v1/services/aigc/multimodal-generation/generation  → {output:{choices}}（同步）
+//   GET  {base}/api/v1/tasks/{id}                                      → {output:{task_status,...},usage}
+//
+// 实现要点：
+// ① 视频（万相全系）：X-DashScope-Async 异步提交 + /api/v1/tasks/{id} 轮询；
+//    计费 seconds/resolution/audio 沿用 wan3.0 的 input+output 双段口径。
+// ② 图像：千问系（multimodal-generation）同步出图，immediate 终态，上游无
+//    任务 ID 用 "sync-xxxx" 占位；wan2.x 异步图像系（t2i / legacy / image26 等）
+//    走异步任务，与视频共用同一个轮询端点。交错流式（enable_interleave/stream）
+//    宿主无 SSE 提交钩子，直接拒绝。
+// ③ models 表保留全系（视频 + 图像）；dated snapshot 按前缀归并到基础模型
+//    （wan2.7-t2v-2026-04-25 → wan2.7-t2v）。
+// ④ fileRef：视频参考图与图像输入的 url 位置支持 fileRef 占位。
+// ⑤ renderSubmit/renderImage/renderTask：DashScope 信封形态的 {status, body} 渲染。
 const WAN_MODELS = {
   "wan3.0-video": { resolutions: ["480P", "720P", "1080P"], defaultResolution: "1080P", maxDuration: 30 },
   "wan3.0-video-prime": { resolutions: ["480P", "720P", "1080P"], defaultResolution: "1080P", maxDuration: 30 },
