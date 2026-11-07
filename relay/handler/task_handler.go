@@ -187,6 +187,16 @@ func HandleTaskSubmit(
 			}
 		}
 		if pluginKey != "" {
+			// JS 插件模型只接受插件原生路由入口：解码计划（SubmitPlan）由 /pjs 分发器
+			// 调用插件 decodeRequest 后注入 ctx，标准任务端点（/v1/videos、
+			// /v1/video/generations、/suno/submit 等）不经过该链路。这里提前拦截并
+			// 指明正确入口，避免走到 jsbridge 才报晦涩的 dispatcher 错误
+			// （预扣尚未发生，无资金副作用）。
+			if jsplugin.SubmitPlanFromContext(ctx) == nil {
+				writeTaskError(rc.Writer, http.StatusBadRequest,
+					fmt.Sprintf("model %q is served by JS plugin %q; submit via its native routes /pjs/%s/... (standard task endpoints are not supported for plugin models)", modelName, pluginKey, pluginKey), "")
+				return
+			}
 			platform = constant.TaskPlatform("js:" + pluginKey)
 		} else {
 			g.Log().Warningf(ctx, "HandleTaskSubmit: js task channel cannot resolve plugin (model=%s, channelID=%d)", modelName, channelMeta.ChannelID)

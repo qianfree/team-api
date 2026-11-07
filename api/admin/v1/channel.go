@@ -39,6 +39,7 @@ type ChannelItem struct {
 	TestModel       string   `json:"test_model"`
 	Remark          string   `json:"remark"`
 	UseProxy        bool     `json:"use_proxy"`
+	PluginKey       string   `json:"plugin_key,omitempty"` // 绑定的 JS 插件标识（仅 type=43 渠道）
 	CreatedAt       string   `json:"created_at"`
 	HealthScore     *float64 `json:"health_score"`
 	BreakerState    int      `json:"breaker_state"`  // 调度熔断状态：0=正常 1=熔断中 2=半开探活
@@ -81,6 +82,7 @@ type ChannelCreateReq struct {
 	Remark                  string `json:"remark" dc:"备注"`
 	UseProxy                bool   `json:"use_proxy" d:"false" dc:"启用代理"`
 	WebSearchToGoogleSearch bool   `json:"web_search_to_google_search" d:"false" dc:"web_search→googleSearch 映射（Gemini 渠道，搜索按次另行计价）"`
+	PluginKey               string `json:"plugin_key" dc:"绑定的 JS 插件标识（type=43 JS 任务插件渠道必填，其余类型忽略）"`
 }
 
 // ChannelCreateRes 创建渠道响应
@@ -110,6 +112,7 @@ type ChannelUpdateReq struct {
 	DebugLogTenantID        *int64  `json:"debug_log_tenant_id" dc:"调试目标租户ID过滤（0=不限）"`
 	DebugLogUserID          *int64  `json:"debug_log_user_id" dc:"调试目标成员ID过滤（0=不限）"`
 	DebugLogApiKeyID        *int64  `json:"debug_log_api_key_id" dc:"调试目标密钥ID过滤（0=不限）"`
+	PluginKey               *string `json:"plugin_key" dc:"绑定的 JS 插件标识（仅 type=43 渠道有效；传空串=清除绑定，留空不更新；JS 渠道不允许清空，需随类型切换一起改）"`
 }
 
 // ChannelDeleteReq 删除渠道请求
@@ -140,6 +143,7 @@ type ChannelDetailRes struct {
 	TestModel               string   `json:"test_model"`
 	Remark                  string   `json:"remark"`
 	UseProxy                bool     `json:"use_proxy"`
+	PluginKey               string   `json:"plugin_key,omitempty"` // 绑定的 JS 插件标识（仅 type=43 渠道）
 	WebSearchToGoogleSearch bool     `json:"web_search_to_google_search"`
 	DebugLogEnabled         bool     `json:"debug_log_enabled"`
 	DebugLogTenantID        int64    `json:"debug_log_tenant_id"`

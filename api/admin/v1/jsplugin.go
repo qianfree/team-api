@@ -97,7 +97,24 @@ type JSPluginDeleteReq struct {
 
 type JSPluginDeleteRes struct{}
 
-// JSPluginRoutesReq 当前 generation 的插件路由预览
+// JSPluginSourceReq 查看插件版本源码
+type JSPluginSourceReq struct {
+	g.Meta  `path:"/js-plugins/{key}/versions/{version}/source" method:"get" mime:"json" tags:"管理后台-JS插件" summary:"查看JS插件源码"`
+	Key     string `json:"key"     in:"path" v:"required" dc:"插件标识"`
+	Version string `json:"version" in:"path" v:"required" dc:"版本号"`
+}
+
+type JSPluginSourceRes struct {
+	Key        string `json:"key"`
+	Version    string `json:"version"`
+	Origin     string `json:"origin"`      // builtin | upload
+	Source     string `json:"source"`      // plugin.js 源码全文
+	SourceHash string `json:"source_hash"` // sha256，前端截断展示
+	Remark     string `json:"remark"`
+	CreatedAt  string `json:"created_at"`
+}
+
+// JSPluginRoutesReq 插件路由预览（取激活版本 manifest 声明，禁用状态也可见）
 type JSPluginRoutesReq struct {
 	g.Meta `path:"/js-plugins/{key}/routes" method:"get" mime:"json" tags:"管理后台-JS插件" summary:"JS插件路由预览"`
 	Key    string `json:"key" in:"path" v:"required" dc:"插件标识"`

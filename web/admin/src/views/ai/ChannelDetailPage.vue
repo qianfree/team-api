@@ -7,6 +7,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import request from '@/utils/request'
 import ChannelModelTestModal from '@/components/ChannelModelTestModal.vue'
 import { providerTypeOptions, filterProviderOption } from '@/constants/channel'
+import { usePluginOptions } from '@/composables/usePluginOptions'
 import * as echarts from 'echarts'
 
 const route = useRoute()
@@ -76,6 +77,19 @@ const editForm = reactive({
   status: 'active',
   use_proxy: false,
   web_search_to_google_search: false,
+  plugin_key: '',
+})
+
+// JS 任务插件渠道（type=43）绑定插件选项：打开编辑弹窗时懒加载
+const { pluginOptions, loadPluginOptions } = usePluginOptions()
+const editFormRules = computed(() => ({
+  ...(editForm.type === 43 ? { plugin_key: [{ required: true, message: '请选择绑定的插件' }] } : {}),
+}))
+
+// 类型切走 43 时清掉残留的插件绑定，避免提交时带上无效 plugin_key
+watch(() => editForm.type, (t) => {
+  if (t !== 43) editForm.plugin_key = ''
+  else loadPluginOptions()
 })
 
 function openEditModal() {
@@ -94,7 +108,9 @@ function openEditModal() {
     status: detail.value.status || 'active',
     use_proxy: detail.value.use_proxy || false,
     web_search_to_google_search: detail.value.web_search_to_google_search || false,
+    plugin_key: detail.value.plugin_key || '',
   })
+  if (detail.value.type === 43) loadPluginOptions()
   showEditModal.value = true
 }
 
@@ -1065,6 +1081,10 @@ function formatHeaders(headers: Record<string, string>): string {
                 <ADescriptionsItem label="渠道名称">{{ detail.name }}</ADescriptionsItem>
                 <ADescriptionsItem label="供应商类型">
                   <ATag size="small">{{ detail.type_name }}</ATag>
+                  <ATag v-if="detail.type === 43 && detail.plugin_key" size="small" color="cyan" style="margin-left: 6px">
+                    {{ detail.plugin_key }}
+                  </ATag>
+                  <ATag v-else-if="detail.type === 43" size="small" color="orangered" style="margin-left: 6px">未绑定插件</ATag>
                 </ADescriptionsItem>
                 <ADescriptionsItem label="状态">
                   <ATag :color="statusTagColor[detail.status]" size="small">{{ statusLabel[detail.status] || detail.status }}</ATag>
@@ -1465,8 +1485,8 @@ function formatHeaders(headers: Record<string, string>): string {
     </ASpin>
 
     <!-- Edit Channel Modal -->
-    <AModal v-model:visible="showEditModal" title="编辑渠道" :width="680" :mask-closable="false" :on-before-ok="handleEditSubmit" :ok-loading="editLoading">
-      <AForm :model="editForm" :auto-label-width="true" layout="vertical">
+    <AModal v-model:visible="showEditModal" title="编辑渠道" :width="920" :mask-closable="false" :on-before-ok="handleEditSubmit" :ok-loading="editLoading">
+      <AForm :model="editForm" :rules="editFormRules" :auto-label-width="true" layout="vertical">
         <!-- 基础信息 -->
         <div class="form-group-title">基础信息</div>
         <ARow :gutter="16">
@@ -1485,6 +1505,17 @@ function formatHeaders(headers: Record<string, string>): string {
             <AFormItem label="渠道名称"><AInput v-model="editForm.name" /></AFormItem>
           </ACol>
         </ARow>
+        <AFormItem v-if="editForm.type === 43" field="plugin_key" label="绑定插件" required>
+          <ASelect
+            v-model="editForm.plugin_key"
+            :options="pluginOptions"
+            placeholder="选择该渠道服务的 JS 插件"
+            allow-search
+          />
+          <template #extra>
+            <span class="field-help">ⓘ /pjs/{{ editForm.plugin_key || '{plugin_key}' }}/ 路由的请求只会调度到绑定了该插件的渠道</span>
+          </template>
+        </AFormItem>
         <AFormItem label="Base URL">
           <AInput v-model="editForm.base_url" placeholder="留空使用供应商默认地址" />
           <template #extra>

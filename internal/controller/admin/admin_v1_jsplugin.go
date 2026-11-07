@@ -34,3 +34,7 @@ func (c *ControllerV1) JSPluginRoutes(ctx context.Context, req *v1.JSPluginRoute
 func (c *ControllerV1) JSPluginMetrics(ctx context.Context, req *v1.JSPluginMetricsReq) (res *v1.JSPluginMetricsRes, err error) {
 	return service.Admin().JSPluginMetrics(ctx, req)
 }
+
+func (c *ControllerV1) JSPluginSource(ctx context.Context, req *v1.JSPluginSourceReq) (res *v1.JSPluginSourceRes, err error) {
+	return service.Admin().JSPluginSource(ctx, req)
+}

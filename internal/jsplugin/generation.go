@@ -79,17 +79,6 @@ func (g *Generation) Plugins() []*ActivePlugin {
 	return out
 }
 
-// RoutesByPlugin 返回指定插件的路由（管理端预览用）。
-func (g *Generation) RoutesByPlugin(key string) []contract.Route {
-	var out []contract.Route
-	for _, gr := range g.routes {
-		if gr.plugin.Key == key {
-			out = append(out, gr.route)
-		}
-	}
-	return out
-}
-
 // FindPluginByModel 按模型名（大小写不敏感）查声明它的插件（冲突预检用）。
 func (g *Generation) FindPluginByModel(model string) (string, bool) {
 	key, ok := g.models[strings.ToLower(model)]

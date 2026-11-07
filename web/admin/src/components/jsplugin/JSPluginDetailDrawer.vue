@@ -9,6 +9,7 @@ import {
 import type { TableColumnData } from '@arco-design/web-vue'
 import { IconCopy, IconLink } from '@arco-design/web-vue/es/icon'
 import request from '@/utils/request'
+import JSPluginSourceModal from './JSPluginSourceModal.vue'
 import {
   pluginStatus, resolvePluginIcon, fetchModeLabel,
   type JSPlugin, type JSPluginRoute, type JSPluginVersion,
@@ -28,6 +29,15 @@ const emit = defineEmits<{
 const routes = ref<JSPluginRoute[]>([])
 const routesLoading = ref(false)
 const busyVersion = ref('')
+
+// 源码查看弹窗状态：sourceVersion 记录待查看版本号
+const sourceVisible = ref(false)
+const sourceVersion = ref('')
+
+function viewSource(version: string) {
+  sourceVersion.value = version
+  sourceVisible.value = true
+}
 
 const status = computed(() => (props.plugin ? pluginStatus(props.plugin) : null))
 const icon = computed(() => (props.plugin ? resolvePluginIcon(props.plugin) : null))
@@ -64,9 +74,9 @@ async function loadRoutes(key: string) {
 }
 
 watch(
-  () => [props.visible, props.plugin?.key, props.plugin?.active_version, props.plugin?.in_service] as const,
-  ([visible, key, , inService]) => {
-    if (visible && key && inService) loadRoutes(key)
+  () => [props.visible, props.plugin?.key, props.plugin?.active_version] as const,
+  ([visible, key]) => {
+    if (visible && key) loadRoutes(key)
     else routes.value = []
   },
   { immediate: true },
@@ -145,10 +155,15 @@ const versionColumns: TableColumnData[] = [
   {
     title: '操作',
     dataIndex: 'actions',
-    width: 140,
+    width: 200,
     align: 'right',
     render: ({ record }: any) => {
       const btns: any[] = []
+      btns.push(
+        h(Button, {
+          size: 'mini', type: 'text', onClick: () => viewSource(record.version),
+        }, () => '源码'),
+      )
       if (!record.active) {
         btns.push(
           h(Popconfirm, {
@@ -215,6 +230,11 @@ const versionColumns: TableColumnData[] = [
           <Button type="outline" status="warning">禁用插件</Button>
         </Popconfirm>
         <Button v-else type="primary" @click="emit('toggle', true)">启用插件</Button>
+        <Button
+          v-if="plugin.active_version"
+          type="secondary"
+          @click="viewSource(plugin.active_version)"
+        >查看源码</Button>
         <Button type="secondary" @click="emit('config')">配置</Button>
         <Button v-if="plugin.website" type="text" :href="plugin.website" target="_blank" rel="noopener">
           <template #icon><IconLink /></template>官网
@@ -268,10 +288,7 @@ const versionColumns: TableColumnData[] = [
 
       <section class="jd-section">
         <h4 class="jd-title">调用路由</h4>
-        <div v-if="!plugin.in_service" class="jd-empty">
-          插件未在服务中，<code>/pjs/{{ plugin.key }}/</code> 下暂无生效路由。
-        </div>
-        <div v-else-if="routesLoading" class="jd-empty">加载中…</div>
+        <div v-if="routesLoading" class="jd-empty">加载中…</div>
         <div v-else-if="!routes.length" class="jd-empty">该插件未声明路由。</div>
         <ul v-else class="jd-routes">
           <li v-for="r in routes" :key="`${r.method}${r.path}`" class="jd-route">
@@ -283,7 +300,10 @@ const versionColumns: TableColumnData[] = [
             </Button>
           </li>
         </ul>
-        <p v-if="plugin.in_service" class="jd-note">客户端按上述地址调用，鉴权方式与 /v1 一致（Bearer API Key）。</p>
+        <p class="jd-note">
+          <template v-if="plugin.in_service">客户端按上述地址调用，鉴权方式与 /v1 一致（Bearer API Key）。</template>
+          <template v-else>路由声明取自插件源码 manifest；插件当前未启用，<code>/pjs/{{ plugin.key }}/</code> 下暂未挂载，启用后即按上述地址生效。</template>
+        </p>
       </section>
 
       <section class="jd-section">
@@ -297,10 +317,17 @@ const versionColumns: TableColumnData[] = [
           :pagination="false"
           size="small"
           row-key="id"
-          :scroll="{ x: 620 }"
+          :scroll="{ x: 680 }"
         />
       </section>
     </div>
+
+    <JSPluginSourceModal
+      :visible="sourceVisible"
+      :plugin-key="plugin?.key || ''"
+      :version="sourceVersion"
+      @update:visible="(v: boolean) => (sourceVisible = v)"
+    />
   </Drawer>
 </template>
 

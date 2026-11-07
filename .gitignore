@@ -20,6 +20,8 @@ build/
 .claude
 .codegraph
 .workbuddy
+.zcode
+
 
 # Environment files with sensitive data
 .env
@@ -53,6 +55,10 @@ relaykit/relayconvert/register/golden/real_inputs/
 relaykit/relayconvert/register/golden/real_stream_inputs/
 relaykit/relayconvert/register/golden/real_responses/
 relaykit/relayconvert/register/golden/corpus_manifest.json
+
+# 文档文件
+docs/business/
+docs/promo/
 
 
 # AI生成文档

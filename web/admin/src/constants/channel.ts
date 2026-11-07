@@ -29,6 +29,26 @@ export const providerTypeOptions: { label: string; value: number }[] = [
 export const providerTypeName: Record<number, string> = {}
 providerTypeOptions.forEach(o => { providerTypeName[o.value] = o.label })
 
+// 供应商分类（创建渠道表单顶部的模式切换胶囊，参考 new-api 的分类拾取器）：
+// 每个类型恰好归属一类；all 为空数组表示不过滤。新增供应商时在此登记归类。
+export const providerCategoryMap: Record<string, { label: string; types: number[] }> = {
+  all: { label: '全部', types: [] },
+  overseas: { label: '海外模型', types: [1, 2, 3, 15, 16, 35] },
+  china: { label: '国产大模型', types: [4, 6, 7, 8, 9, 10, 18, 19, 26, 29] },
+  cloud: { label: '云平台', types: [11, 12, 13, 20] },
+  aggregator: { label: '聚合与自部署', types: [22, 25, 27, 28, 30, 41, 42] },
+  media: { label: '媒体生成', types: [34] },
+  jsplugin: { label: 'JS 插件', types: [43] },
+}
+
+// 按分类过滤供应商类型选项（all / 未知分类返回全量）
+export function filterTypeOptionsByCategory(category: string) {
+  const cat = providerCategoryMap[category]
+  if (!cat || cat.types.length === 0) return providerTypeOptions
+  const allow = new Set(cat.types)
+  return providerTypeOptions.filter(o => allow.has(o.value))
+}
+
 // Arco Select 的 allow-search 自定义过滤：小写包含匹配
 export function filterProviderOption(inputValue: string, option: { label: string; value: number }) {
   const input = inputValue.toLowerCase()

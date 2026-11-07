@@ -95,14 +95,36 @@ func (s *sAdmin) JSPluginDelete(ctx context.Context, req *v1.JSPluginDeleteReq) 
 	return &v1.JSPluginDeleteRes{}, nil
 }
 
+// JSPluginSource 查看指定版本源码（只读，内置/上传版本均可）。
+func (s *sAdmin) JSPluginSource(ctx context.Context, req *v1.JSPluginSourceReq) (*v1.JSPluginSourceRes, error) {
+	row, err := jsplugin.DefaultRegistry().VersionSource(ctx, req.Key, req.Version)
+	if err != nil {
+		return nil, err
+	}
+	created := ""
+	if row.CreatedAt != nil {
+		created = row.CreatedAt.Format("2006-01-02 15:04:05")
+	}
+	return &v1.JSPluginSourceRes{
+		Key:        row.PluginKey,
+		Version:    row.Version,
+		Origin:     row.Origin,
+		Source:     row.Source,
+		SourceHash: row.SourceHash,
+		Remark:     row.Remark,
+		CreatedAt:  created,
+	}, nil
+}
+
+// JSPluginRoutes 路由预览取激活版本 manifest（上传/内置 seed 时从 plugin.js 解析落库），
+// 不依赖当前 generation——禁用状态下也要能看见端点信息（启用后按同一路径挂载）。
 func (s *sAdmin) JSPluginRoutes(ctx context.Context, req *v1.JSPluginRoutesReq) (*v1.JSPluginRoutesRes, error) {
-	gen := jsplugin.CurrentGeneration()
-	plugin, ok := gen.Plugin(req.Key)
-	if !ok {
+	manifest, err := jsplugin.DefaultRegistry().ActiveManifest(ctx, req.Key)
+	if err != nil || manifest == nil {
 		return &v1.JSPluginRoutesRes{List: []v1.JSPluginRouteItem{}}, nil
 	}
-	out := make([]v1.JSPluginRouteItem, 0, len(plugin.Manifest.Routes))
-	for _, route := range gen.RoutesByPlugin(req.Key) {
+	out := make([]v1.JSPluginRouteItem, 0, len(manifest.Routes))
+	for _, route := range manifest.Routes {
 		out = append(out, v1.JSPluginRouteItem{
 			Method: route.Method,
 			Path:   "/pjs/" + req.Key + contract.NormalizePathShape(route.Path),

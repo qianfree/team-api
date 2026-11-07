@@ -347,6 +347,18 @@ func (r *Registry) Enable(ctx context.Context, key string, enabled bool) error {
 	return r.rebuildGeneration(ctx)
 }
 
+// VersionSource 返回指定版本的源码及元信息（管理后台只读查看用）。
+func (r *Registry) VersionSource(ctx context.Context, key, version string) (*PluginVersionRow, error) {
+	row, err := r.loadRow(ctx, key, version)
+	if err != nil {
+		return nil, err
+	}
+	if row == nil {
+		return nil, gerror.Newf("插件 %s@%s 不存在", key, version)
+	}
+	return row, nil
+}
+
 // GetPluginIcon 返回激活版本的品牌图标（优先上传图片 data URI，无则空）。
 func (r *Registry) GetPluginIcon(ctx context.Context, key string) (string, error) {
 	rows, err := r.loadActiveRows(ctx)

@@ -17,10 +17,12 @@ import (
 	"github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/dispatchadapter"
+	"github.com/qianfree/team-api/internal/jsplugin"
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/relay"
 	uc "github.com/qianfree/team-api/internal/utility/crypto"
 	"github.com/qianfree/team-api/internal/utility/export"
+	relay_constant "github.com/qianfree/team-api/relay/constant"
 )
 
 // providerTypeNames 供应商类型名称映射
@@ -43,6 +45,7 @@ var providerTypeNames = map[int]string{
 	16: "xAI",
 	41: "New API",
 	42: "Sub2API",
+	43: "JS Task Plugin",
 }
 
 // channelRuntimeStates 返回目录快照的渠道熔断聚合（管理后台列表/详情展示用）。
@@ -187,6 +190,7 @@ func (s *sAdmin) ListChannels(ctx context.Context, req *v1.ChannelListReq) (*v1.
 			TestModel:      ch.TestModel,
 			Remark:         ch.Remark,
 			UseProxy:       settings.UseProxy,
+			PluginKey:      settings.PluginKey,
 			CreatedAt:      ch.CreatedAt.String(),
 			HealthScore:    ch.HealthScore,
 		}
@@ -326,17 +330,31 @@ func (s *sAdmin) CreateChannel(ctx context.Context, req *v1.ChannelCreateReq) (*
 		baseURL = defaultProviderURL(req.Type)
 	}
 
+	// JS 任务插件渠道：必须显式绑定插件——/pjs 分发器按 settings.plugin_key 强校验
+	// 渠道与插件的对应关系（jsdispatcher.go），缺绑定则该渠道的模型请求全部 400。
+	if req.Type == int(relay_constant.ProviderJSTask) {
+		if req.PluginKey == "" {
+			return nil, common.NewBadRequestError("JS 任务插件渠道必须绑定插件（plugin_key）")
+		}
+		if _, err := jsplugin.DefaultRegistry().ActiveManifest(ctx, req.PluginKey); err != nil {
+			return nil, common.NewBadRequestError("绑定的插件不存在或没有激活版本：" + req.PluginKey)
+		}
+	}
+
 	// Build settings JSON（只写显式开启的布尔项，其余字段用 Parse 时的默认值）
+	settings := map[string]any{}
+	if req.UseProxy {
+		settings["use_proxy"] = true
+	}
+	if req.WebSearchToGoogleSearch {
+		settings["web_search_to_google_search"] = true
+	}
+	if req.Type == int(relay_constant.ProviderJSTask) {
+		settings["plugin_key"] = req.PluginKey
+	}
 	settingsJSON := "{}"
-	if req.UseProxy || req.WebSearchToGoogleSearch {
-		boolFlags := map[string]bool{}
-		if req.UseProxy {
-			boolFlags["use_proxy"] = true
-		}
-		if req.WebSearchToGoogleSearch {
-			boolFlags["web_search_to_google_search"] = true
-		}
-		if b, err := json.Marshal(boolFlags); err == nil {
+	if len(settings) > 0 {
+		if b, err := json.Marshal(settings); err == nil {
 			settingsJSON = string(b)
 		}
 	}
@@ -441,11 +459,12 @@ func (s *sAdmin) UpdateChannel(ctx context.Context, req *v1.ChannelUpdateReq) (*
 		data.StrictCapacity = *req.StrictCapacity
 	}
 
-	// Update use_proxy / debug_log_* in settings JSONB。
+	// Update use_proxy / debug_log_* / plugin_key in settings JSONB。
 	// 必须单块合并处理（读一次旧值 → 同时应用全部字段 → 回写一次）：
 	// 若写成多个同构块，各自从 DB 读旧值再各自 marshal，同请求多字段时会互相覆盖。
 	if req.UseProxy != nil || req.WebSearchToGoogleSearch != nil || req.DebugLogEnabled != nil ||
-		req.DebugLogTenantID != nil || req.DebugLogUserID != nil || req.DebugLogApiKeyID != nil {
+		req.DebugLogTenantID != nil || req.DebugLogUserID != nil || req.DebugLogApiKeyID != nil ||
+		req.PluginKey != nil || req.Type != nil {
 		// 注意：读单列字符串必须用 Value()——gdb 的 Model.Scan 只接受 struct 系列，
 		// 传入 *string 会直接报错；此前用 _ = Scan(&string) 吞错导致永远读到空串，
 		// 每次局部更新都会把未提交的 settings 字段静默重置为默认值
@@ -471,6 +490,35 @@ func (s *sAdmin) UpdateChannel(ctx context.Context, req *v1.ChannelUpdateReq) (*
 		}
 		if req.DebugLogApiKeyID != nil {
 			settings.DebugLogApiKeyID = *req.DebugLogApiKeyID
+		}
+		// JS 插件绑定：type=43 渠道的 plugin_key 由 /pjs 分发器强校验，
+		// 换绑/清绑都走这里；类型切走时残留绑定一并清除
+		if req.PluginKey != nil || req.Type != nil {
+			var cur struct {
+				Type int `json:"type"`
+			}
+			if err := dao.ChnChannels.Ctx(ctx).Where("id", req.ID).Fields("type").Scan(&cur); err != nil {
+				return nil, gerror.Wrap(err, "读取渠道类型失败")
+			}
+			effectiveType := cur.Type
+			if req.Type != nil {
+				effectiveType = *req.Type
+			}
+			if req.PluginKey != nil && *req.PluginKey != "" {
+				if _, err := jsplugin.DefaultRegistry().ActiveManifest(ctx, *req.PluginKey); err != nil {
+					return nil, common.NewBadRequestError("绑定的插件不存在或没有激活版本：" + *req.PluginKey)
+				}
+				if effectiveType != int(relay_constant.ProviderJSTask) {
+					return nil, common.NewBadRequestError("仅 JS 任务插件渠道（type=43）可绑定插件")
+				}
+				settings.PluginKey = *req.PluginKey
+			}
+			if effectiveType == int(relay_constant.ProviderJSTask) && settings.PluginKey == "" {
+				return nil, common.NewBadRequestError("JS 任务插件渠道必须绑定插件（plugin_key）")
+			}
+			if effectiveType != int(relay_constant.ProviderJSTask) {
+				settings.PluginKey = "" // 切走插件渠道类型：清除残留绑定
+			}
 		}
 		if settingsJSON, err := json.Marshal(settings); err == nil {
 			data.Settings = string(settingsJSON)
@@ -623,6 +671,7 @@ func (s *sAdmin) GetChannelDetail(ctx context.Context, req *v1.ChannelDetailReq)
 		TestModel:               ch.TestModel,
 		Remark:                  ch.Remark,
 		UseProxy:                settings.UseProxy,
+		PluginKey:               settings.PluginKey,
 		WebSearchToGoogleSearch: settings.WebSearchToGoogleSearch,
 		DebugLogEnabled:         settings.DebugLogEnabled,
 		DebugLogTenantID:        settings.DebugLogTenantID,

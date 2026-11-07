@@ -67,7 +67,7 @@ type (
 		// AiAnalysisConfigGet 读取分析配置（与设置页读取同构，敏感字段掩码显示）。
 		AiAnalysisConfigGet(ctx context.Context, _ *v1.AiAnalysisConfigGetReq) (*v1.AiAnalysisConfigGetRes, error)
 		// AiAnalysisConfigUpdate 更新分析配置。敏感字段为掩码/空值时保持现值
-		//（UpdateCategory 内统一处理）；巡查计划变更经设置监听即时重排 cron。
+		// （UpdateCategory 内统一处理）；巡查计划变更经设置监听即时重排 cron。
 		AiAnalysisConfigUpdate(ctx context.Context, req *v1.AiAnalysisConfigUpdateReq) (*v1.AiAnalysisConfigUpdateRes, error)
 		// AiAnalysisTest 用已保存配置发起一次最小补全做连通性测试，
 		// 失败原因原样返回给管理员定位问题（测试失败本身是有效结果，不返回 error）。
@@ -347,6 +347,22 @@ type (
 		ListHelpArticles(ctx context.Context, req *v1.HelpArticleListReq) (*v1.HelpArticleListRes, error)
 		// GetHelpArticle 帮助文章详情（管理后台）
 		GetHelpArticle(ctx context.Context, req *v1.HelpArticleGetReq) (*v1.HelpArticleGetRes, error)
+		JSPluginList(ctx context.Context, _ *v1.JSPluginListReq) (*v1.JSPluginListRes, error)
+		JSPluginUpload(ctx context.Context, req *v1.JSPluginUploadReq) (*v1.JSPluginUploadRes, error)
+		JSPluginActivate(ctx context.Context, req *v1.JSPluginActivateReq) (*v1.JSPluginActivateRes, error)
+		JSPluginEnable(ctx context.Context, req *v1.JSPluginEnableReq) (*v1.JSPluginEnableRes, error)
+		JSPluginDelete(ctx context.Context, req *v1.JSPluginDeleteReq) (*v1.JSPluginDeleteRes, error)
+		// JSPluginSource 查看指定版本源码（只读，内置/上传版本均可）。
+		JSPluginSource(ctx context.Context, req *v1.JSPluginSourceReq) (*v1.JSPluginSourceRes, error)
+		JSPluginRoutes(ctx context.Context, req *v1.JSPluginRoutesReq) (*v1.JSPluginRoutesRes, error)
+		// JSPluginMetrics 运行指标合流：内存钩子指标（自进程启动）+ DB 业务统计
+		// （任务量按 platform=js:{key}、产物转存按 js_task_artifacts.plugin_key）。
+		JSPluginMetrics(ctx context.Context, _ *v1.JSPluginMetricsReq) (*v1.JSPluginMetricsRes, error)
+		// JSPluginConfig 配置读取：manifest.config schema + 当前值（加密字段掩码），
+		// 形状与 Go 插件 PluginConfigModal 兼容（list/encrypted/group/half_width）。
+		JSPluginConfig(ctx context.Context, req *v1.JSPluginConfigReq) (*v1.JSPluginConfigRes, error)
+		// JSPluginConfigUpdate 更新配置并重建 generation（在服务中的插件即刻装载新值）。
+		JSPluginConfigUpdate(ctx context.Context, req *v1.JSPluginConfigUpdateReq) (*v1.JSPluginConfigUpdateRes, error)
 		// CreateMember adds a new member to a specified tenant.
 		CreateMember(ctx context.Context, req *v1.AdminMemberCreateReq) (*v1.AdminMemberCreateRes, error)
 		// ListAllMembers returns a paginated list of all tenant members across all tenants.
@@ -497,24 +513,6 @@ type (
 		PluginUpgrade(ctx context.Context, req *v1.PluginUpgradeReq) (*v1.PluginUpgradeRes, error)
 		PluginConfigUpdate(ctx context.Context, req *v1.PluginConfigUpdateReq) (*v1.PluginConfigUpdateRes, error)
 		PluginConfigSchema(ctx context.Context, req *v1.PluginConfigSchemaReq) (*v1.PluginConfigSchemaRes, error)
-		// JSPluginList JS 插件（异步任务插件）列表
-		JSPluginList(ctx context.Context, req *v1.JSPluginListReq) (*v1.JSPluginListRes, error)
-		// JSPluginUpload 上传 JS 插件源码
-		JSPluginUpload(ctx context.Context, req *v1.JSPluginUploadReq) (*v1.JSPluginUploadRes, error)
-		// JSPluginActivate 激活 JS 插件版本
-		JSPluginActivate(ctx context.Context, req *v1.JSPluginActivateReq) (*v1.JSPluginActivateRes, error)
-		// JSPluginEnable 启用/禁用 JS 插件
-		JSPluginEnable(ctx context.Context, req *v1.JSPluginEnableReq) (*v1.JSPluginEnableRes, error)
-		// JSPluginDelete 删除 JS 插件版本
-		JSPluginDelete(ctx context.Context, req *v1.JSPluginDeleteReq) (*v1.JSPluginDeleteRes, error)
-		// JSPluginRoutes JS 插件路由预览（当前 generation）
-		JSPluginRoutes(ctx context.Context, req *v1.JSPluginRoutesReq) (*v1.JSPluginRoutesRes, error)
-		// JSPluginConfig JS 插件配置 schema + 当前值（加密掩码）
-		JSPluginConfig(ctx context.Context, req *v1.JSPluginConfigReq) (*v1.JSPluginConfigRes, error)
-		// JSPluginConfigUpdate 更新 JS 插件配置
-		JSPluginConfigUpdate(ctx context.Context, req *v1.JSPluginConfigUpdateReq) (*v1.JSPluginConfigUpdateRes, error)
-		// JSPluginMetrics JS 插件运行指标
-		JSPluginMetrics(ctx context.Context, req *v1.JSPluginMetricsReq) (*v1.JSPluginMetricsRes, error)
 		// ListPromoCodes 获取优惠码列表
 		ListPromoCodes(ctx context.Context, req *v1.PromoCodeListReq) (*v1.PromoCodeListRes, error)
 		// CreatePromoCode 创建优惠码

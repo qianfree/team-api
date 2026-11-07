@@ -66,6 +66,41 @@ func (s *stubVideosSubmitProvider) GetTaskByPublicIDAndUser(_ context.Context, p
 	return nil, nil
 }
 
+// TestHandleTaskSubmit_JSPluginModelRejectsStandardEntry JS 插件模型经标准任务端点
+// （/v1/videos 等）提交：无 /pjs 分发器注入的解码计划，应在平台判定阶段拒绝并在
+// 错误信息中指明插件原生路由入口，而非走到 jsbridge 才报晦涩的 dispatcher 错误。
+func TestHandleTaskSubmit_JSPluginModelRejectsStandardEntry(t *testing.T) {
+	rec := httptest.NewRecorder()
+	rc := &TaskRelayContext{
+		TenantID:  1,
+		UserID:    2,
+		ApiKeyID:  3,
+		RequestID: "req_js_reject",
+		Writer:    rec,
+	}
+	channelMeta := &common.ChannelMeta{
+		ChannelID:         21,
+		ChannelType:       int(constant.ProviderJSTask),
+		ChannelName:       "mock-js-plugin",
+		BaseURL:           "https://upstream.example.com",
+		ApiKey:            "sk-test",
+		UpstreamModelName: "kling-v2-master",
+	}
+	// 渠道显式绑定插件（跳过按模型解析分支）
+	channelMeta.Settings.PluginKey = "kling-pro"
+
+	body, _ := json.Marshal(map[string]any{"model": "kling-v2-master", "prompt": "a cat"})
+	HandleTaskSubmit(context.Background(), body, "/v1/videos", http.Header{}, rc,
+		&stubVideosSubmitProvider{}, &stubVideosBillingProvider{}, channelMeta)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "/pjs/kling-pro") {
+		t.Fatalf("error should point to native route /pjs/kling-pro, got: %s", rec.Body.String())
+	}
+}
+
 func TestHandleTaskSubmit_OpenAIVideosProtocol_FullPipeline(t *testing.T) {
 	// 1. mock kling 上游：记录收到的请求体，返回标准提交成功响应
 	var upstreamReceived map[string]any
