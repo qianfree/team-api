@@ -7,6 +7,7 @@ package logic
 import (
 	_ "github.com/qianfree/team-api/internal/logic/admin"
 	_ "github.com/qianfree/team-api/internal/logic/aianalysis"
+	_ "github.com/qianfree/team-api/internal/logic/aiassistant"
 	_ "github.com/qianfree/team-api/internal/logic/billing"
 	_ "github.com/qianfree/team-api/internal/logic/common"
 	_ "github.com/qianfree/team-api/internal/logic/docs"

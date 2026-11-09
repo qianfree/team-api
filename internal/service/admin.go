@@ -72,6 +72,14 @@ type (
 		// AiAnalysisTest 用已保存配置发起一次最小补全做连通性测试，
 		// 失败原因原样返回给管理员定位问题（测试失败本身是有效结果，不返回 error）。
 		AiAnalysisTest(ctx context.Context, _ *v1.AiAnalysisTestReq) (*v1.AiAnalysisTestRes, error)
+		// AiAssistantConfigGet 读取助手配置（与设置页读取同构，敏感字段掩码显示）。
+		AiAssistantConfigGet(ctx context.Context, _ *v1.AiAssistantConfigGetReq) (*v1.AiAssistantConfigGetRes, error)
+		// AiAssistantConfigUpdate 更新助手配置。敏感字段为掩码/空值时保持现值
+		// （UpdateCategory 内统一处理）。
+		AiAssistantConfigUpdate(ctx context.Context, req *v1.AiAssistantConfigUpdateReq) (*v1.AiAssistantConfigUpdateRes, error)
+		// AiAssistantTest 用已保存配置发起一次最小补全做连通性测试，
+		// 失败原因原样返回给管理员定位问题（测试失败本身是有效结果，不返回 error）。
+		AiAssistantTest(ctx context.Context, _ *v1.AiAssistantTestReq) (*v1.AiAssistantTestRes, error)
 		// GetAuditConfig retrieves the global audit level from sys_options.
 		GetAuditConfig(ctx context.Context, _ *v1.AuditConfigGetReq) (*v1.AuditConfigGetRes, error)
 		// UpdateAuditConfig updates the global audit level.

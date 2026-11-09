@@ -335,6 +335,42 @@ var Registry = []SettingDef{
 	{Key: "ai_analysis_retention_days", Type: SettingTypeInt, Default: "90", Category: "ai_analysis",
 		Label: "报告保留天数", Validation: "min:1,max:3650",
 		Description: "报告及发现明细的保留期，超期由清理任务删除"},
+
+	// ── AI 助手（管理后台全局运营助手）──
+	// 与 ai_analysis 同模式：不进 Categories（设置页无通用页签），读写走功能页自有的
+	// /ai-assistant/config 端点；业务读取方为 internal/logic/aiassistant。
+	{Key: "ai_assistant_enabled", Type: SettingTypeBool, Default: "false", Category: "ai_assistant",
+		Label: "启用 AI 助手", IsPublic: true,
+		Description: "开启后管理后台顶栏出现 AI 助手入口（需同时配置端点与模型）"},
+	{Key: "ai_assistant_base_url", Type: SettingTypeString, Default: "", Category: "ai_assistant",
+		Label:       "助手 AI 端点",
+		Description: "OpenAI 兼容端点地址（填法取决于「端点模式」）"},
+	{Key: "ai_assistant_endpoint_mode", Type: SettingTypeString, Default: "base", Category: "ai_assistant",
+		Label: "端点模式", Validation: "enum:base,full",
+		Description: "base：端点填基地址（如 https://api.example.com/v1，自动拼接 /chat/completions）；full：端点填完整请求地址（非标准路径用）"},
+	{Key: "ai_assistant_api_key", Type: SettingTypeString, Default: "", Category: "ai_assistant",
+		Label: "助手 AI 密钥", Sensitive: true, Encrypted: true,
+		Description: "端点访问密钥，AES-256 加密存储"},
+	{Key: "ai_assistant_model", Type: SettingTypeString, Default: "", Category: "ai_assistant",
+		Label: "助手模型", Description: "对话使用的模型名（如 deepseek-chat、gpt-4o-mini）"},
+	{Key: "ai_assistant_system_prompt", Type: SettingTypeString, Default: "", Category: "ai_assistant",
+		Label:       "系统提示词",
+		Description: "自定义助手人设与规则，留空使用内置默认（面向平台运营者的中文助手）"},
+	{Key: "ai_assistant_max_tokens", Type: SettingTypeInt, Default: "4096", Category: "ai_assistant",
+		Label: "单次输出上限", Validation: "min:64,max:128000",
+		Description: "单次回复的 max_tokens"},
+	{Key: "ai_assistant_temperature", Type: SettingTypeFloat, Default: "0.7", Category: "ai_assistant",
+		Label: "采样温度", Validation: "min:0,max:2",
+		Description: "0 更确定性，越高越发散"},
+	{Key: "ai_assistant_timeout_ms", Type: SettingTypeInt, Default: "120000", Category: "ai_assistant",
+		Label: "调用超时（毫秒）", Validation: "min:1000,max:600000",
+		Description: "单次对话调用的总超时"},
+	{Key: "ai_assistant_history_limit", Type: SettingTypeInt, Default: "20", Category: "ai_assistant",
+		Label: "历史消息上限", Validation: "min:2,max:200",
+		Description: "每次请求携带的历史消息条数上限（超出按最近保留，后端截断）"},
+	{Key: "ai_assistant_rate_limit_per_min", Type: SettingTypeInt, Default: "30", Category: "ai_assistant",
+		Label: "每分钟调用上限", Validation: "min:0,max:1000",
+		Description: "每管理员每分钟对话次数上限，0 表示不限制"},
 }
 
 // registryMap is a lookup index for fast access by key.
