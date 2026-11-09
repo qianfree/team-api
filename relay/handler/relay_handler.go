@@ -638,6 +638,10 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			if errors.Is(err, common.ErrModelPricingNotConfigured) {
 				return nil, nil, constant.NewRequestError("model pricing not configured: "+v.modelName, err)
 			}
+			// 表达式计费公式在本次请求上求值失败（多为请求参数类型与公式不符）：请求错误而非余额不足
+			if errors.Is(err, common.ErrBillingFormulaEval) {
+				return nil, nil, constant.NewRequestError(common.ErrBillingFormulaEval.Error()+": "+v.modelName, err)
+			}
 			return nil, nil, constant.NewQuotaError("insufficient balance", err)
 		}
 		preDeductAmount = amt

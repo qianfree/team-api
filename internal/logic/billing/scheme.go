@@ -205,6 +205,12 @@ func taskFormulaEvalContext(ratios map[string]any) *formula.EvalContext {
 			ec.At = t
 		}
 	}
+	// 提交时冻结的平台计费时区（hour() 等缺省时区参数时使用）；存量任务无此键回退 UTC
+	if tz, ok := freeze["tz"].(string); ok && tz != "" {
+		if loc, err := time.LoadLocation(tz); err == nil {
+			ec.Location = loc
+		}
+	}
 	return ec
 }
 

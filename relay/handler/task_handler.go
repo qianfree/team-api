@@ -292,8 +292,17 @@ func HandleTaskSubmit(
 	// 6. 估算计费 + 预扣（ratios 为计费上下文：float64 乘数 + spec.* 规格事实值；
 	// body 同传给 EstimateTaskCost 供参数倍率按归一化任务体匹配，命中注入 ratios）
 	ratios := adaptor.EstimateBilling(ctx, info, body)
+	if ratios == nil {
+		// 计费层会向 ratios 注入冻结值（参数倍率命中、公式求值上下文），nil 时注入丢失
+		ratios = map[string]any{}
+	}
 	estimatedCost, err := billingProvider.EstimateTaskCost(ctx, rc.TenantID, modelName, ratios, body, headers)
 	if err != nil {
+		if errors.Is(err, common.ErrBillingFormulaEval) {
+			g.Log().Warningf(ctx, "HandleTaskSubmit: billing formula rejected request, model=%s, err=%v", modelName, err)
+			writeTaskError(rc.Writer, http.StatusBadRequest, common.ErrBillingFormulaEval.Error(), "")
+			return
+		}
 		g.Log().Errorf(ctx, "HandleTaskSubmit: estimate cost failed, model=%s, err=%v", modelName, err)
 		writeTaskError(rc.Writer, http.StatusInternalServerError, "estimate cost failed: "+err.Error(), "")
 		return
@@ -355,8 +364,14 @@ func HandleTaskSubmit(
 	// 9. 调整计费
 	adjustedRatios := adaptor.AdjustBillingOnSubmit(info, taskData)
 	if adjustedRatios != nil {
-		newCost, _ := billingProvider.EstimateTaskCost(ctx, rc.TenantID, modelName, adjustedRatios, body, headers)
-		preDeductAmount, _ = billingProvider.AdjustTaskBilling(ctx, rc.TenantID, rc.RequestID, preDeductAmount, newCost)
+		// 重估失败（如表达式计费公式在调整后的 ratios 上求值出错）时保留原预扣，
+		// 不得以零值调整——那会把预扣全额退回、任务变成免费
+		if newCost, estErr := billingProvider.EstimateTaskCost(ctx, rc.TenantID, modelName, adjustedRatios, body, headers); estErr != nil {
+			g.Log().Warningf(ctx, "HandleTaskSubmit: re-estimate after submit failed, keep pre-deduct %.6f, model=%s, err=%v",
+				preDeductAmount.InexactFloat64(), modelName, estErr)
+		} else {
+			preDeductAmount, _ = billingProvider.AdjustTaskBilling(ctx, rc.TenantID, rc.RequestID, preDeductAmount, newCost)
+		}
 	}
 
 	// 9.5 合并最终 ratios 用于结算时还原

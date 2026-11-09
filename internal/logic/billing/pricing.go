@@ -539,6 +539,14 @@ func GetModelPriceAt(ctx context.Context, tenantID int64, modelName string, bill
 		perSecondPrices, timeSegments, paramMultipliers = ApplyTenantPricingPatch(patch, perSecondPrices, timeSegments, paramMultipliers)
 	}
 
+	// formula 模式不叠加时段定价与参数倍率：时段/参数条件只能在公式内用 hour()/param()
+	// 表达。平台写侧已拒绝，此处读侧兜底存量租户补丁、导入数据与模式切换前遗留配置，
+	// 防止乘数与公式叠加错价（任务路径参数倍率经 ratios 连乘，时段乘数两条路径都作用）
+	if billingMode == BillingModeFormula {
+		timeSegments = nil
+		paramMultipliers = nil
+	}
+
 	// 折扣乘数解析（纯函数，见 applyTenantModelDiscount）：一口价行整体跳过、
 	// discount_ratio 优先于 multiplier；billingMode 已含租户级模式覆盖（resolved）
 	tenantMultiplier, discountRatio, customPriced, ratioExplicit := applyTenantModelDiscount(tm, billingMode, patch)
@@ -1039,7 +1047,7 @@ func EstimatePreDeductAmount(ctx context.Context, tenantID int64, modelName stri
 		}
 		factor, _, err := formula.Run(compiled, in)
 		if err != nil {
-			return 0, gerror.Wrapf(err, "estimate pre-deduct: run formula (model=%s)", modelName)
+			return 0, gerror.Wrapf(rcommon.ErrBillingFormulaEval, "estimate pre-deduct: run formula (model=%s): %v", modelName, err)
 		}
 		mul := NewFromFloat(pricing.TenantMultiplier).Mul(NewFromFloat(effectiveTimeMultiplier(pricing)))
 		total := InexactFloat64(RoundMoney(NewFromFloat(factor).Div(decimal.NewFromInt(1_000_000)).Mul(mul)))
