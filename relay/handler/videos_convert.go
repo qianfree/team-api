@@ -18,7 +18,7 @@ import (
 // OpenAI Videos 协议（/v1/videos）入站转换层。
 // 官方 SDK（openai-python / openai-node）对 POST /v1/videos 一律发送 multipart/form-data，
 // 裸 HTTP 客户端常用 JSON——两种编码都要支持；解析后统一转成任务框架的通用请求体
-// {model, prompt, seconds, ratio, metadata{duration, size, ratio, aspect_ratio, sound, generate_audio, image}}，
+// {model, prompt, seconds, ratio, images, references, metadata{duration, size, ratio, aspect_ratio, sound, generate_audio, image, last_frame}}，
 // 由各 taskchannel 适配器按需消费（kling 读顶层 seconds，volcengine 读 metadata.duration 等）。
 // size / aspect_ratio / sound 均为协议扩展字段（官方 Videos 协议无此三项），
 // 取值直接透传目标供应商的原生词汇，不做档位换算与白名单校验。
@@ -33,9 +33,13 @@ type videosCreateRequest struct {
 	Prompt         string
 	Seconds        string // 统一归一为字符串（官方协议为 "4"/"8"/"12"）；空 = 未指定
 	Size           string // 原样保留（如 "1280x720"）；空 = 未指定
-	InputReference string // 参考图：data URL 或 http(s) URL；空 = 无
-	AspectRatio    string // 屏幕比例（如 "16:9"/"9:16"）；空 = 未指定（由适配器取各自默认档）
-	Sound          string // 音频开关，归一为 "on"/"off"；空 = 未指定（由上游取默认）
+	InputReference string // 参考图（官方首帧语义）：data URL 或 http(s) URL；空 = 无
+	// InputReferenceFileID input_reference 以 /v1/files 文件 ID 引用（解析后转入 InputReference）
+	InputReferenceFileID string
+	// References 扩展字段 references[]（不含 input_reference 派生的首帧；合并见 allReferences）
+	References  []common.VideoReference
+	AspectRatio string // 屏幕比例（如 "16:9"/"9:16"）；空 = 未指定（由适配器取各自默认档）
+	Sound       string // 音频开关，归一为 "on"/"off"；空 = 未指定（由上游取默认）
 }
 
 // videosRequestEcho 提交时落 PrivateData.request_echo 的请求回显，
@@ -59,6 +63,7 @@ type jsonVideosCreateRequest struct {
 	AspectRatio    string          `json:"aspect_ratio"`
 	Sound          json.RawMessage `json:"sound"`          // "on"/"off" 或 true/false
 	GenerateAudio  json.RawMessage `json:"generate_audio"` // true/false（generate_audio 词汇，sound 缺省时生效）
+	References     json.RawMessage `json:"references"`     // 扩展：参考素材数组（或其 JSON 字符串）
 }
 
 // ParseVideosCreateRequest 解析 OpenAI Videos 创建请求（multipart 或 JSON）。
@@ -108,11 +113,17 @@ func parseVideosCreateJSON(body []byte) (*videosCreateRequest, *common.TaskError
 	}
 	out.Sound = sound
 
-	ref, terr := parseVideosInputReferenceJSON(req.InputReference)
+	ref, fileID, terr := parseVideosInputReferenceJSON(req.InputReference)
 	if terr != nil {
 		return nil, terr
 	}
-	out.InputReference = ref
+	out.InputReference, out.InputReferenceFileID = ref, fileID
+
+	refs, terr := parseVideosReferences(req.References)
+	if terr != nil {
+		return nil, terr
+	}
+	out.References = refs
 
 	return out, nil
 }
@@ -190,12 +201,26 @@ func parseVideosCreateMultipart(body []byte, boundary string) (*videosCreateRequ
 		}
 		out.InputReference = "data:" + ct + ";base64," + base64.StdEncoding.EncodeToString(raw)
 	} else if v := formValue("input_reference"); v != "" {
-		ref, terr := parseVideosInputReferenceJSON(json.RawMessage(v))
+		ref, fileID, terr := parseVideosInputReferenceJSON(json.RawMessage(v))
 		if terr != nil {
 			return nil, terr
 		}
-		out.InputReference = ref
+		out.InputReference, out.InputReferenceFileID = ref, fileID
+	} else if imageURL, fileID := strings.TrimSpace(formValue("input_reference[image_url]")), strings.TrimSpace(formValue("input_reference[file_id]")); imageURL != "" || fileID != "" {
+		// 官方 SDK 以对象形态传 input_reference={"image_url"|"file_id": ...} 时，
+		// multipart 按 brackets 编码为 input_reference[image_url] / input_reference[file_id]
+		if imageURL != "" && fileID != "" {
+			return nil, &common.TaskError{StatusCode: http.StatusBadRequest, Message: "invalid input_reference: provide only one of image_url or file_id"}
+		}
+		out.InputReference, out.InputReferenceFileID = imageURL, fileID
 	}
+
+	// references 扩展字段：multipart 下为 JSON 字符串（对象列表经 key[] 编码无法还原分组）
+	refs, terr := parseVideosReferences(multipartJSONString(formValue("references")))
+	if terr != nil {
+		return nil, terr
+	}
+	out.References = refs
 
 	return out, nil
 }
@@ -266,12 +291,14 @@ func normalizeVideosSound(raw json.RawMessage) (string, *common.TaskError) {
 	}
 }
 
-// parseVideosInputReferenceJSON 解析引用对象形态的 input_reference：
+// parseVideosInputReferenceJSON 解析引用对象形态的 input_reference（官方 ImageInputReferenceParam）：
 //   - {"image_url": "https://... 或 data:..."} → 原样透传
-//   - {"file_id": "..."} → 不支持（平台无 Files API），返回 400 引导改用 image_url/文件上传
-func parseVideosInputReferenceJSON(raw json.RawMessage) (string, *common.TaskError) {
+//   - {"file_id": "file-xxx"} → /v1/files 上传文件引用，提交前由网关解析为签名 URL
+//
+// 返回 (url, fileID, err)，二者至多一个非空。
+func parseVideosInputReferenceJSON(raw json.RawMessage) (string, string, *common.TaskError) {
 	if len(raw) == 0 || string(raw) == "null" {
-		return "", nil
+		return "", "", nil
 	}
 
 	var ref struct {
@@ -279,19 +306,18 @@ func parseVideosInputReferenceJSON(raw json.RawMessage) (string, *common.TaskErr
 		ImageURL string `json:"image_url"`
 	}
 	if err := json.Unmarshal(raw, &ref); err != nil {
-		return "", &common.TaskError{StatusCode: http.StatusBadRequest, Message: "invalid input_reference: expected file upload or {image_url}"}
+		return "", "", &common.TaskError{StatusCode: http.StatusBadRequest, Message: "invalid input_reference: expected file upload, {image_url} or {file_id}"}
 	}
+	imageURL, fileID := strings.TrimSpace(ref.ImageURL), strings.TrimSpace(ref.FileID)
 	switch {
-	case ref.ImageURL != "":
-		return ref.ImageURL, nil
-	case ref.FileID != "":
-		return "", &common.TaskError{
-			StatusCode: http.StatusBadRequest,
-			Message:    "input_reference.file_id is not supported; upload the file directly or use image_url instead",
-			ErrCode:    "file_id_not_supported",
-		}
+	case imageURL != "" && fileID != "":
+		return "", "", &common.TaskError{StatusCode: http.StatusBadRequest, Message: "invalid input_reference: provide only one of image_url or file_id"}
+	case imageURL != "":
+		return imageURL, "", nil
+	case fileID != "":
+		return "", fileID, nil
 	default:
-		return "", &common.TaskError{StatusCode: http.StatusBadRequest, Message: "invalid input_reference: expected file upload or {image_url}"}
+		return "", "", &common.TaskError{StatusCode: http.StatusBadRequest, Message: "invalid input_reference: expected file upload, {image_url} or {file_id}"}
 	}
 }
 
@@ -327,10 +353,23 @@ func BuildVideosTaskBody(req *videosCreateRequest) ([]byte, error) {
 		metadata["sound"] = req.Sound
 		metadata["generate_audio"] = req.Sound == "on"
 	}
-	if req.InputReference != "" {
-		metadata["image"] = req.InputReference
-		// volcengine 图生视频读根级 images 数组（kling 亦有该兜底）
-		body["images"] = []string{req.InputReference}
+	// 参考素材：references[] 为唯一权威来源（file_id 已解析为 URL，顺序即提示词编号依据）；
+	// images[]/metadata.image/metadata.last_frame 为兼容字段，只承载首/尾帧，供未升级
+	// references 的老适配器沿用——reference_* 不写入 images[]（否则会被当作首帧）
+	if refs := req.allReferences(); len(refs) > 0 {
+		out := make([]map[string]string, 0, len(refs))
+		for _, ref := range refs {
+			out = append(out, map[string]string{"role": ref.Role, "url": ref.URL})
+			switch ref.Role {
+			case common.RefRoleFirstFrame:
+				metadata["image"] = ref.URL
+				// volcengine 图生视频读根级 images 数组（kling 亦有该兜底）
+				body["images"] = []string{ref.URL}
+			case common.RefRoleLastFrame:
+				metadata["last_frame"] = ref.URL
+			}
+		}
+		body["references"] = out
 	}
 	if len(metadata) > 0 {
 		body["metadata"] = metadata
@@ -351,7 +390,7 @@ func ValidateVideosCreateRequest(req *videosCreateRequest) *common.TaskError {
 	if strings.TrimSpace(req.Prompt) == "" {
 		return &common.TaskError{StatusCode: http.StatusBadRequest, Message: "prompt is required"}
 	}
-	return nil
+	return validateVideosReferences(req)
 }
 
 // NewVideosRequestEcho 从归一请求构造提交回显（胶水层经 TaskRelayContext.RequestEcho 传入，

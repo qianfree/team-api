@@ -18,6 +18,9 @@
 // ⑤ routes：视频提交 + 视频查询 + 图片提交（immediate）。
 // ⑥ fileRef：视频参考图支持 content[].image_url 的 fileRef 占位。
 // ⑦ renderSubmit/renderImage/renderTask：Ark 信封形态的 {status, body} 渲染。
+// ⑧ 标准端点参考素材（1.7.0）：通用任务体 references[]（role 词汇与 Ark content[].role
+//    一致）按原序映射为带 role 的 content 项；Seedance 模型层约束在此校验（见
+//    referenceContent）。无 references 时回落兼容字段 images[]/metadata.image。
 const VIDEO_MODELS = {
   "doubao-seedance-1-0-pro-250528": { resolutions: ["480p", "720p", "1080p"], maxDuration: 12 },
   "doubao-seedance-1-0-lite-t2v": { resolutions: ["480p", "720p", "1080p"], maxDuration: 12 },
@@ -45,12 +48,14 @@ export const meta = {
     en: "Volcengine Doubao Seedance video generation and Seedream image generation",
     zh: "火山引擎豆包 Seedance 视频生成与 Seedream 图片生成",
   },
-  version: "1.6.0",
+  version: "1.7.0",
   author: "qianfree",
   channelTypes: [51],
   models: Object.keys(VIDEO_MODELS).concat(Object.keys(IMAGE_MODELS)),
   fetchMode: "per_task",
   standardVideos: "decodeVideos",
+  // 标准端点 references[] 可承接的角色（模型层约束在 referenceContent 校验）
+  referenceRoles: ["first_frame", "last_frame", "reference_image", "reference_video", "reference_audio"],
   // 同名模型共享：与其他声明 sharedModels 的插件（如经销商类 JS 插件）同名声明
   // Seedance 模型时预检放行——路由归属由渠道 plugin_key 决定
   sharedModels: true,
@@ -82,6 +87,66 @@ function hasVideo(content) {
   return (Array.isArray(content) ? content : []).some(function (c) { return c && c.type === "video_url"; });
 }
 
+// ── 参考素材（标准端点 references[]）────────────────────────
+
+// Seedance 多模态参考上限（官方：图 0-9 / 视频 0-3 / 音频 0-3）
+const MAX_REF_IMAGES = 9;
+const MAX_REF_VIDEOS = 3;
+const MAX_REF_AUDIOS = 3;
+const REF_ITEM_TYPES = {
+  first_frame: "image_url", last_frame: "image_url", reference_image: "image_url",
+  reference_video: "video_url", reference_audio: "audio_url",
+};
+
+// referenceContent references[] → Ark content 媒体项（保持原序：提示词「图片N/视频N/音频N」
+// 按同类素材在 content 中的顺序编号）。网关已做协议层校验（role/来源/首尾帧与参考互斥），
+// 这里只校验 Seedance 模型层约束：
+//   - 多模态参考（reference_*）仅 2.x（profile.videoInput）支持
+//   - 图 ≤9、视频 ≤3、音频 ≤3；音频须搭配至少 1 张图或 1 段视频
+//   - 参考视频不收 base64（官方仅 URL / asset://）；尾帧须搭配首帧
+function referenceContent(model, refs) {
+  const profile = videoProfile(model);
+  const counts = { image_url: 0, video_url: 0, audio_url: 0 };
+  let hasFirst = false;
+  let hasLast = false;
+  let multimodal = false;
+  const items = [];
+  for (let i = 0; i < refs.length; i++) {
+    const ref = plainObject(refs[i]);
+    const role = trimmed(ref.role);
+    const url = trimmed(ref.url);
+    const type = REF_ITEM_TYPES[role];
+    if (!type) throw new Error("references[" + i + "].role " + JSON.stringify(role) + " is not supported");
+    if (!url) {
+      // /v1/video/generations 不经网关解析 file_id
+      throw new Error("references[" + i + "] must provide url" + (trimmed(ref.file_id) ? " (file_id is only supported on /v1/videos)" : ""));
+    }
+    if (role === "first_frame") hasFirst = true;
+    if (role === "last_frame") hasLast = true;
+    if (role.indexOf("reference_") === 0) multimodal = true;
+    if (role === "reference_video" && url.toLowerCase().indexOf("data:") === 0) {
+      throw new Error("references[" + i + "]: reference_video does not accept base64 data URLs; upload via /v1/files and use file_id, or pass a public URL");
+    }
+    counts[type]++;
+    const item = { type: type, role: role };
+    item[type] = { url: url };
+    items.push(item);
+  }
+  if (multimodal && !profile.videoInput) {
+    throw new Error("reference_not_supported: " + model + " does not support reference_image/reference_video/reference_audio (Seedance 2.x only)");
+  }
+  if (hasLast && !hasFirst) throw new Error("last_frame requires a first_frame");
+  if (multimodal) {
+    if (counts.image_url > MAX_REF_IMAGES) throw new Error("at most " + MAX_REF_IMAGES + " reference images");
+    if (counts.video_url > MAX_REF_VIDEOS) throw new Error("at most " + MAX_REF_VIDEOS + " reference videos");
+    if (counts.audio_url > MAX_REF_AUDIOS) throw new Error("at most " + MAX_REF_AUDIOS + " reference audios");
+    if (counts.audio_url > 0 && counts.image_url === 0 && counts.video_url === 0) {
+      throw new Error("reference_audio requires at least one reference_image or reference_video");
+    }
+  }
+  return items;
+}
+
 // ── 解码 ──────────────────────────────────────────────────
 
 export function createTask(ctx) {
@@ -108,8 +173,9 @@ export function createImage(ctx) {
 }
 
 // decodeVideos 标准视频端点解码（meta.standardVideos 指向）：通用任务体 → Ark
-// vendorBody（content[] 多模态）。prompt → text 项；images[]/metadata.image →
-// image_url 项；seconds/metadata.duration → duration；metadata.resolution 按档位校验
+// vendorBody（content[] 多模态）。prompt → text 项；references[] → 带 role 的
+// image_url/video_url/audio_url 项（无 references 时 images[]/metadata.image →
+// image_url 项）；seconds/metadata.duration → duration；metadata.resolution 按档位校验
 // （与 createTask 同规则）；ratio（顶层/metadata.ratio）与 generate_audio 透传。
 // 词汇映射与 Go 版 volcengine 适配器同口径。
 export function decodeVideos(ctx) {
@@ -122,10 +188,15 @@ export function decodeVideos(ctx) {
   const prompt = String(raw.prompt || "").trim();
   if (!prompt) throw new Error("prompt is required");
   const content = [{ type: "text", text: prompt }];
-  const images = Array.isArray(raw.images) && raw.images.length
-    ? raw.images.filter(function (u) { return typeof u === "string" && u.trim(); })
-    : (trimmed(metadata.image) ? [trimmed(metadata.image)] : []);
-  for (const url of images) content.push({ type: "image_url", image_url: { url: url.trim() } });
+  if (Array.isArray(raw.references) && raw.references.length) {
+    // references 为唯一权威来源（含 input_reference 派生的首帧），忽略兼容字段防重复
+    Array.prototype.push.apply(content, referenceContent(model, raw.references));
+  } else {
+    const images = Array.isArray(raw.images) && raw.images.length
+      ? raw.images.filter(function (u) { return typeof u === "string" && u.trim(); })
+      : (trimmed(metadata.image) ? [trimmed(metadata.image)] : []);
+    for (const url of images) content.push({ type: "image_url", image_url: { url: url.trim() } });
+  }
 
   const vendorBody = { content: content };
   const seconds = raw.seconds != null ? raw.seconds : metadata.duration;

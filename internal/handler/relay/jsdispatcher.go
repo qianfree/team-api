@@ -22,6 +22,7 @@ import (
 	"github.com/qianfree/team-api/internal/jsplugin/contract"
 	"github.com/qianfree/team-api/internal/logic/monitor"
 	tasklogic "github.com/qianfree/team-api/internal/logic/task"
+	taskartifact "github.com/qianfree/team-api/internal/logic/task/artifact"
 	"github.com/qianfree/team-api/internal/middleware"
 	relay_common "github.com/qianfree/team-api/relay/common"
 	relay_constant "github.com/qianfree/team-api/relay/constant"
@@ -109,7 +110,7 @@ func handleJSDynamicQuery(r *ghttp.Request, plugin *jsplugin.ActivePlugin, route
 	}
 	renderTasks := make([]contract.RenderTask, 0, len(tasks))
 	for _, t := range tasks {
-		renderTasks = append(renderTasks, buildRenderTask(t))
+		renderTasks = append(renderTasks, buildRenderTask(r.Context(), t))
 	}
 
 	renderHook := route.ResolveRender("renderTasks")
@@ -243,15 +244,22 @@ func handleJSTaskSubmit(r *ghttp.Request, plugin *jsplugin.ActivePlugin, route c
 	// 同步即完成（parseSubmitResponse 返回 immediate，经解码计划透传）：
 	// 提交成功立即终态化——结算/用量/审计/产物与轮询终态同口径（免轮询直达）
 	taskStatus := "SUBMITTED"
+	contentURL := ""
 	if plan.Immediate != nil && rc.TaskID != "" {
 		if t := finalizeImmediateTask(r.Context(), plan, plugin, rc.TaskID); t != nil {
 			taskStatus = t.Status
+			// 产物刚入队转存，通常尚未就绪：按进行中呈现，客户端轮询到转存完成
+			if delivery := taskartifact.ResolveDelivery(r.Context(), t); delivery.Pending {
+				taskStatus = string(relay_common.TaskStatusInProgress)
+			} else {
+				contentURL = delivery.ContentURL
+			}
 		}
 	}
 
 	// 提交成功且插件导出渲染钩子 → 钩子输出替换标准响应；否则透传扣住的标准输出
 	if rc.TaskID != "" && plugin.HasHook(renderHook) {
-		if rendered := callSubmitRenderer(r.Context(), plugin, renderHook, rc.TaskID, decoded.Model, taskStatus); rendered != nil {
+		if rendered := callSubmitRenderer(r.Context(), plugin, renderHook, rc.TaskID, decoded.Model, taskStatus, contentURL); rendered != nil {
 			// 状态码与内容须一次写入：WriteStatus 不带内容会把状态文本（如 "OK"）写进响应体
 			r.Response.WriteStatus(rendered.Status, []byte(rendered.Body))
 			hold.discard()
@@ -307,16 +315,21 @@ func finalizeImmediateTask(ctx context.Context, plan *jsplugin.SubmitPlan, plugi
 			SourceType: decl.Source.Type, SourcePath: decl.Source.Path, SourceAuth: decl.Source.Auth,
 		})
 	}
+	// 与轮询终态同口径回填 result_url（产物声明是 JS 插件成品地址的唯一来源）
+	if info.Status == relay_common.TaskStatusSuccess {
+		info.ResultURL = relay_common.ResultURLFromArtifacts(info.Data, info.Artifacts)
+	}
 	return tasklogic.FinalizeTaskImmediate(ctx, t, channel, info)
 }
 
 // callSubmitRenderer 调用提交渲染钩子（renderSubmit/别名），失败回落标准输出。
-func callSubmitRenderer(ctx context.Context, plugin *jsplugin.ActivePlugin, hook, publicTaskID, model, status string) *contract.RenderResult {
+func callSubmitRenderer(ctx context.Context, plugin *jsplugin.ActivePlugin, hook, publicTaskID, model, status, contentURL string) *contract.RenderResult {
 	renderArgs, _ := json.Marshal(contract.RenderTaskContext{
 		Task: contract.RenderTask{
 			PublicTaskID: publicTaskID,
 			Model:        model,
 			Status:       status,
+			ContentURL:   contentURL,
 		},
 	})
 	out, err := plugin.Pool.Call(ctx, hook, renderArgs)
@@ -497,16 +510,24 @@ func callDecodeHook(r *ghttp.Request, plugin *jsplugin.ActivePlugin, route contr
 	return decoded, true
 }
 
-// buildRenderTask 任务行 → 渲染视图（单任务/批量共用）。
-func buildRenderTask(t *relay_common.AsyncTask) contract.RenderTask {
+// buildRenderTask 任务行 → 渲染视图（单任务/批量共用）。成功任务的登记产物路径
+// 替换为统一内容链接（渲染期替换不落库），并附主产物链接 contentUrl；上游已完成但
+// 产物仍在转存 OSS 时呈现为进行中（99%）且产物路径置空，转存完成后才给完成态。
+func buildRenderTask(ctx context.Context, t *relay_common.AsyncTask) contract.RenderTask {
+	data, delivery := taskartifact.RenderData(ctx, t)
+	status, progress := t.Status, t.Progress
+	if delivery.Pending {
+		status, progress = string(relay_common.TaskStatusInProgress), "99%"
+	}
 	return contract.RenderTask{
 		PublicTaskID: t.PublicTaskID,
 		TaskID:       extractUpstreamTaskID(t.PrivateData),
 		Model:        t.ModelName,
-		Status:       t.Status,
-		Progress:     t.Progress,
+		Status:       status,
+		Progress:     progress,
 		FailReason:   t.FailReason,
-		Data:         t.Data,
+		Data:         data,
+		ContentURL:   delivery.ContentURL,
 	}
 }
 
@@ -542,7 +563,7 @@ func handleJSTaskQuery(r *ghttp.Request, plugin *jsplugin.ActivePlugin, route co
 		return
 	}
 
-	renderCtx, _ := json.Marshal(contract.RenderTaskContext{Task: buildRenderTask(task)})
+	renderCtx, _ := json.Marshal(contract.RenderTaskContext{Task: buildRenderTask(r.Context(), task)})
 
 	renderHook := route.ResolveRender(contract.HookNameRenderTask)
 	if plugin.HasHook(renderHook) {

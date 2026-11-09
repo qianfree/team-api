@@ -1,10 +1,14 @@
 // Package artifact 实现 JS 任务插件的产物转存流水线：
 //
-//	插件声明（key + taskData 取值路径）→ 宿主下载/解码（SSRF 防护 + 体积上限）
-//	→ FileService 上传对象存储 → 改写 task.Data 中的 URL → 元数据落表
+//	插件声明（key + taskData 取值路径）→ 元数据登记 → [转存开启] 宿主下载/解码
+//	（SSRF 防护 + 体积上限）→ FileService 上传对象存储
 //
-// 边界纪律：JS 永不接触产物字节。worker 池有界队列 + sweep 周期重试，
-// 失败回落原上游 URL（客户端仍可用，只是未经转存）。
+// 对外交付统一走签名内容链接（contenturl.go）：已转存的从对象存储供给，未转存
+// （插件关闭转存 / 转存未完成或失败）的按声明实时回源代理（content.go）。
+// task.Data 保留上游原值（inline 产物转存后清空 base64 释放存储），渲染时由
+// RenderData 把声明路径替换为统一链接。
+//
+// 边界纪律：JS 永不接触产物字节。worker 池有界队列 + sweep 周期重试。
 package artifact
 
 import (
@@ -23,6 +27,7 @@ import (
 	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/frame/g"
 
+	"github.com/qianfree/team-api/internal/jsplugin"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	uc "github.com/qianfree/team-api/internal/utility/crypto"
 	"github.com/qianfree/team-api/internal/utility/ssrf"
@@ -39,7 +44,14 @@ const (
 	sweepCronName    = "js_artifact_sweep"
 	sweepCronExpr    = "*/5 * * * *" // 每 5 分钟重试 pending/failed
 	storageKeyPrefix = "jsartifacts/"
+
+	statusPending = "pending"
+	statusStored  = "stored"
+	statusDirect  = "direct" // 插件关闭转存：仅登记声明，内容链接回源代理
 )
+
+// storageEnabled 插件产物转存开关（宿主内置配置项 artifact_storage；测试可替换）。
+var storageEnabled = jsplugin.ArtifactStorageEnabled
 
 // transferJob 单任务的转存作业。
 type transferJob struct {
@@ -114,8 +126,8 @@ func Stop() {
 	wg.Wait()
 }
 
-// EnqueueTransfer 任务终态成功后入队转存：元数据先行落表（pending），队列满时
-// 留给 sweep 重试。非阻塞，绝不拖慢轮询循环。
+// EnqueueTransfer 任务终态成功后登记产物：元数据先行落表；插件开启转存时入队
+// （pending，队列满时由 sweep 兜底），关闭转存时登记为 direct（不下载，内容链接回源代理）。
 func EnqueueTransfer(ctx context.Context, task *rcommon.AsyncTask, artifacts []rcommon.TaskArtifact) {
 	if len(artifacts) == 0 {
 		return
@@ -129,8 +141,15 @@ func EnqueueTransfer(ctx context.Context, task *rcommon.AsyncTask, artifacts []r
 		ChannelID:    task.ChannelID,
 		Artifacts:    artifacts,
 	}
+	status := statusPending
+	if !storageEnabled(ctx, job.PluginKey) {
+		status = statusDirect
+	}
 	for _, art := range artifacts {
-		insertArtifactRow(ctx, job, art)
+		insertArtifactRow(ctx, job, art, status)
+	}
+	if status == statusDirect {
+		return
 	}
 	mu.Lock()
 	q := queue
@@ -187,6 +206,9 @@ func SweepPending(ctx context.Context) {
 			ArtifactKey string `json:"artifact_key"`
 			SourceType  string `json:"source_type"`
 			SourceUrl   string `json:"source_url"`
+			SourcePath  string `json:"source_path"`
+			SourceAuth  string `json:"source_auth"`
+			MimeType    string `json:"mime_type"`
 		}
 		if err := g.DB().Model(artifactTable).Ctx(ctx).
 			Where("task_id", taskID).
@@ -198,8 +220,11 @@ func SweepPending(ctx context.Context) {
 			TenantID: rows[0].TenantID, UserID: rows[0].UserID, ChannelID: rows[0].ChannelID,
 		}
 		for _, ar := range rows {
+			// source_path 为声明原样路径；存量行（000033 之前）回落 source_url
+			path := firstNonEmpty(ar.SourcePath, ar.SourceUrl)
 			job.Artifacts = append(job.Artifacts, rcommon.TaskArtifact{
-				Key: ar.ArtifactKey, SourceType: ar.SourceType, SourcePath: ar.SourceUrl,
+				Key: ar.ArtifactKey, SourceType: ar.SourceType, SourcePath: path,
+				SourceAuth: ar.SourceAuth, MimeType: ar.MimeType,
 			})
 		}
 		select {
@@ -248,26 +273,21 @@ func processJob(ctx context.Context, job *transferJob) {
 	rewritten := false
 
 	for _, art := range job.Artifacts {
-		url, storedErr := transferOne(ctx, fs, job, art, data)
+		stored, storedErr := transferOne(ctx, fs, job, art, data)
 		if storedErr != nil {
 			markArtifactFailed(ctx, job.TaskID, art.Key, storedErr)
 			continue
 		}
-		if url == "" {
-			continue // 已 stored（重试幂等）
+		// url 型保留上游原值（回源兜底的依据；对外链接由 RenderData 渲染期替换）。
+		// inline 型转存成功后清空 base64：大字段不再常驻任务表，内容改由对象存储供给
+		if stored && art.SourceType == "inline" && rcommon.SetJSONPath(data, art.SourcePath, "") {
+			rewritten = true
 		}
-		if !setJSONPath(data, art.SourcePath, url) {
-			markArtifactFailed(ctx, job.TaskID, art.Key, fmt.Errorf("改写路径 %s 失败", art.SourcePath))
-			continue
-		}
-		rewritten = true
 	}
 
 	if rewritten {
 		newData, err := json.Marshal(data)
 		if err != nil {
-			// 产物已 stored 但快照改写失败：客户端会拿到过期的上游 URL 且无重试，
-			// 必须留痕（产物行已 stored，sweep 不会再接手这个任务）
 			g.Log().Warningf(ctx, "js artifact: marshal rewritten data for task %s: %v", job.PublicTaskID, err)
 			return
 		}
@@ -278,12 +298,12 @@ func processJob(ctx context.Context, job *transferJob) {
 	}
 }
 
-// transferOne 转存单个产物，返回应改写进去的 URL（空串 = 无需改写）。
-func transferOne(ctx context.Context, fs *lcommon.FileService, job *transferJob, art rcommon.TaskArtifact, data map[string]any) (string, error) {
+// transferOne 转存单个产物，返回本次是否新完成转存（已 stored 的幂等跳过返回 false）。
+func transferOne(ctx context.Context, fs *lcommon.FileService, job *transferJob, art rcommon.TaskArtifact, data map[string]any) (bool, error) {
 	// 幂等：已 stored 直接跳过
-	if stored := getJSONPath(data, art.SourcePath); stored != nil {
-		if rowStatus := artifactStoredStatus(ctx, job.TaskID, art.Key); rowStatus == "stored" {
-			return "", nil
+	if stored := rcommon.GetJSONPath(data, art.SourcePath); stored != nil {
+		if rowStatus := artifactStoredStatus(ctx, job.TaskID, art.Key); rowStatus == statusStored {
+			return false, nil
 		}
 	}
 
@@ -294,77 +314,47 @@ func transferOne(ctx context.Context, fs *lcommon.FileService, job *transferJob,
 	)
 	switch art.SourceType {
 	case "inline":
-		v := getJSONPath(data, art.SourcePath)
+		v := rcommon.GetJSONPath(data, art.SourcePath)
 		s, ok := v.(string)
 		if !ok || s == "" {
-			return "", fmt.Errorf("inline 路径 %s 取值非字符串", art.SourcePath)
+			return false, fmt.Errorf("inline 路径 %s 取值非字符串", art.SourcePath)
 		}
 		decoded, err := base64.StdEncoding.DecodeString(s)
 		if err != nil {
-			return "", fmt.Errorf("inline base64 解码失败: %v", err)
+			return false, fmt.Errorf("inline base64 解码失败: %v", err)
 		}
 		content = decoded
 		contentType = art.MimeType
 	case "url":
-		v := getJSONPath(data, art.SourcePath)
+		v := rcommon.GetJSONPath(data, art.SourcePath)
 		rawURL, ok := v.(string)
 		if !ok || rawURL == "" {
-			return "", fmt.Errorf("url 路径 %s 取值非字符串", art.SourcePath)
+			return false, fmt.Errorf("url 路径 %s 取值非字符串", art.SourcePath)
 		}
-		// 相对 URL（/path 形态）：按渠道 baseURL 解析（需鉴权产物端点的常见形态）
-		if strings.HasPrefix(rawURL, "/") {
-			baseURL, chErr := loadChannelBase(ctx, job.ChannelID)
-			if chErr != nil {
-				return "", fmt.Errorf("解析相对 URL 失败（渠道不可用）: %v", chErr)
-			}
-			rawURL = strings.TrimRight(baseURL, "/") + rawURL
-			if art.SourceAuth == "" {
-				art.SourceAuth = "channel-bearer" // 相对 URL 隐含渠道上下文
-			}
-			fromChannel = true
+		target, rErr := resolveSource(ctx, job.ChannelID, rawURL, art.SourceAuth)
+		if rErr != nil {
+			return false, rErr
 		}
-		if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
-			return "", fmt.Errorf("url 取值不是 http(s)：%s", rawURL)
-		}
-		// SSRF 预检仅对插件声明的绝对外链 URL——渠道相对路径解析出的绝对 URL
-		// 指向渠道自身（自建中转指内网的部署形态合法），预检会误杀。
-		// 公网出口的兜底防线在 dial 层（SafeDialTransport 对私网目标二次拦截）。
-		if !fromChannel {
-			if err := ssrf.ValidateURL(rawURL); err != nil {
-				return "", fmt.Errorf("SSRF 预检失败: %v", err)
-			}
-		}
-		// channel-bearer 鉴权仅允许渠道同源目标：插件声明的绝对 URL 若携带渠道
-		// Bearer 密钥发往任意公网 host（SSRF 预检只拦内网），即是渠道密钥外泄通道。
-		// 相对 URL 分支拼出的目标天然同源（fromChannel），不进此判定。
-		if art.SourceAuth == "channel-bearer" && !fromChannel {
-			baseURL, chErr := loadChannelBase(ctx, job.ChannelID)
-			if chErr != nil {
-				return "", fmt.Errorf("channel-bearer 产物校验渠道失败: %v", chErr)
-			}
-			if !sameChannelHost(rawURL, baseURL) {
-				return "", fmt.Errorf("channel-bearer 产物仅允许渠道同源 URL：%s", rawURL)
-			}
-		}
+		rawURL, art.SourceAuth, fromChannel = target.URL, target.Auth, target.FromChannel
 		body, ct, dErr := downloadArtifact(ctx, rawURL, job, art, fromChannel)
 		if dErr != nil {
-			return "", fmt.Errorf("下载失败: %v", dErr)
+			return false, fmt.Errorf("下载失败: %v", dErr)
 		}
 		content = body
 		contentType = firstNonEmpty(art.MimeType, ct)
 		markArtifactSourceURL(ctx, job.TaskID, art.Key, rawURL)
 	default:
-		return "", fmt.Errorf("未知 source type %q", art.SourceType)
+		return false, fmt.Errorf("未知 source type %q", art.SourceType)
 	}
 
 	if len(content) == 0 {
-		return "", fmt.Errorf("产物内容为空")
+		return false, fmt.Errorf("产物内容为空")
 	}
 
 	key := storageKeyPrefix + job.PublicTaskID + "/" + art.Key + extOf(firstNonEmpty(contentType, "application/octet-stream"))
 	// 必须用 UploadWithKey：Upload 内部自动生成 "{日期}/{uuid}" key，构造的 key 传不进去，
 	// 落库 stored_key 会指向从未上传过的路径——观测/对账/对象清理全部对不上
-	rec, err := fs.UploadWithKey(ctx, &lcommon.FileUpload{
+	_, err := fs.UploadWithKey(ctx, &lcommon.FileUpload{
 		Reader:      bytes.NewReader(content),
 		Filename:    art.Key + extOf(firstNonEmpty(contentType, "bin")),
 		ContentType: firstNonEmpty(contentType, "application/octet-stream"),
@@ -373,14 +363,10 @@ func transferOne(ctx context.Context, fs *lcommon.FileService, job *transferJob,
 		UserID:      job.UserID,
 	}, key)
 	if err != nil {
-		return "", fmt.Errorf("上传对象存储失败: %v", err)
-	}
-	url, err := fs.GetDownloadURL(ctx, rec.ID, job.TenantID)
-	if err != nil {
-		return "", fmt.Errorf("生成下载 URL 失败: %v", err)
+		return false, fmt.Errorf("上传对象存储失败: %v", err)
 	}
 	markArtifactStored(ctx, job.TaskID, art.Key, key, fs.ProviderName(), firstNonEmpty(contentType, "application/octet-stream"), int64(len(content)))
-	return url, nil
+	return true, nil
 }
 
 // downloadArtifact 下载上游产物（限体积；art.SourceAuth=channel-bearer 时注入渠道鉴权）。
@@ -388,29 +374,16 @@ func transferOne(ctx context.Context, fs *lcommon.FileService, job *transferJob,
 // （渠道 baseURL 由管理员配置，允许内网中转形态），走无 SSRF transport 的专用 client；
 // 插件声明的绝对外链 URL 保持 downloadClient（预检 + dial 层双重拦截）。
 func downloadArtifact(ctx context.Context, rawURL string, job *transferJob, art rcommon.TaskArtifact, fromChannel bool) ([]byte, string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return nil, "", err
-	}
-	if art.SourceAuth == "channel-bearer" {
-		apiKey, kErr := loadChannelKey(ctx, job.ChannelID)
-		if kErr != nil {
-			return nil, "", fmt.Errorf("渠道密钥不可用: %w", kErr)
-		}
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-	}
 	client := downloadClient
 	if fromChannel {
 		client = channelDownloadClient
 	}
-	resp, err := client.Do(req)
+	target := sourceTarget{URL: rawURL, Auth: art.SourceAuth, FromChannel: fromChannel}
+	resp, err := doSourceRequest(ctx, client, target, job.ChannelID)
 	if err != nil {
 		return nil, "", err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, "", fmt.Errorf("上游返回 %d", resp.StatusCode)
-	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxArtifactBytes+1))
 	if err != nil {
 		return nil, "", err
@@ -419,6 +392,78 @@ func downloadArtifact(ctx context.Context, rawURL string, job *transferJob, art 
 		return nil, "", fmt.Errorf("产物超过 %dMB 上限", maxArtifactBytes>>20)
 	}
 	return body, resp.Header.Get("Content-Type"), nil
+}
+
+// sourceTarget 解析后的产物下载目标。
+type sourceTarget struct {
+	URL         string
+	Auth        string // channel-bearer = 注入渠道密钥
+	FromChannel bool   // 相对 URL 按渠道 baseURL 解析而来（与主转发链路同信任级）
+}
+
+// resolveSource 产物 URL 解析与安全校验（转存下载与回源代理共用）：
+//   - 相对 URL（/path）按渠道 baseURL 解析，隐含 channel-bearer
+//   - 绝对外链做 SSRF 预检；声明 channel-bearer 的绝对 URL 必须与渠道同源（防密钥外泄）
+func resolveSource(ctx context.Context, channelID int64, rawURL, auth string) (sourceTarget, error) {
+	target := sourceTarget{URL: rawURL, Auth: auth}
+	if strings.HasPrefix(rawURL, "/") {
+		baseURL, err := loadChannelBase(ctx, channelID)
+		if err != nil {
+			return target, fmt.Errorf("解析相对 URL 失败（渠道不可用）: %v", err)
+		}
+		target.URL = strings.TrimRight(baseURL, "/") + rawURL
+		if target.Auth == "" {
+			target.Auth = "channel-bearer" // 相对 URL 隐含渠道上下文
+		}
+		target.FromChannel = true
+	}
+	if !strings.HasPrefix(target.URL, "http://") && !strings.HasPrefix(target.URL, "https://") {
+		return target, fmt.Errorf("url 取值不是 http(s)：%s", target.URL)
+	}
+	// SSRF 预检仅对插件声明的绝对外链 URL——渠道相对路径解析出的绝对 URL
+	// 指向渠道自身（自建中转指内网的部署形态合法），预检会误杀。
+	// 公网出口的兜底防线在 dial 层（SafeDialTransport 对私网目标二次拦截）。
+	if !target.FromChannel {
+		if err := ssrf.ValidateURL(target.URL); err != nil {
+			return target, fmt.Errorf("SSRF 预检失败: %v", err)
+		}
+	}
+	// channel-bearer 鉴权仅允许渠道同源目标：插件声明的绝对 URL 若携带渠道
+	// Bearer 密钥发往任意公网 host（SSRF 预检只拦内网），即是渠道密钥外泄通道。
+	if target.Auth == "channel-bearer" && !target.FromChannel {
+		baseURL, err := loadChannelBase(ctx, channelID)
+		if err != nil {
+			return target, fmt.Errorf("channel-bearer 产物校验渠道失败: %v", err)
+		}
+		if !sameChannelHost(target.URL, baseURL) {
+			return target, fmt.Errorf("channel-bearer 产物仅允许渠道同源 URL：%s", target.URL)
+		}
+	}
+	return target, nil
+}
+
+// doSourceRequest 发起产物 GET（按需注入渠道鉴权），非 200 关闭响应体并报错。
+func doSourceRequest(ctx context.Context, client *http.Client, target sourceTarget, channelID int64) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.URL, nil)
+	if err != nil {
+		return nil, err
+	}
+	if target.Auth == "channel-bearer" {
+		apiKey, kErr := loadChannelKey(ctx, channelID)
+		if kErr != nil {
+			return nil, fmt.Errorf("渠道密钥不可用: %w", kErr)
+		}
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, fmt.Errorf("上游返回 %d", resp.StatusCode)
+	}
+	return resp, nil
 }
 
 // sameChannelHost 判断产物 URL 与渠道 baseURL 是否同源（host 一致 + 端口归一：
@@ -448,7 +493,7 @@ func normURLPort(u *url.URL) string {
 // 元数据行
 // ---------------------------------------------------------------------------
 
-func insertArtifactRow(ctx context.Context, job *transferJob, art rcommon.TaskArtifact) {
+func insertArtifactRow(ctx context.Context, job *transferJob, art rcommon.TaskArtifact, status string) {
 	_, err := g.DB().Model(artifactTable).Ctx(ctx).Data(g.Map{
 		"task_id":        job.TaskID,
 		"public_task_id": job.PublicTaskID,
@@ -458,8 +503,11 @@ func insertArtifactRow(ctx context.Context, job *transferJob, art rcommon.TaskAr
 		"channel_id":     job.ChannelID,
 		"artifact_key":   art.Key,
 		"source_type":    art.SourceType,
-		"source_url":     art.SourcePath, // 声明期存取值路径，url 型转存时更新为真实 URL
-		"status":         "pending",
+		"source_path":    art.SourcePath, // 声明原样路径（不随转存改写）
+		"source_auth":    art.SourceAuth,
+		"source_url":     "", // url 型下载时写入真实 URL
+		"mime_type":      art.MimeType,
+		"status":         status,
 	}).OnConflict("task_id,artifact_key").Save()
 	if err != nil {
 		g.Log().Warningf(ctx, "js artifact insert row: %v", err)
@@ -553,120 +601,6 @@ func loadChannelKey(ctx context.Context, channelID int64) (string, error) {
 		return "", err
 	}
 	return plain, nil
-}
-
-// ---------------------------------------------------------------------------
-// JSON path（"data.videos[0].url"）
-// ---------------------------------------------------------------------------
-
-// getJSONPath 按点分 + [n] 路径取值。
-func getJSONPath(data map[string]any, path string) any {
-	cur := any(data)
-	for _, seg := range splitPath(path) {
-		switch node := cur.(type) {
-		case map[string]any:
-			v, ok := node[seg.key]
-			if !ok {
-				return nil
-			}
-			cur = v
-		case []any:
-			if seg.index < 0 || seg.index >= len(node) {
-				return nil
-			}
-			cur = node[seg.index]
-		default:
-			return nil
-		}
-	}
-	return cur
-}
-
-// setJSONPath 按路径改写值（路径必须已存在——产物声明指向 taskData 已有字段）。
-func setJSONPath(data map[string]any, path string, value any) bool {
-	segs := splitPath(path)
-	if len(segs) == 0 {
-		return false
-	}
-	parent := any(data)
-	for i := 0; i < len(segs)-1; i++ {
-		switch node := parent.(type) {
-		case map[string]any:
-			v, ok := node[segs[i].key]
-			if !ok {
-				return false
-			}
-			parent = v
-		case []any:
-			if segs[i].index < 0 || segs[i].index >= len(node) {
-				return false
-			}
-			parent = node[segs[i].index]
-		default:
-			return false
-		}
-	}
-	last := segs[len(segs)-1]
-	switch node := parent.(type) {
-	case map[string]any:
-		if _, ok := node[last.key]; !ok {
-			return false
-		}
-		node[last.key] = value
-		return true
-	case []any:
-		if last.index < 0 || last.index >= len(node) {
-			return false
-		}
-		node[last.index] = value
-		return true
-	default:
-		return false
-	}
-}
-
-type pathSeg struct {
-	key   string
-	index int
-}
-
-func splitPath(path string) []pathSeg {
-	var segs []pathSeg
-	for _, part := range strings.Split(path, ".") {
-		if part == "" {
-			continue
-		}
-		// 处理 "videos[0]" 形态
-		bracket := strings.Index(part, "[")
-		if bracket < 0 {
-			segs = append(segs, pathSeg{key: part, index: -1})
-			continue
-		}
-		if bracket > 0 {
-			segs = append(segs, pathSeg{key: part[:bracket], index: -1})
-		}
-		for bracket >= 0 {
-			end := strings.Index(part[bracket:], "]")
-			if end < 0 {
-				return segs
-			}
-			idx := 0
-			numStr := part[bracket+1 : bracket+end]
-			for _, c := range numStr {
-				if c < '0' || c > '9' {
-					return segs
-				}
-				idx = idx*10 + int(c-'0')
-			}
-			segs = append(segs, pathSeg{key: "", index: idx})
-			next := strings.Index(part[bracket+end:], "[")
-			if next < 0 {
-				break
-			}
-			bracket = bracket + end + next
-		}
-	}
-	return segs
 }
 
 // ---------------------------------------------------------------------------

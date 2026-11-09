@@ -15,8 +15,9 @@ func (s *sAdmin) JSPluginConfig(ctx context.Context, req *v1.JSPluginConfigReq) 
 		return nil, err
 	}
 	view := jsplugin.GetConfigView(ctx, req.Key, manifest)
-	out := make([]v1.JSPluginConfigField, 0, len(manifest.Config))
-	for _, field := range manifest.Config {
+	fields := manifest.AllConfig() // 含宿主内置项（产物转存开关等）
+	out := make([]v1.JSPluginConfigField, 0, len(fields))
+	for _, field := range fields {
 		v := view[field.Key]
 		out = append(out, v1.JSPluginConfigField{
 			Key: field.Key, Label: field.Label, Type: field.Type,

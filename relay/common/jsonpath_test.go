@@ -1,4 +1,4 @@
-package artifact
+package common
 
 import (
 	"encoding/json"
@@ -18,29 +18,29 @@ func TestJSONPathRoundtrip(t *testing.T) {
 		t.Fatalf("解析失败: %v", err)
 	}
 
-	if v := getJSONPath(data, "data.audio_url"); v != "https://up.example.com/a.mp3" {
+	if v := GetJSONPath(data, "data.audio_url"); v != "https://up.example.com/a.mp3" {
 		t.Fatalf("顶层路径取值异常: %v", v)
 	}
-	if v := getJSONPath(data, "data.videos[1].url"); v != "https://up.example.com/v2.mp4" {
+	if v := GetJSONPath(data, "data.videos[1].url"); v != "https://up.example.com/v2.mp4" {
 		t.Fatalf("嵌套数组取值异常: %v", v)
 	}
-	if v := getJSONPath(data, "data.videos[5].url"); v != nil {
+	if v := GetJSONPath(data, "data.videos[5].url"); v != nil {
 		t.Fatalf("越界应返回 nil: %v", v)
 	}
-	if v := getJSONPath(data, "data.missing"); v != nil {
+	if v := GetJSONPath(data, "data.missing"); v != nil {
 		t.Fatalf("缺失路径应返回 nil: %v", v)
 	}
 
 	// url 改写（url 型产物）
-	if !setJSONPath(data, "data.videos[1].url", "https://oss.local/v2.mp4") {
+	if !SetJSONPath(data, "data.videos[1].url", "https://oss.local/v2.mp4") {
 		t.Fatal("数组内路径改写失败")
 	}
-	if v := getJSONPath(data, "data.videos[1].url"); v != "https://oss.local/v2.mp4" {
+	if v := GetJSONPath(data, "data.videos[1].url"); v != "https://oss.local/v2.mp4" {
 		t.Fatalf("改写后取值异常: %v", v)
 	}
 
 	// 路径必须已存在（产物声明指向 taskData 已有字段）
-	if setJSONPath(data, "data.not.exist", "x") {
+	if SetJSONPath(data, "data.not.exist", "x") {
 		t.Fatal("不存在的路径不应允许创建")
 	}
 }

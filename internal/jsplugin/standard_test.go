@@ -5,6 +5,7 @@ package jsplugin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -164,5 +165,35 @@ func TestSynthesizeStandardPlan_PluginNotActive(t *testing.T) {
 		contract.SurfaceOpenAIVideos, "/v1/videos", []byte(`{"model":"std_model"}`), "std_model")
 	if err == nil || !strings.Contains(err.Error(), "not active") {
 		t.Fatalf("插件未激活应报错，得到 %v", err)
+	}
+}
+
+// TestCheckReferenceRoles 标准端点参考素材的插件能力拦截：未声明 referenceRoles 仅放行首帧，
+// 声明后按声明放行；无 references / 非 JSON 不拦截。
+func TestCheckReferenceRoles(t *testing.T) {
+	legacy := &contract.Manifest{Key: "legacy"}
+	full := &contract.Manifest{Key: "full", ReferenceRoles: []string{"first_frame", "reference_image", "reference_video"}}
+	cases := []struct {
+		name    string
+		m       *contract.Manifest
+		body    string
+		wantErr bool
+	}{
+		{"无 references", legacy, `{"prompt":"p"}`, false},
+		{"非 JSON", legacy, `not json`, false},
+		{"未声明仅首帧", legacy, `{"references":[{"role":"first_frame","url":"https://a"}]}`, false},
+		{"未声明拒参考图", legacy, `{"references":[{"role":"reference_image","url":"https://a"}]}`, true},
+		{"声明放行", full, `{"references":[{"role":"reference_image","url":"https://a"},{"role":"reference_video","url":"https://v"}]}`, false},
+		{"声明外拒绝", full, `{"references":[{"role":"reference_audio","url":"https://a"}]}`, true},
+	}
+	for _, c := range cases {
+		err := checkReferenceRoles(c.m, c.m.Key, []byte(c.body))
+		if (err != nil) != c.wantErr {
+			t.Errorf("%s: err=%v wantErr=%v", c.name, err, c.wantErr)
+		}
+		var roleErr *ReferenceRoleError
+		if c.wantErr && !errors.As(err, &roleErr) {
+			t.Errorf("%s: 应为 ReferenceRoleError，got %T", c.name, err)
+		}
 	}
 }

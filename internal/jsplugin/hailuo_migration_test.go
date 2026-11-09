@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/qianfree/team-api/internal/jsplugin/contract"
@@ -19,7 +20,7 @@ func hailuoSource(t *testing.T) string {
 func TestMigratedHailuoManifest(t *testing.T) {
 	compiled := mustCompile(t, hailuoSource(t))
 	m := compiled.Manifest
-	if m.Key != "hailuo" || len(m.Models) != 10 || len(m.Routes) != 3 {
+	if m.Key != "hailuo" || len(m.Models) != 13 || len(m.Routes) != 3 {
 		t.Fatalf("manifest 异常: models=%d routes=%d", len(m.Models), len(m.Routes))
 	}
 	if m.UsageFieldByKey("input_video_seconds") == nil {
@@ -158,7 +159,7 @@ func TestMigratedHailuoH3Flow(t *testing.T) {
 	// H3 succeeded → usage 精确结算 + CDN 产物
 	queried, err := contract.ValidateQueried(call("parseQueryResponse", contract.ParseQueryContext{
 		Status: 200, Tasks: []contract.QueryTaskRef{taskRef},
-		ResponseBody: json.RawMessage(`{"task_id":"h3-77","status":"succeeded","resolution":"768P","content":{"url":"https://cdn.minimax.example/v.mp4"},"usage":{"output_seconds":5,"input_images":1}}`),
+		ResponseBody: json.RawMessage(`{"task_id":"h3-77","status":"succeeded","resolution":"768P","content":{"url":"https://cdn.minimax.example/v.mp4"},"usage":{"output_seconds":5,"input_image_count":1,"input_seconds":3}}`),
 	}), []contract.QueryTaskRef{taskRef})
 	if err != nil {
 		t.Fatalf("H3 轮询解析失败: %v", err)
@@ -168,7 +169,8 @@ func TestMigratedHailuoH3Flow(t *testing.T) {
 		t.Fatalf("H3 终态 item 异常: %+v", item)
 	}
 	termFacts, err := contract.ValidateUsageFacts(mustRawMap(t, item.Usage), plugin.Manifest)
-	if err != nil || termFacts["seconds"] != 5 || termFacts["input_images"] != 1 {
+	// 官方 VideoTaskUsage 字段名 input_image_count / input_seconds → 插件事实键 input_images / input_video_seconds
+	if err != nil || termFacts["seconds"] != 5 || termFacts["input_images"] != 1 || termFacts["input_video_seconds"] != 3 {
 		t.Fatalf("H3 终态用量异常: %v err=%v", termFacts, err)
 	}
 	var td map[string]any
@@ -324,5 +326,136 @@ func TestMigratedHailuoStandardVideos(t *testing.T) {
 		h3.VendorBody.Content[1].ImageURL == nil || h3.VendorBody.Content[1].Role != "first_frame" ||
 		h3.VendorBody.Resolution != "768P" || h3.VendorBody.Duration != 5 || h3.VendorBody.Ratio != "16:9" {
 		t.Fatalf("H3 vendorBody 映射异常: %s", decodedH3.RequestBody)
+	}
+}
+
+// TestMigratedHailuoStandardVideosReferences 标准端点 references[] 映射 + H3 家族型号/档位：
+//   - H3：role 原样映射为 content 项（保持原序），合计 ≤12，Lite 参考模式须显式比例
+//   - H3 家族保留客户端型号（不再强制改写为 MiniMax-H3），2K/480P 档位按型号校验
+//   - Hailuo 2.x：首/尾帧 → first/last_frame_image，S2V-01 单张参考图 → subject_reference，其余拒绝
+func TestMigratedHailuoStandardVideosReferences(t *testing.T) {
+	cleanup, err := PublishForTest(hailuoSource(t))
+	if err != nil {
+		t.Fatalf("发布失败: %v", err)
+	}
+	t.Cleanup(cleanup)
+	plugin, _ := CurrentGeneration().Plugin("hailuo")
+
+	decode := func(model, extra string) (string, json.RawMessage, error) {
+		body := `{"model":"` + model + `","prompt":"reference image 1 dances","seconds":"6"` + extra + `}`
+		out, err := plugin.Pool.Call(context.Background(), "decodeVideos", mustJSON(t, contract.StandardEntryContext{
+			Surface: contract.SurfaceOpenAIVideos, Path: "/v1/videos", Model: model, Body: json.RawMessage(body),
+		}))
+		if err != nil {
+			return "", nil, err
+		}
+		raw, err := contract.ParseJSONObject(out)
+		if err != nil {
+			return "", nil, err
+		}
+		decoded, err := contract.ValidateDecoded(raw, plugin.Manifest, false)
+		if err != nil {
+			return "", nil, err
+		}
+		return decoded.Model, decoded.RequestBody, nil
+	}
+	type vendorShape struct {
+		Model      string `json:"model"`
+		VendorBody struct {
+			Content          []map[string]any `json:"content"`
+			Resolution       string           `json:"resolution"`
+			FirstFrameImage  string           `json:"first_frame_image"`
+			LastFrameImage   string           `json:"last_frame_image"`
+			SubjectReference []map[string]any `json:"subject_reference"`
+		} `json:"vendorBody"`
+	}
+
+	// H3-Max：型号保留 + 参考素材映射（含音频、data URL 视频，MiniMax 均支持）
+	model, body, err := decode("MiniMax-H3-Max", `,"metadata":{"resolution":"480P"},"images":["https://legacy"],"references":[
+		{"role":"reference_image","url":"https://img/1.png"},
+		{"role":"reference_video","url":"data:video/mp4;base64,AAAA"},
+		{"role":"reference_audio","url":"https://aud/1.mp3"}]`)
+	if err != nil {
+		t.Fatalf("H3-Max 参考解码失败: %v", err)
+	}
+	var v vendorShape
+	_ = json.Unmarshal(body, &v)
+	if model != "MiniMax-H3-Max" || v.Model != "MiniMax-H3-Max" {
+		t.Fatalf("H3 家族型号应保留: model=%s body=%s", model, body)
+	}
+	if v.VendorBody.Resolution != "480P" || len(v.VendorBody.Content) != 4 {
+		t.Fatalf("H3-Max 映射异常（兼容字段 images[] 不得混入）: %s", body)
+	}
+	wantRoles := []string{"", "reference_image", "reference_video", "reference_audio"}
+	for i, role := range wantRoles {
+		got, _ := v.VendorBody.Content[i]["role"].(string)
+		if got != role {
+			t.Fatalf("content[%d].role=%q want %q: %s", i, got, role, body)
+		}
+	}
+
+	// H3：2K 档位（此前 resolutionFor 不识别 2K，被改写成 H3 不支持的 720P）
+	if _, body, err = decode("MiniMax-H3", `,"metadata":{"resolution":"2K"}`); err != nil {
+		t.Fatalf("H3 2K 应通过: %v", err)
+	}
+	v = vendorShape{}
+	_ = json.Unmarshal(body, &v)
+	if v.VendorBody.Resolution != "2K" {
+		t.Fatalf("H3 2K 档位异常: %s", body)
+	}
+
+	// Hailuo 2.x 首尾帧 + S2V-01 主体参考
+	if _, body, err = decode("MiniMax-Hailuo-02", `,"references":[{"role":"first_frame","url":"https://a"},{"role":"last_frame","url":"https://b"}]`); err != nil {
+		t.Fatalf("Hailuo-02 首尾帧应通过: %v", err)
+	}
+	v = vendorShape{}
+	_ = json.Unmarshal(body, &v)
+	if v.VendorBody.FirstFrameImage != "https://a" || v.VendorBody.LastFrameImage != "https://b" {
+		t.Fatalf("Hailuo-02 首尾帧映射异常: %s", body)
+	}
+	if _, body, err = decode("S2V-01", `,"references":[{"role":"reference_image","url":"https://face"}]`); err != nil {
+		t.Fatalf("S2V-01 主体参考应通过: %v", err)
+	}
+	v = vendorShape{}
+	_ = json.Unmarshal(body, &v)
+	if len(v.VendorBody.SubjectReference) != 1 {
+		t.Fatalf("S2V-01 subject_reference 映射异常: %s", body)
+	}
+
+	twelve := make([]string, 0, 13)
+	for i := 0; i < 9; i++ {
+		twelve = append(twelve, `{"role":"reference_image","url":"https://i"}`)
+	}
+	for i := 0; i < 3; i++ {
+		twelve = append(twelve, `{"role":"reference_video","url":"https://v"}`)
+	}
+	thirteen := append(append([]string{}, twelve...), `{"role":"reference_audio","url":"https://a"}`)
+	if _, _, err := decode("MiniMax-H3", `,"references":[`+strings.Join(twelve, ",")+`]`); err != nil {
+		t.Fatalf("12 个参考应通过: %v", err)
+	}
+
+	rejects := []struct{ name, model, extra string }{
+		{"参考合计超 12", "MiniMax-H3", `,"references":[` + strings.Join(thirteen, ",") + `]`},
+		{"Lite 参考模式须显式比例", "MiniMax-H3-Lite", `,"references":[{"role":"reference_image","url":"https://a"}]`},
+		{"H3 不支持 480P", "MiniMax-H3", `,"metadata":{"resolution":"480P"}`},
+		{"Max 不支持 2K", "MiniMax-H3-Max", `,"metadata":{"resolution":"2K"}`},
+		{"Hailuo-02 不支持参考视频", "MiniMax-Hailuo-02", `,"references":[{"role":"reference_video","url":"https://v"}]`},
+		{"S2V-01 仅一张参考图", "S2V-01", `,"references":[{"role":"reference_image","url":"https://a"},{"role":"reference_image","url":"https://b"}]`},
+	}
+	for _, c := range rejects {
+		if _, _, err := decode(c.model, c.extra); err == nil {
+			t.Errorf("%s：应拒绝", c.name)
+		}
+	}
+	// Max 时长下限 5 秒（H3 为 4）
+	if _, err := plugin.Pool.Call(context.Background(), "decodeVideos", mustJSON(t, contract.StandardEntryContext{
+		Surface: contract.SurfaceOpenAIVideos, Path: "/v1/videos", Model: "MiniMax-H3-Max",
+		Body: json.RawMessage(`{"model":"MiniMax-H3-Max","prompt":"x","seconds":"4"}`),
+	})); err == nil {
+		t.Error("H3-Max 4 秒应拒绝")
+	}
+	// Lite 显式比例后通过
+	if _, _, err := decode("MiniMax-H3-Lite", `,"ratio":"16:9","references":[{"role":"reference_image","url":"https://a"}]`); err != nil {
+		t.Fatalf("Lite 显式比例应通过: %v", err)
 	}
 }

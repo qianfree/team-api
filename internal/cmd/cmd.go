@@ -627,6 +627,14 @@ func registerRelayRoutes(server *ghttp.Server) {
 		group.DELETE("/videos/{video_id}", relay.HandleVideoDelete)
 	})
 
+	// 异步任务统一内容链接：签名直链免 API Key（链接即授权，供浏览器 / <video> / 下游拉取），
+	// 不挂 ApiKeyAuth；产物已转存的从对象存储供给，否则平台实时回源
+	server.Group("/v1", func(group *ghttp.RouterGroup) {
+		group.Middleware(middleware.ApiMaintenance, middleware.ResourceGuard, middleware.MaintenanceMode)
+		group.GET("/tasks/{task_id}/content", relay.HandleTaskContent)
+		group.GET("/tasks/{task_id}/content/{artifact_key}", relay.HandleTaskContent)
+	})
+
 	// Gemini 兼容路由（/v1beta/models/{model}:generateContent）
 	server.Group("/v1beta", func(group *ghttp.RouterGroup) {
 		group.Middleware(middleware.ApiMaintenance, middleware.ResourceGuard, middleware.MaintenanceMode, middleware.ApiKeyAuth, middleware.RelayBodyLimit, middleware.ContentFilter)

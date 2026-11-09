@@ -73,14 +73,15 @@ func TestParseVideosCreateRequest_JSONInvalidSeconds(t *testing.T) {
 	}
 }
 
-func TestParseVideosCreateRequest_JSONFileIDRejected(t *testing.T) {
-	body := `{"model":"m","prompt":"p","input_reference":{"file_id":"file-abc"}}`
-	_, taskErr := ParseVideosCreateRequest([]byte(body), "application/json")
-	if taskErr == nil {
-		t.Fatal("expected file_id to be rejected")
-	}
-	if taskErr.StatusCode != 400 || taskErr.ErrCode != "file_id_not_supported" {
+// input_reference.file_id 引用 /v1/files 上传文件：解析阶段保留 ID，提交前由网关解析为签名 URL
+func TestParseVideosCreateRequest_JSONFileIDAccepted(t *testing.T) {
+	body := `{"model":"m","prompt":"p","input_reference":{"file_id":"file-abc12345"}}`
+	req, taskErr := ParseVideosCreateRequest([]byte(body), "application/json")
+	if taskErr != nil {
 		t.Fatalf("unexpected error: %+v", taskErr)
+	}
+	if req.InputReferenceFileID != "file-abc12345" || req.InputReference != "" {
+		t.Fatalf("unexpected input_reference: %+v", req)
 	}
 }
 

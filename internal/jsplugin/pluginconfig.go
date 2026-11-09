@@ -27,7 +27,7 @@ func configKey(pluginKey, fieldKey string) string {
 
 // seedConfigDefaults 上传时种默认值（已存在的键不动；加密字段种空串占位）。
 func seedConfigDefaults(ctx context.Context, m *contract.Manifest) error {
-	for _, field := range m.Config {
+	for _, field := range m.AllConfig() {
 		key := configKey(m.Key, field.Key)
 		if existing := lcommon.Config().GetOption(ctx, key); existing != "" {
 			continue
@@ -45,11 +45,9 @@ func seedConfigDefaults(ctx context.Context, m *contract.Manifest) error {
 
 // loadPluginConfig 装载插件配置值（加密字段解密），返回给实例注入 utils.config.get。
 func loadPluginConfig(ctx context.Context, m *contract.Manifest) (map[string]any, error) {
-	if len(m.Config) == 0 {
-		return nil, nil
-	}
-	values := make(map[string]any, len(m.Config))
-	for _, field := range m.Config {
+	fields := m.AllConfig()
+	values := make(map[string]any, len(fields))
+	for _, field := range fields {
 		key := configKey(m.Key, field.Key)
 		raw := lcommon.Config().GetOption(ctx, key)
 		if raw == "" {
@@ -79,8 +77,9 @@ type ConfigView struct {
 
 // GetConfigView 管理端读取配置：schema + 当前值（加密掩码）。
 func GetConfigView(ctx context.Context, pluginKey string, m *contract.Manifest) map[string]ConfigView {
-	out := make(map[string]ConfigView, len(m.Config))
-	for _, field := range m.Config {
+	fields := m.AllConfig()
+	out := make(map[string]ConfigView, len(fields))
+	for _, field := range fields {
 		key := configKey(pluginKey, field.Key)
 		raw := lcommon.Config().GetOption(ctx, key)
 		view := ConfigView{Encrypted: field.Encrypted}
@@ -141,7 +140,7 @@ func UpdateConfig(ctx context.Context, pluginKey string, m *contract.Manifest, v
 		val string
 	}
 	writes := make([]pendingWrite, 0, len(values))
-	for _, field := range m.Config {
+	for _, field := range m.AllConfig() {
 		v, ok := values[field.Key]
 		if !ok {
 			continue
@@ -222,6 +221,19 @@ func precheckModelsConfig(ctx context.Context, pluginKey string, m *contract.Man
 		others = append(others, modelSetParty{key: row.PluginKey, models: otherSet, shared: otherM.SharedModels})
 	}
 	return checkModelSetConflict(modelSetParty{key: pluginKey, models: setA, shared: m.SharedModels}, others)
+}
+
+// ArtifactStorageEnabled 插件产物是否转存到平台对象存储（宿主内置配置项，缺省开启）。
+func ArtifactStorageEnabled(ctx context.Context, pluginKey string) bool {
+	raw := strings.TrimSpace(lcommon.Config().GetOption(ctx, configKey(pluginKey, contract.HostConfigArtifactStorage)))
+	if raw == "" {
+		return true
+	}
+	enabled, err := strconv.ParseBool(raw)
+	if err != nil {
+		return true
+	}
+	return enabled
 }
 
 // keepCurrentValue 判断提交值是否表示「保持现值」：加密字段空串/掩码、

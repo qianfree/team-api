@@ -39,7 +39,13 @@ func (a *GeminiAdaptor) ValidateRequest(_ context.Context, _ *common.RelayInfo, 
 	if req.Prompt == "" {
 		return &common.TaskError{StatusCode: http.StatusBadRequest, Message: "prompt is required"}
 	}
-	return nil
+	// 标准端点参考素材：只承接首帧（兼容字段），其余角色明确拒绝
+	refs := common.ReferencesFromTaskBodyBytes(body)
+	var head struct {
+		Model string `json:"model"`
+	}
+	_ = json.Unmarshal(body, &head)
+	return common.RejectUnsupportedReferences(refs, head.Model, common.RefRoleFirstFrame)
 }
 
 func (a *GeminiAdaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, body []byte) map[string]any {
