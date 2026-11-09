@@ -90,6 +90,13 @@ var predefinedPermissionGroups = []v1.PermissionGroup{
 		},
 	},
 	{
+		Name:  "ai_assistant",
+		Label: "AI助手",
+		Permissions: []string{
+			"ai_assistant:use", "ai_assistant:config",
+		},
+	},
+	{
 		Name:  "operation",
 		Label: "内容运营",
 		Permissions: []string{

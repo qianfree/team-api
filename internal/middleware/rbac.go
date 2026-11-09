@@ -198,6 +198,13 @@ var adminPermissionRules = []permissionRule{
 	{method: "PUT", path: "/api/admin/ai-analysis/config", perm: "ai_analysis:config"},
 	{method: "POST", path: "/api/admin/ai-analysis/test", perm: "ai_analysis:config"},
 
+	// ── ai_assistant AI 助手 ──
+	// 对话是运营者日常使用（SSE 端点，handler 注册）；配置与连通性测试属配置能力
+	{method: "POST", path: "/api/admin/ai-assistant/chat", perm: "ai_assistant:use"},
+	{method: "GET", path: "/api/admin/ai-assistant/config", perm: "ai_assistant:config"},
+	{method: "PUT", path: "/api/admin/ai-assistant/config", perm: "ai_assistant:config"},
+	{method: "POST", path: "/api/admin/ai-assistant/test", perm: "ai_assistant:config"},
+
 	// ── file 文件管理 ──
 	{method: "GET", path: "/api/admin/files", perm: "file:view"},
 	{method: "GET", path: "/api/admin/files/stats", perm: "file:view"},

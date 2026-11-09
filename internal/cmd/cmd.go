@@ -309,11 +309,13 @@ var (
 				group.GET("/{id}/serve", adminHandler.HandleFileServe)
 			})
 
-			// JS 插件品牌图标：二进制直写，同样绕过 JSON 包装
-			//（rbac 前缀规则 GET /api/admin/js-plugins/ → plugin:upload 已覆盖本路径）
+			// JS 插件品牌图标：二进制直写，绕过 JSON 包装
+			//（rbac 前缀规则 GET /api/admin/js-plugins/ → plugin:upload 已覆盖本路径）；
+			// AI 助手对话：SSE 流式直写，同样绕过 JSON 包装（rbac: POST /ai-assistant/chat → ai_assistant:use）
 			s.Group("/api/admin", func(group *ghttp.RouterGroup) {
 				group.Middleware(middleware.AdminAuth, middleware.AdminPermissionGuard, middleware.OperationLog)
 				group.GET("/js-plugins/{key}/icon", adminHandler.HandleJSPluginIcon)
+				group.POST("/ai-assistant/chat", adminHandler.HandleAiAssistantChat)
 			})
 
 			// Open Platform API — HMAC-SHA256 authentication

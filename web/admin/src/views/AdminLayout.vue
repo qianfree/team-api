@@ -39,9 +39,11 @@ import {
   IconBook,
   IconCheckCircleFill,
   IconInfoCircle,
+  IconRobot,
 } from '@arco-design/web-vue/es/icon'
 import { useAuthStore } from '@/stores/auth'
-import { ADMIN_ROLES } from '@/utils/permission'
+import { ADMIN_ROLES, hasPermission } from '@/utils/permission'
+import AiAssistantWindow from '@/components/aiassistant/AiAssistantWindow.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -54,6 +56,10 @@ const collapsedGroups = reactive<Record<string, boolean>>({})
 const isMobile = ref(false)
 const demoMode = ref(false)
 const demoMessage = ref('')
+
+// --- AI 助手（全局入口，右上角）---
+const aiAssistantVisible = ref(false)
+const canUseAiAssistant = hasPermission('ai_assistant:use')
 
 // --- Version & Update ---
 const appVersion = ref(__APP_VERSION__ || 'dev')
@@ -804,6 +810,18 @@ onUnmounted(() => {
             </Transition>
           </div>
 
+          <!-- AI 助手：全局浮动窗口（可拖动），ai_assistant:use 权限可见，点击切换开合 -->
+          <button
+            v-if="canUseAiAssistant"
+            type="button"
+            class="admin-header__bell-btn"
+            :class="{ 'admin-header__bell-btn--active': aiAssistantVisible }"
+            title="AI 助手"
+            @click.stop="aiAssistantVisible = !aiAssistantVisible"
+          >
+            <IconRobot class="admin-header__bell-icon" />
+          </button>
+
           <!-- 帮助文档：新窗口打开文档站 -->
           <a
             class="admin-header__docs-btn"
@@ -851,6 +869,9 @@ onUnmounted(() => {
         </router-view>
       </main>
     </div>
+
+    <!-- AI 助手全局浮动窗口 -->
+    <AiAssistantWindow v-model:visible="aiAssistantVisible" />
 
     <!-- Update Modal -->
     <a-modal

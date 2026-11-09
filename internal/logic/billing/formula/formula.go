@@ -16,22 +16,42 @@ import (
 	"github.com/expr-lang/expr/vm"
 )
 
-// knownVars 公式可用变量表（排除语义见 env.go）。新增变量必须同步：
+// knownVarDocs 公式可用变量文档表（key → 中文说明），knownVars 的唯一事实源：
+// 说明随变量定义维护在同一处，AI 助手技能参考（KnownVarDocs）据此动态生成，
+// 不另立文档副本。新增变量必须同步：
 // 1) FormulaInput.Env 注入；2) 前端 FormulaPricingEditor 变量速查；3) smoke 向量覆盖
-var knownVars = map[string]bool{
-	"p":           true, // 纯文本输入 token（公式单独计价的细分类别已扣除）
-	"c":           true, // 输出 token（同上，引用 rt/img_o/ao 时扣除）
-	"ctx":         true, // 完整输入上下文 token（含缓存，阶梯档位判断用，不扣除）。不可命名 len——与 expr 内置函数冲突
-	"cr":          true, // 缓存读取（命中）token
-	"cc":          true, // 缓存写入 5m（Claude ephemeral_5m / OpenAI cache_write 合并桶）
-	"cc1h":        true, // 缓存写入 1h token（Claude ephemeral_1h）
-	"img":         true, // 图片输入 token
-	"img_o":       true, // 图片输出 token
-	"ai":          true, // 音频输入 token
-	"ao":          true, // 音频输出 token
-	"rt":          true, // 推理输出 token（reasoning）
-	"image_count": true, // 图片张数（图片协议顶层 n / 任务 ratios count，按次放大）
-	"seconds":     true, // 任务计费秒数（时长类任务：预扣=请求时长信号，结算=官方素材计量；同步路径恒 0）
+var knownVarDocs = map[string]string{
+	"p":           "纯文本输入 token（公式单独计价的细分类别已扣除）",
+	"c":           "输出 token（引用 rt/img_o/ao 时扣除对应细分）",
+	"ctx":         "完整输入上下文 token（含缓存，长上下文档位判断用，不扣除）。不可命名 len——与 expr 内置函数冲突",
+	"cr":          "缓存读取（命中）token",
+	"cc":          "缓存写入 5m token（Claude ephemeral_5m / OpenAI cache_write 合并桶）",
+	"cc1h":        "缓存写入 1h token（Claude ephemeral_1h）",
+	"img":         "图片输入 token",
+	"img_o":       "图片输出 token",
+	"ai":          "音频输入 token",
+	"ao":          "音频输出 token",
+	"rt":          "推理输出 token（reasoning）",
+	"image_count": "图片张数（图片协议顶层 n / 任务 ratios count，<=1 归一为 1）",
+	"seconds":     "任务计费秒数（时长类任务：预扣=请求时长信号，结算=官方素材计量；同步对话路径恒 0）",
+}
+
+// knownVars 公式可用变量集合（由 knownVarDocs 派生，排除语义见 env.go）。
+var knownVars = func() map[string]bool {
+	m := make(map[string]bool, len(knownVarDocs))
+	for k := range knownVarDocs {
+		m[k] = true
+	}
+	return m
+}()
+
+// KnownVarDocs 返回变量文档表快照（AI 助手等外部消费方动态生成参考用，防手写文档漂移）。
+func KnownVarDocs() map[string]string {
+	out := make(map[string]string, len(knownVarDocs))
+	for k, v := range knownVarDocs {
+		out[k] = v
+	}
+	return out
 }
 
 // knownFactKeys 已注册 usage facts 键表（key → 中文说明）。
