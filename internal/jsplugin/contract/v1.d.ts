@@ -346,8 +346,13 @@ export interface RenderTask {
   status: "SUBMITTED" | "IN_PROGRESS" | "SUCCESS" | "FAILURE";
   progress?: string;
   failReason?: string;
-  /** 最新上游快照（taskData） */
+  /** 最新上游快照（taskData）。成功任务中 artifacts 声明的取值路径已被宿主替换为统一内容链接 */
   data?: any;
+  /**
+   * 主产物统一内容链接（平台签名直链，免鉴权可直接打开，有效期由平台配置）。
+   * 成功且声明过产物时非空；产物是否转存 OSS 不影响链接形态。
+   */
+  contentUrl?: string;
 }
 
 export interface RenderTaskContext {

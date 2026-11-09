@@ -125,6 +125,11 @@ func (a *Adaptor) ValidateRequest(_ context.Context, _ *common.RelayInfo, body [
 	if prompt, ok := req["prompt"].(string); !ok || strings.TrimSpace(prompt) == "" {
 		return &common.TaskError{StatusCode: http.StatusBadRequest, Message: "prompt is required"}
 	}
+	// 标准端点参考素材：模型层约束（v2 数量/比例；v1 仅首尾帧）
+	if refs := common.ReferencesFromTaskBody(req); len(refs) > 0 {
+		model, _ := req["model"].(string)
+		return validateReferences(model, refs, resolveRatio(req))
+	}
 	return nil
 }
 
@@ -168,16 +173,22 @@ func countInputImages(req map[string]any) int {
 		}
 		return count
 	}
-	// 通用形态：与 buildGenericContent 相同的归并口径
+	// 通用形态：与 buildGenericContent 相同的归并口径。references[] 存在时为唯一来源
+	// （首尾帧 + 参考图）；否则首帧只计一次——images[0] 与 metadata.image 是同一张图的
+	// 兼容双写，buildGenericContent 也只发一张（此前两处各计一次导致预扣多冻结）
 	count := 0
-	if images, ok := req["images"].([]any); ok {
-		count += len(images)
-	}
-	metadata := taskchannel.ExtractMetadata(req)
-	if _, ok := metadata["image"].(string); ok {
+	refs := common.ReferencesFromTaskBody(req)
+	if len(refs) > 0 {
+		for _, ref := range refs {
+			if common.ReferenceKind(ref.Role) == common.RefKindImage {
+				count++
+			}
+		}
+	} else if genericFirstImage(req) != "" {
 		count++
 	}
-	if _, ok := metadata["last_frame"].(string); ok {
+	metadata := taskchannel.ExtractMetadata(req)
+	if _, ok := metadata["last_frame"].(string); ok && len(refs) == 0 {
 		count++
 	}
 	var meta struct {
@@ -211,7 +222,12 @@ func hasInputVideo(req map[string]any) bool {
 		}
 		return false
 	}
-	// 通用形态：metadata.content[] 透传项（多模态参考，与 countInputImages 同口径）
+	// 通用形态：references[] 的参考视频，或 metadata.content[] 透传项（与 countInputImages 同口径）
+	for _, ref := range common.ReferencesFromTaskBody(req) {
+		if ref.Role == common.RefRoleReferenceVideo {
+			return true
+		}
+	}
 	metadata := taskchannel.ExtractMetadata(req)
 	var meta struct {
 		Content []map[string]any `json:"content"`
@@ -322,8 +338,14 @@ func buildV1RequestBody(req map[string]any, modelName string) map[string]any {
 		out["prompt"] = prompt
 	}
 
-	// 首帧图：v1 原生顶层字段 > images[0]/metadata.image
+	// 标准端点 references[]：首/尾帧与（S2V-01）主体参考图，优先于兼容字段
+	refFirst, refLast, refSubject := referenceFrames(common.ReferencesFromTaskBody(req))
+
+	// 首帧图：v1 原生顶层字段 > references.first_frame > images[0]/metadata.image
 	firstFrame := stringField(req, "first_frame_image")
+	if firstFrame == "" {
+		firstFrame = refFirst
+	}
 	if firstFrame == "" {
 		firstFrame = genericFirstImage(req)
 	}
@@ -333,6 +355,9 @@ func buildV1RequestBody(req map[string]any, modelName string) map[string]any {
 	// 尾帧图：v1 原生顶层字段 > metadata.last_frame
 	lastFrame := stringField(req, "last_frame_image")
 	if lastFrame == "" {
+		lastFrame = refLast
+	}
+	if lastFrame == "" {
 		lastFrame = metaString(req, "last_frame")
 	}
 	if lastFrame != "" {
@@ -341,6 +366,8 @@ func buildV1RequestBody(req map[string]any, modelName string) map[string]any {
 	// 主体参考（S2V-01）：v1 原生顶层字段 > metadata.subject_reference
 	if sr, ok := req["subject_reference"]; ok && sr != nil {
 		out["subject_reference"] = sr
+	} else if refSubject != "" {
+		out["subject_reference"] = []map[string]any{{"type": "character", "image": []string{refSubject}}}
 	} else if sr := metaAny(req, "subject_reference"); sr != nil {
 		out["subject_reference"] = sr
 	}
@@ -775,6 +802,12 @@ func buildGenericContent(req map[string]any) []map[string]any {
 		Content   []map[string]any `json:"content"`
 	}
 	_ = taskchannel.UnmarshalMetadata(metadata, &meta)
+
+	// references[] 为唯一权威来源（带 role、保持原序），忽略首尾帧兼容字段防重复
+	if refs := common.ReferencesFromTaskBody(req); len(refs) > 0 {
+		content = append(content, referenceContent(refs)...)
+		return append(content, meta.Content...)
+	}
 
 	firstFrame := meta.Image
 	if firstFrame == "" {

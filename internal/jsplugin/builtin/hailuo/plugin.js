@@ -22,10 +22,22 @@
 //    estimateUsage 按秒预扣，H3 另计 input_images / input_video_seconds。
 // ⑧ renderSubmit/renderTask：taskCreated/taskStatus 形态的 {status, body} 渲染。
 // ⑨ 产物仅支持直连渠道形态：经网关中转的 v1 产物路径未实现。
+// ⑩ 1.6.0：H3 家族（H3 / H3-Max / H3-Lite / H3-Highspeed）按型号识别与透传（此前仅认
+//    MiniMax-H3 且强制改写型号）；分辨率/时长按型号档位校验；结算读官方 usage 字段
+//    input_image_count / input_seconds（此前读错字段名，素材用量恒回退预扣口径）；
+//    标准端点 references[]（role 词汇与 MiniMax content[].role 一致）按原序映射。
 const VIDEO_SECONDS_FIELD = { type: "number", unit: "second", description: { en: "Video generation unit price", zh: "视频生成单价" } };
 const RESOLUTION_DESCRIPTION = { en: "Output video resolution", zh: "输出视频分辨率" };
 
 const H3_MODEL = "MiniMax-H3";
+// H3 家族型号档位（官方 /v2/video_generation）：H3 为 768P/2K，其余 480P/768P；Max 时长 5–15
+const H3_PROFILES = {
+  "MiniMax-H3": { resolutions: ["768P", "2K"], minDuration: 4 },
+  "MiniMax-H3-Max": { resolutions: ["480P", "768P"], minDuration: 5 },
+  "MiniMax-H3-Lite": { resolutions: ["480P", "768P"], minDuration: 4, explicitRatioForReference: true },
+  "MiniMax-H3-Highspeed": { resolutions: ["480P", "768P"], minDuration: 4 },
+};
+const H3_MODELS = Object.keys(H3_PROFILES);
 const V1_MODELS = ["MiniMax-Hailuo-2.3", "MiniMax-Hailuo-2.3-Fast", "MiniMax-Hailuo-02", "T2V-01-Director", "T2V-01", "I2V-01-Director", "I2V-01-live", "I2V-01", "S2V-01"];
 const V1_METADATA_FIELDS = ["prompt_optimizer", "fast_pretreatment", "aigc_watermark", "first_frame_image", "last_frame_image", "subject_reference"];
 const H3_METADATA_FIELDS = ["aigc_watermark"];
@@ -44,15 +56,17 @@ export const meta = {
     en: "MiniMax Hailuo video generation (text-to-video, image-to-video, and MiniMax-H3 multimodal reference)",
     zh: "MiniMax 海螺视频生成（文生视频、图生视频、MiniMax-H3 多模态参考生视频）",
   },
-  version: "1.5.0",
+  version: "1.6.0",
   author: "qianfree",
   channelTypes: [35],
-  models: [H3_MODEL].concat(V1_MODELS),
+  models: H3_MODELS.concat(V1_MODELS),
   fetchMode: "per_task",
   standardVideos: "decodeVideos",
+  // 标准端点 references[] 可承接的角色（按型号的模型层约束在 decodeVideos 校验）
+  referenceRoles: ["first_frame", "last_frame", "reference_image", "reference_video", "reference_audio"],
   usageSchema: {
     seconds: VIDEO_SECONDS_FIELD,
-    resolution: { enum: ["512P", "768P", "720P", "1080P", "2K"], description: RESOLUTION_DESCRIPTION },
+    resolution: { enum: ["480P", "512P", "768P", "720P", "1080P", "2K"], description: RESOLUTION_DESCRIPTION },
     input_images: { type: "number", unit: "count", description: { en: "Input image unit price", zh: "输入图片单价" } },
     input_video_seconds: { type: "number", unit: "second", description: { en: "Input video unit price", zh: "输入视频单价" } },
   },
@@ -65,7 +79,26 @@ export const meta = {
 
 function trimmed(v) { return String(v || "").trim(); }
 function plainObject(v) { return v && typeof v === "object" && !Array.isArray(v) ? v : {}; }
-function isH3(model) { return model === H3_MODEL; }
+function isH3(model) { return Object.prototype.hasOwnProperty.call(H3_PROFILES, model); }
+function h3Profile(model) { return H3_PROFILES[model] || H3_PROFILES[H3_MODEL]; }
+// h3ResolutionFor H3 家族分辨率归一（480P/768P/2K），不在型号档位内即报错；空 = 默认 768P
+function h3ResolutionFor(raw, model) {
+  const v = trimmed(raw).toUpperCase();
+  if (!v) return "768P";
+  let resolution = "";
+  if (v.includes("2K") || v.includes("1440") || v.includes("2160")) resolution = "2K";
+  else if (v.includes("768") || v.includes("720")) resolution = "768P";
+  else if (v.includes("480")) resolution = "480P";
+  const allowed = h3Profile(model).resolutions;
+  if (!allowed.includes(resolution)) throw new Error(model + " resolution must be one of " + allowed.join(", "));
+  return resolution;
+}
+function checkH3Duration(model, duration) {
+  if (duration === undefined || duration === null) return;
+  const n = Number(duration);
+  const min = h3Profile(model).minDuration;
+  if (!Number.isFinite(n) || n < min || n > H3_MAX_DURATION) throw new Error(model + " duration must be between " + min + " and " + H3_MAX_DURATION);
+}
 function isModernHailuo(model) { return ["MiniMax-Hailuo-2.3", "MiniMax-Hailuo-2.3-Fast", "MiniMax-Hailuo-02"].includes(model); }
 function defaultResolution(model) { return isModernHailuo(model) ? "768P" : "720P"; }
 function resolutionFor(size, model) {
@@ -110,12 +143,71 @@ export function createTask(ctx) {
 export function createH3Task(ctx) {
   const body = ctx.body && typeof ctx.body === "object" && !Array.isArray(ctx.body) ? ctx.body : {};
   const model = trimmed(body.model) || H3_MODEL;
-  if (!isH3(model)) throw new Error("/v2 requires " + H3_MODEL);
-  if (body.duration !== undefined && body.duration !== null) {
-    const n = Number(body.duration);
-    if (!Number.isFinite(n) || n < H3_MIN_DURATION || n > H3_MAX_DURATION) throw new Error("duration must be between " + H3_MIN_DURATION + " and " + H3_MAX_DURATION);
+  if (!isH3(model)) throw new Error("/v2 requires one of " + H3_MODELS.join(", "));
+  checkH3Duration(model, body.duration);
+  return { kind: "submit", model: model, requestBody: { model: model, vendorBody: body } };
+}
+
+// ── 参考素材（标准端点 references[]）────────────────────────
+
+const H3_MAX_REF_TOTAL = 12; // 官方：混合参考合计 ≤12
+const H3_MAX_REF = { reference_image: 9, reference_video: 3, reference_audio: 3 };
+const REF_ITEM_TYPES = {
+  first_frame: "image_url", last_frame: "image_url", reference_image: "image_url",
+  reference_video: "video_url", reference_audio: "audio_url",
+};
+
+function refURL(ref, i) {
+  const url = trimmed(ref.url);
+  if (!url) throw new Error("references[" + i + "] must provide url" + (trimmed(ref.file_id) ? " (file_id is only supported on /v1/videos)" : ""));
+  return url;
+}
+
+// h3ReferenceContent references[] → H3 content 媒体项（role 词汇与官方一致，保持原序：
+// 提示词 "reference image 1 / 图片1" 按同类素材顺序编号）。模型层约束：参考合计 ≤12、
+// 图 ≤9 / 视频 ≤3 / 音频 ≤3；H3-Lite 参考模式须显式比例（不支持 adaptive）。
+function h3ReferenceContent(model, refs, ratio) {
+  const items = [];
+  const counts = {};
+  let referenceTotal = 0;
+  for (let i = 0; i < refs.length; i++) {
+    const ref = plainObject(refs[i]);
+    const role = trimmed(ref.role);
+    const type = REF_ITEM_TYPES[role];
+    if (!type) throw new Error("references[" + i + "].role " + JSON.stringify(role) + " is not supported");
+    const item = { type: type, role: role };
+    item[type] = { url: refURL(ref, i) };
+    items.push(item);
+    counts[role] = (counts[role] || 0) + 1;
+    if (H3_MAX_REF[role]) {
+      referenceTotal++;
+      if (counts[role] > H3_MAX_REF[role]) throw new Error("at most " + H3_MAX_REF[role] + " " + role);
+    }
   }
-  return { kind: "submit", model: H3_MODEL, requestBody: { model: H3_MODEL, vendorBody: body } };
+  if (referenceTotal > H3_MAX_REF_TOTAL) throw new Error("at most " + H3_MAX_REF_TOTAL + " references in total");
+  if (referenceTotal > 0 && h3Profile(model).explicitRatioForReference && (!ratio || ratio === "adaptive")) {
+    throw new Error(model + " requires an explicit aspect_ratio (not adaptive) in reference mode");
+  }
+  return items;
+}
+
+// v1ReferenceFields references[] → Hailuo 2.x/01 扁平字段：首/尾帧 → first/last_frame_image；
+// S2V-01（主体参考模型）的单张 reference_image → subject_reference；其余角色不支持。
+function v1ReferenceFields(model, refs) {
+  const out = {};
+  for (let i = 0; i < refs.length; i++) {
+    const ref = plainObject(refs[i]);
+    const role = trimmed(ref.role);
+    if (role === "first_frame") out.first_frame_image = refURL(ref, i);
+    else if (role === "last_frame") out.last_frame_image = refURL(ref, i);
+    else if (role === "reference_image" && model === "S2V-01" && !out.subject_reference) {
+      out.subject_reference = [{ type: "character", image: [refURL(ref, i)] }];
+    } else {
+      const what = role === "reference_image" && model === "S2V-01" ? "more than one reference_image" : JSON.stringify(role);
+      throw new Error("reference_not_supported: " + model + " does not support " + what);
+    }
+  }
+  return out;
 }
 
 // decodeVideos 标准视频端点解码（meta.standardVideos 指向）：通用任务体 → 各协议
@@ -136,29 +228,39 @@ export function decodeVideos(ctx) {
   // 分辨率：显式输入（resolution/size）经 resolutionFor 归一；缺省按协议默认——
   // H3 与 estimateUsage 的 H3 分支同口径（768P），v1 系列走 defaultResolution
   const rawResolution = trimmed(metadata.resolution) || trimmed(metadata.size);
-  const resolution = rawResolution ? resolutionFor(rawResolution, model) : (isH3(model) ? "768P" : defaultResolution(model));
+  // references 为唯一权威来源（含 input_reference 派生的首帧）；无则回落兼容字段
+  const refs = Array.isArray(raw.references) && raw.references.length ? raw.references : null;
   const image = Array.isArray(raw.images) && raw.images.length && typeof raw.images[0] === "string" ? raw.images[0].trim() : trimmed(metadata.image);
   const lastFrame = trimmed(metadata.last_frame);
 
   if (isH3(model)) {
-    if (duration != null && (duration < H3_MIN_DURATION || duration > H3_MAX_DURATION)) {
-      throw new Error("duration must be between " + H3_MIN_DURATION + " and " + H3_MAX_DURATION);
-    }
+    checkH3Duration(model, duration);
+    // H3 家族独立档位（480P/768P/2K），不走 v1 的 resolutionFor（其不识别 2K/480P）
+    const resolution = h3ResolutionFor(rawResolution, model);
+    const ratio = trimmed(raw.ratio) || trimmed(metadata.ratio) || trimmed(metadata.aspect_ratio);
     const content = [{ type: "text", text: String(raw.prompt) }];
-    if (image) content.push({ type: "image_url", image_url: { url: image }, role: "first_frame" });
-    if (lastFrame) content.push({ type: "image_url", image_url: { url: lastFrame }, role: "last_frame" });
+    if (refs) {
+      Array.prototype.push.apply(content, h3ReferenceContent(model, refs, ratio));
+    } else {
+      if (image) content.push({ type: "image_url", image_url: { url: image }, role: "first_frame" });
+      if (lastFrame) content.push({ type: "image_url", image_url: { url: lastFrame }, role: "last_frame" });
+    }
     const vendorBody = { content: content, resolution: resolution };
     if (duration != null) vendorBody.duration = duration;
-    const ratio = trimmed(metadata.ratio) || trimmed(metadata.aspect_ratio);
     if (ratio) vendorBody.ratio = ratio;
     return { kind: "submit", model: model, requestBody: { model: model, vendorBody: vendorBody } };
   }
 
-  if (!V1_MODELS.includes(model)) throw new Error("model must be " + H3_MODEL + " or one of " + V1_MODELS.join(", "));
+  if (!V1_MODELS.includes(model)) throw new Error("model must be one of " + H3_MODELS.concat(V1_MODELS).join(", "));
+  const resolution = rawResolution ? resolutionFor(rawResolution, model) : defaultResolution(model);
   const vendorBody = { prompt: String(raw.prompt), resolution: resolution };
   if (duration != null) vendorBody.duration = duration;
-  if (image) vendorBody.first_frame_image = image;
-  if (lastFrame) vendorBody.last_frame_image = lastFrame;
+  if (refs) {
+    Object.assign(vendorBody, v1ReferenceFields(model, refs));
+  } else {
+    if (image) vendorBody.first_frame_image = image;
+    if (lastFrame) vendorBody.last_frame_image = lastFrame;
+  }
   return { kind: "submit", model: model, requestBody: { model: model, vendorBody: vendorBody } };
 }
 
@@ -173,7 +275,7 @@ export function estimateUsage(ctx) {
     const duration = vendor.duration == null ? H3_DEFAULT_DURATION : Number(vendor.duration);
     return {
       seconds: duration,
-      resolution: trimmed(vendor.resolution).toUpperCase() === "2K" ? "2K" : "768P",
+      resolution: ["2K", "480P"].includes(trimmed(vendor.resolution).toUpperCase()) ? trimmed(vendor.resolution).toUpperCase() : "768P",
       input_images: content.filter(function (c) { return c && c.type === "image_url"; }).length,
       input_video_seconds: content.some(function (c) { return c && c.type === "video_url"; }) ? H3_MAX_INPUT_VIDEO_SECONDS : 0,
     };
@@ -269,11 +371,12 @@ export function parseQueryResponse(ctx) {
       const url = trimmed(plainObject(task.content).url);
       const usage = {};
       const resolution = trimmed(task.resolution).toUpperCase();
-      if (resolution === "2K" || resolution === "768P") usage.resolution = resolution;
+      if (resolution === "2K" || resolution === "768P" || resolution === "480P") usage.resolution = resolution;
+      // 官方 VideoTaskUsage 字段：input_image_count（首帧+尾帧+参考图）、input_seconds（参考视频秒数）
       const u = plainObject(task.usage);
       if (Number.isFinite(Number(u.output_seconds)) && Number(u.output_seconds) > 0) usage.seconds = Number(u.output_seconds);
-      if (Number.isFinite(Number(u.input_images)) && u.input_images > 0) usage.input_images = Number(u.input_images);
-      if (Number.isFinite(Number(u.input_video_seconds)) && u.input_video_seconds > 0) usage.input_video_seconds = Number(u.input_video_seconds);
+      if (Number.isFinite(Number(u.input_image_count)) && Number(u.input_image_count) > 0) usage.input_images = Number(u.input_image_count);
+      if (Number.isFinite(Number(u.input_seconds)) && Number(u.input_seconds) > 0) usage.input_video_seconds = Number(u.input_seconds);
       const done = { taskId: t.taskId, done: true, usage: usage, taskData: body };
       if (url) done.artifacts = [{ key: "video", mimeType: "video/mp4", source: { type: "url", path: "_video_url" } }];
       done.taskData = Object.assign({}, body, { _video_url: url });

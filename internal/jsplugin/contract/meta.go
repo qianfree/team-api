@@ -53,6 +53,11 @@ type Manifest struct {
 	// 与 /v1/video/generations 提交——钩子把通用任务体映射为原生 requestBody，
 	// 返回形态与 decodeRequest 相同。缺省 = 仅插件原生路由入口。
 	StandardVideos string `json:"standardVideos,omitempty"`
+	// ReferenceRoles 标准端点参考素材角色声明（可选）：插件 decodeVideos 能承接的
+	// references[].role（first_frame/last_frame/reference_image/reference_video/reference_audio）。
+	// 宿主在调用 decodeVideos 前拦截未声明的角色（不静默丢弃）；缺省 = 仅 first_frame
+	// （即改造前 /v1/videos 单张 input_reference 的能力，存量插件零回归）。
+	ReferenceRoles []string `json:"referenceRoles,omitempty"`
 	// ModelsFromConfig 扩展模型承载配置键（可选）：该 config 键的值（换行/逗号分隔
 	// 的模型名，或 JSON 数组）在运行时并入本插件服务清单——上游新增模型无需改插件
 	// 源码，管理后台改配置即刻生效。有效清单 = meta.models ∪ 配置扩展；冲突预检在
@@ -318,6 +323,11 @@ func (m *Manifest) Validate() error {
 	if m.StandardVideos != "" && !ValidateHookName(m.StandardVideos) {
 		return gerror.Newf("standardVideos %q 不合法（需为导出函数名形态）", m.StandardVideos)
 	}
+	for _, role := range m.ReferenceRoles {
+		if !isReferenceRole(role) {
+			return gerror.Newf("referenceRoles 含非法角色 %q（可选 first_frame/last_frame/reference_image/reference_video/reference_audio）", role)
+		}
+	}
 	if err := m.validateModelsFromConfig(); err != nil {
 		return err
 	}
@@ -483,6 +493,9 @@ func (m *Manifest) validateConfig() error {
 		if _, dup := seen[f.Key]; dup {
 			return gerror.Newf("config[%d].key %q 重复", i, f.Key)
 		}
+		if isHostConfigKey(f.Key) {
+			return gerror.Newf("config[%d].key %q 为宿主保留配置项，插件不可声明", i, f.Key)
+		}
 		seen[f.Key] = struct{}{}
 		if strings.TrimSpace(f.Label) == "" {
 			return gerror.Newf("config[%d] %q 缺少 label", i, f.Key)
@@ -530,11 +543,75 @@ func (m *Manifest) OutputSecondsFact(facts map[string]float64) float64 {
 	return 0
 }
 
-// ConfigFieldByKey 按 key 查声明。
+// referenceRoleSet 标准端点参考素材角色全集（与 relay/common RefRole* 同词汇）
+var referenceRoleSet = map[string]struct{}{
+	"first_frame": {}, "last_frame": {}, "reference_image": {}, "reference_video": {}, "reference_audio": {},
+}
+
+func isReferenceRole(role string) bool {
+	_, ok := referenceRoleSet[role]
+	return ok
+}
+
+// SupportsReferenceRole 插件是否声明承接该参考素材角色（未声明 referenceRoles 时仅 first_frame）。
+func (m *Manifest) SupportsReferenceRole(role string) bool {
+	if len(m.ReferenceRoles) == 0 {
+		return role == "first_frame"
+	}
+	for _, r := range m.ReferenceRoles {
+		if r == role {
+			return true
+		}
+	}
+	return false
+}
+
+// HostConfigArtifactStorage 宿主内置配置项：产物是否转存到平台对象存储。
+// 开（默认）= 产物流水线下载/解码后转存 OSS，统一内容链接从 OSS 供给；
+// 关 = 不转存，统一内容链接按产物声明实时回源代理（url 直链 / 渠道鉴权端点 / inline base64）。
+const HostConfigArtifactStorage = "artifact_storage"
+
+// hostConfigFields 宿主为每个 JS 插件注入的内置配置项（存储同插件配置：
+// sys_options plugin.{key}.{field}，管理端配置弹窗与插件声明项一并渲染）。
+var hostConfigFields = []ConfigField{
+	{
+		Key:         HostConfigArtifactStorage,
+		Label:       "产物转存到平台对象存储",
+		Type:        "bool",
+		Default:     true,
+		Group:       "平台",
+		Description: "开启：任务产物（视频/图片/音频）由平台下载并转存到自有对象存储，对外链接不受上游时效影响；关闭：不转存，对外链接访问时实时回源上游（上游直链过期后不可下载）",
+	},
+}
+
+// isHostConfigKey 是否宿主保留配置键。
+func isHostConfigKey(key string) bool {
+	for _, f := range hostConfigFields {
+		if f.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
+// AllConfig 有效配置项 = 插件声明项 + 宿主内置项（配置读写/种默认值/管理端渲染统一走此入口）。
+func (m *Manifest) AllConfig() []ConfigField {
+	out := make([]ConfigField, 0, len(m.Config)+len(hostConfigFields))
+	out = append(out, m.Config...)
+	return append(out, hostConfigFields...)
+}
+
+// ConfigFieldByKey 按 key 查声明（含宿主内置项）。
 func (m *Manifest) ConfigFieldByKey(key string) *ConfigField {
 	for i := range m.Config {
 		if m.Config[i].Key == key {
 			return &m.Config[i]
+		}
+	}
+	for i := range hostConfigFields {
+		if hostConfigFields[i].Key == key {
+			f := hostConfigFields[i]
+			return &f
 		}
 	}
 	return nil

@@ -511,6 +511,7 @@ func taskInfoFromQueryItem(plugin *jsplugin.ActivePlugin, item contract.QueryIte
 				SourceAuth: decl.Source.Auth,
 			})
 		}
+		info.ResultURL = common.ResultURLFromArtifacts(info.Data, info.Artifacts)
 	}
 	return info
 }

@@ -755,15 +755,116 @@ const categories: Category[] = [
 		icon: 'play',
 		endpoints: [
 			{
+				id: 'videos-create',
+				method: 'POST',
+				path: '/v1/videos',
+				title: 'Create Video（OpenAI 协议）',
+				desc: '创建视频生成任务，兼容 OpenAI Videos 协议（openai-python / openai-node SDK 的 client.videos.create）。异步任务模式：提交后返回 Video 对象（status: queued），轮询 Retrieve 直到 completed。参考素材：官方 input_reference 为单张首帧图；扩展字段 references 支持多参考图、参考视频、参考音频与首尾帧（Seedance / MiniMax H3 等多模态参考模型）。参考素材参数错误返回 400，错误码：invalid_references / invalid_reference_role / invalid_reference_source / reference_mode_conflict / reference_file_not_found / reference_file_type_mismatch / too_many_references / reference_not_supported。',
+				params: [
+					{ field: 'model', type: 'string', desc: '模型 ID（如 doubao-seedance-2-0-260128、MiniMax-H3）', required: true },
+					{ field: 'prompt', type: 'string', desc: '视频描述提示词。多模态参考模型在提示词中按「图片N / 视频N / 音频N」引用素材（N 为同类素材在 references 中的顺序，从 1 起）', required: true },
+					{ field: 'seconds', type: 'string | number', desc: '视频时长（秒）。官方 SDK 为字符串形态；各模型档位不同，缺省由模型决定' },
+					{ field: 'size', type: 'string', desc: '分辨率。值原样透传，请传目标模型的官方档位词汇（如 Seedance 的 720p/1080p、MiniMax H3 的 768P/2K）' },
+					{ field: 'aspect_ratio', type: 'string', desc: '屏幕比例（扩展字段，如 16:9 / 9:16 / 1:1），原样透传，不传由模型取默认' },
+					{ field: 'sound', type: 'string | boolean', desc: '是否生成音频（扩展字段："on"/"off" 或 true/false；等价布尔字段 generate_audio 在 sound 缺省时生效）' },
+					{ field: 'input_reference', type: 'file | object', desc: '官方字段：单张首帧参考图。支持文件上传（≤6MB）、{"image_url": "URL 或 base64"} 或 {"file_id": "file-xxx"}（/v1/files 上传的文件）' },
+					{ field: 'references', type: 'array', desc: '扩展字段：参考素材有序列表 [{role, url | file_id}]。role ∈ first_frame / last_frame / reference_image / reference_video / reference_audio；url 支持 http(s)、base64 data URL（MIME 须与角色匹配）、厂商素材 URI（asset:// / mm_file://，仅对应厂商渠道有效）；file_id 为 /v1/files 上传的文件（同租户，类型须与角色匹配），url 与 file_id 二选一。列表顺序即提示词「图片N/视频N/音频N」编号依据；首尾帧（含 input_reference）与 reference_* 互斥；协议层上限：总数 20、参考图 9、参考视频 3、参考音频 3，模型特有约束（数量、音频须搭配图/视频等）由模型侧校验。官方 SDK 经 extra_body 传入时须 JSON 字符串：extra_body={"references": JSON.stringify([...])}' },
+				],
+				example: {
+					req: `{
+  "model": "doubao-seedance-2-0-260128",
+  "prompt": "图片1的人物在视频1的场景中奔跑，背景音乐参考音频1",
+  "seconds": "10",
+  "aspect_ratio": "16:9",
+  "references": [
+    {"role": "reference_image", "url": "https://cdn.example.com/hero.png"},
+    {"role": "reference_video", "file_id": "file-AbC123xyz"},
+    {"role": "reference_audio", "file_id": "file-DeF456uvw"}
+  ]
+}`,
+					resp: `{
+  "id": "video_abc123",
+  "object": "video",
+  "created_at": 1717100000,
+  "status": "queued",
+  "progress": 0,
+  "model": "doubao-seedance-2-0-260128"
+}`,
+				},
+			},
+			{
+				id: 'videos-retrieve',
+				method: 'GET',
+				path: '/v1/videos/{video_id}',
+				title: 'Retrieve Video（OpenAI 协议）',
+				desc: '查询视频任务，返回官方 Video 对象（status: queued / in_progress / completed / failed）。非终态响应携带 openai-poll-after-ms 轮询间隔建议头；生成失败以 status=failed + error 对象表达（HTTP 仍为 200）。completed 时附扩展字段 video_url：平台签名直链，免 API Key 可直接播放/下载，每次查询重新签发（有效期默认 24 小时，过期后重新查询即可）。产物开启转存平台对象存储时，上游已完成但转存未完成期间保持 in_progress（progress=99），转存完成后才返回 completed + video_url（完成后超过 30 分钟仍未转存成功则放行 completed，链接改走实时回源）。',
+				params: [
+					{ field: 'video_id', type: 'string', desc: '视频任务 ID（路径参数）', required: true },
+				],
+				example: {
+					resp: `{
+  "id": "video_abc123",
+  "object": "video",
+  "created_at": 1717100000,
+  "completed_at": 1717100300,
+  "status": "completed",
+  "progress": 100,
+  "model": "doubao-seedance-2-0-260128",
+  "prompt": "图片1的人物在视频1的场景中奔跑，背景音乐参考音频1",
+  "seconds": "10",
+  "video_url": "${apiBaseUrl}/v1/tasks/video_abc123/content?expires=1817103900&signature=..."
+}`,
+				},
+			},
+			{
+				id: 'videos-content',
+				method: 'GET',
+				path: '/v1/videos/{video_id}/content',
+				title: 'Download Video Content（OpenAI 协议）',
+				desc: '下载已完成视频的二进制流（mp4），需 API Key 认证（官方 SDK 的 videos.download_content 走此端点）。仅 status=completed 可下载；转存途中（查询显示 in_progress / progress=99）同样不可下载。平台代理输出字节，不暴露上游 CDN 直链；也可直接使用查询响应中的 video_url 签名直链（免认证）。variant 仅支持默认 video。',
+				params: [
+					{ field: 'video_id', type: 'string', desc: '视频任务 ID（路径参数）', required: true },
+					{ field: 'variant', type: 'string', desc: '内容变体（查询参数），仅支持 video（默认）' },
+				],
+				example: {
+					resp: `// 200 OK
+// Content-Type: video/mp4
+<视频二进制流>`,
+				},
+			},
+			{
+				id: 'files-upload',
+				method: 'POST',
+				path: '/v1/files',
+				title: 'Upload File',
+				desc: '上传文件（multipart/form-data），返回 file_id 供视频参考素材引用（references[].file_id / input_reference.file_id）。适合超过请求体大小上限的视频/音频素材：先上传，再在创建视频时以 file_id 引用，网关提交前自动替换为签名 URL（有效期默认 24 小时，覆盖上游排队时长）。文件类型白名单与每租户配额由平台管理员配置。',
+				params: [
+					{ field: 'file', type: 'file', desc: '要上传的文件（multipart 文件字段）', required: true },
+					{ field: 'purpose', type: 'string', desc: '用途标记（OpenAI 词汇，如 user_data / vision），仅作元数据，不驱动网关行为', required: true },
+				],
+				example: {
+					resp: `{
+  "id": "file-AbC123xyz",
+  "object": "file",
+  "filename": "scene.mp4",
+  "purpose": "user_data",
+  "bytes": 4812389,
+  "created_at": 1717100000
+}`,
+				},
+			},
+			{
 				id: 'video-generations',
 				method: 'POST',
 				path: '/v1/video/generations',
 				title: 'Video Generations (Submit)',
-				desc: '提交视频生成任务。该接口为异步任务模式，提交后返回任务 ID，通过查询接口轮询结果。',
+				desc: '提交视频生成任务（通用任务端点，请求体由目标模型的插件/适配器解码）。该接口为异步任务模式，提交后返回任务 ID，通过查询接口轮询结果。参考素材以 url 形态由插件解码；file_id 引用仅 /v1/videos 支持。',
 				params: [
 					{ field: 'model', type: 'string', desc: '模型 ID（如 kling-video-v1）', required: true },
 					{ field: 'prompt', type: 'string', desc: '视频描述提示词' },
 					{ field: 'metadata', type: 'object', desc: '附加参数（resolution 分辨率、duration 时长、ratio 比例等）' },
+					{ field: 'images', type: 'array', desc: '参考图 URL 列表（首张作首帧；多模态参考模型建议改用 /v1/videos 的 references 字段）' },
+					{ field: 'references', type: 'array', desc: '参考素材列表 [{role, url}]，role 词汇与 /v1/videos 一致，由插件按模型解码' },
 					{ field: 'size', type: 'string', desc: '视频分辨率（已弃用，建议使用 metadata.resolution）' },
 					{ field: 'length', type: 'integer', desc: '视频时长秒数（已弃用，建议使用 metadata.duration）' },
 				],
@@ -789,19 +890,19 @@ const categories: Category[] = [
 				method: 'GET',
 				path: '/v1/video/generations/{task_id}',
 				title: 'Video Generations (Fetch)',
-				desc: '查询视频生成任务结果。返回任务状态和生成结果（成功时包含视频 URL）。',
+				desc: '查询视频生成任务结果。返回任务状态与结果地址：成功（status=SUCCESS）时 url 为结果地址——JS 插件任务为平台统一内容链接（签名直链，可直接下载），其余平台为上游结果地址；上游已完成但产物仍在转存平台存储的 JS 插件任务保持 IN_PROGRESS（progress=99%），转存完成后才返回 SUCCESS + url。',
 				params: [
 					{ field: 'task_id', type: 'string', desc: '任务 ID（路径参数）', required: true },
 				],
 				example: {
 					resp: `{
   "id": "task_abc123",
-  "status": "succeeded",
+  "status": "SUCCESS",
   "model": "kling-video-v1",
-  "output": {
-    "video_url": "https://cdn.example.com/video/abc123.mp4",
-    "duration": 5
-  }
+  "created_at": 1717100000,
+  "progress": "100%",
+  "url": "https://cdn.example.com/video/abc123.mp4",
+  "completed_at": 1717100300
 }`,
 				},
 			},

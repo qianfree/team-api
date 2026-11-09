@@ -5,10 +5,12 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -200,6 +202,12 @@ func HandleTaskSubmit(
 					return
 				}
 				plan, err := jsplugin.SynthesizeStandardPlan(ctx, pluginKey, surface, path, body, modelName)
+				var roleErr *jsplugin.ReferenceRoleError
+				if errors.As(err, &roleErr) {
+					writeTaskError(rc.Writer, http.StatusBadRequest,
+						fmt.Sprintf("reference role %q is not supported by model %q", roleErr.Role, modelName), common.ErrCodeReferenceNotSupported)
+					return
+				}
 				if err != nil {
 					// 解码失败对客户端即请求不可接受；消息可能内嵌密钥/签名片段，同 /pjs 口径净化
 					writeTaskError(rc.Writer, http.StatusBadRequest, jsplugin.SanitizeHookMessage(err.Error()), "")
@@ -514,6 +522,21 @@ func HandleTaskFetch(
 	if task.ResultURL != "" {
 		respBody["url"] = task.ResultURL
 	}
+	// JS 插件任务对外只给统一内容链接（不透出上游直链；产物转存与否链接形态一致）。
+	// 上游已完成但产物仍在转存 OSS：保持进行中、不给链接，转存完成后才给完成态
+	deliveryPending := false
+	if strings.HasPrefix(task.Platform, "js:") {
+		delivery := resolveTaskDelivery(ctx, task)
+		delete(respBody, "url")
+		switch {
+		case delivery.Pending:
+			deliveryPending = true
+			respBody["status"] = "IN_PROGRESS"
+			respBody["progress"] = strconv.Itoa(deliveryPendingProgress) + "%"
+		case delivery.ContentURL != "":
+			respBody["url"] = delivery.ContentURL
+		}
+	}
 	// sync_image「同步图片异步化」任务支持多图：把归一化的全部图片作为 data 数组吐出，
 	// url 仍保留首图（向后兼容）。仅对 sync_image 任务开启——其 Data 为标准 OpenAI
 	// ImageResponse；视频 / suno / mj 等平台的 Data 结构不同，不能误吐。
@@ -526,7 +549,7 @@ func HandleTaskFetch(
 	if task.FailReason != "" {
 		respBody["error"] = task.FailReason
 	}
-	if task.FinishTime != nil {
+	if task.FinishTime != nil && !deliveryPending {
 		respBody["completed_at"] = task.FinishTime.Unix()
 	}
 

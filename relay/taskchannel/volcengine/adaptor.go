@@ -108,6 +108,10 @@ func (a *VolcengineVideoAdaptor) ValidateRequest(_ context.Context, _ *common.Re
 	if _, ok := req["model"]; !ok {
 		return &common.TaskError{StatusCode: http.StatusBadRequest, Message: "model is required"}
 	}
+	if refs := common.ReferencesFromTaskBody(req); len(refs) > 0 {
+		model, _ := req["model"].(string)
+		return validateSeedanceReferences(model, refs)
+	}
 	return nil
 }
 
@@ -189,8 +193,11 @@ func (a *VolcengineVideoAdaptor) BuildRequestBody(_ context.Context, info *commo
 		})
 	}
 
-	// 从 images 数组提取图片
-	if images, ok := req["images"].([]any); ok {
+	// 参考素材：references[] 为唯一权威来源（带 role、保持原序），忽略兼容字段 images[] 防重复；
+	// 无 references 时沿用 images 数组
+	if refs := common.ReferencesFromTaskBody(req); len(refs) > 0 {
+		volcReq.Content = append(volcReq.Content, referenceContentItems(refs)...)
+	} else if images, ok := req["images"].([]any); ok {
 		for _, img := range images {
 			if url, ok := img.(string); ok {
 				volcReq.Content = append(volcReq.Content, contentItem{
@@ -380,8 +387,13 @@ func (a *VolcengineVideoAdaptor) GetChannelName() string {
 
 // ==================== 辅助函数 ====================
 
-// hasVideoInput 检测请求是否包含视频输入
+// hasVideoInput 检测请求是否包含视频输入（references 的 reference_video 或 metadata.content 的 video_url）
 func hasVideoInput(req map[string]any) bool {
+	for _, ref := range common.ReferencesFromTaskBody(req) {
+		if ref.Role == common.RefRoleReferenceVideo {
+			return true
+		}
+	}
 	metadata := taskchannel.ExtractMetadata(req)
 	if len(metadata) == 0 {
 		return false

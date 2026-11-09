@@ -29,8 +29,14 @@ func (a *SoraAdaptor) Init(info *common.RelayInfo) {
 	a.info = info
 }
 
-func (a *SoraAdaptor) ValidateRequest(_ context.Context, _ *common.RelayInfo, _ []byte) *common.TaskError {
-	return nil
+func (a *SoraAdaptor) ValidateRequest(_ context.Context, _ *common.RelayInfo, body []byte) *common.TaskError {
+	// 标准端点参考素材：Sora 只有单图 input_reference（首帧），其余角色明确拒绝
+	var req map[string]any
+	if json.Unmarshal(body, &req) != nil {
+		return nil
+	}
+	model, _ := req["model"].(string)
+	return common.RejectUnsupportedReferences(common.ReferencesFromTaskBody(req), model, common.RefRoleFirstFrame)
 }
 
 func (a *SoraAdaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, body []byte) map[string]any {

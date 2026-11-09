@@ -129,7 +129,10 @@ type RenderTask struct {
 	Status       string          `json:"status"` // 平台状态：SUBMITTED/IN_PROGRESS/SUCCESS/FAILURE
 	Progress     string          `json:"progress,omitempty"`
 	FailReason   string          `json:"failReason,omitempty"`
-	Data         json.RawMessage `json:"data,omitempty"` // 最新上游快照（taskData）
+	Data         json.RawMessage `json:"data,omitempty"` // 最新上游快照（taskData；登记产物的声明路径已替换为统一内容链接）
+	// ContentURL 主产物统一内容链接（平台签名直链，免鉴权可直接打开；成功且有产物时非空）。
+	// 产物是否转存 OSS 不影响链接形态——转存的从 OSS 供给，未转存的平台实时回源
+	ContentURL string `json:"contentUrl,omitempty"`
 }
 
 // ---------------------------------------------------------------------------

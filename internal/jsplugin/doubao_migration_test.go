@@ -215,3 +215,86 @@ func TestMigratedDoubaoStandardVideos(t *testing.T) {
 		t.Fatal("图像模型应拒绝视频端点")
 	}
 }
+
+// TestMigratedDoubaoStandardVideosReferences 标准端点 references[] → 带 role 的 Ark content 项
+// （保持原序）+ Seedance 模型层约束（2.x 才支持多模态参考、音频须搭配图/视频、
+// 参考视频不收 base64、尾帧须搭配首帧）。
+func TestMigratedDoubaoStandardVideosReferences(t *testing.T) {
+	cleanup, err := PublishForTest(doubaoSource(t))
+	if err != nil {
+		t.Fatalf("发布失败: %v", err)
+	}
+	t.Cleanup(cleanup)
+	plugin, _ := CurrentGeneration().Plugin("doubao")
+
+	decode := func(model, refs string) (json.RawMessage, error) {
+		body := `{"model":"` + model + `","prompt":"图片1的人物在视频1里","seconds":"10","images":["https://legacy/x.png"],"references":` + refs + `}`
+		out, err := plugin.Pool.Call(context.Background(), "decodeVideos", mustJSON(t, contract.StandardEntryContext{
+			Surface: contract.SurfaceOpenAIVideos, Path: "/v1/videos", Model: model, Body: json.RawMessage(body),
+		}))
+		if err != nil {
+			return nil, err
+		}
+		raw, err := contract.ParseJSONObject(out)
+		if err != nil {
+			return nil, err
+		}
+		decoded, err := contract.ValidateDecoded(raw, plugin.Manifest, false)
+		if err != nil {
+			return nil, err
+		}
+		return decoded.RequestBody, nil
+	}
+
+	const model = "doubao-seedance-2-0-260128"
+	body, err := decode(model, `[
+		{"role":"reference_image","url":"https://img/a.png"},
+		{"role":"reference_video","url":"https://vid/b.mp4"},
+		{"role":"reference_image","url":"data:image/png;base64,AAAA"},
+		{"role":"reference_audio","url":"https://aud/c.mp3"}]`)
+	if err != nil {
+		t.Fatalf("多模态参考解码失败: %v", err)
+	}
+	var vendor struct {
+		VendorBody struct {
+			Content []map[string]any `json:"content"`
+		} `json:"vendorBody"`
+	}
+	_ = json.Unmarshal(body, &vendor)
+	content := vendor.VendorBody.Content
+	wantTypes := []string{"text", "image_url", "video_url", "image_url", "audio_url"}
+	wantRoles := []string{"", "reference_image", "reference_video", "reference_image", "reference_audio"}
+	if len(content) != len(wantTypes) {
+		t.Fatalf("content 项数异常（兼容字段 images[] 不得混入）: %s", body)
+	}
+	for i := range wantTypes {
+		role, _ := content[i]["role"].(string)
+		if content[i]["type"] != wantTypes[i] || role != wantRoles[i] {
+			t.Fatalf("content[%d] 异常: %v", i, content[i])
+		}
+	}
+	if u := content[2]["video_url"].(map[string]any)["url"]; u != "https://vid/b.mp4" {
+		t.Fatalf("video_url 映射异常: %v", content[2])
+	}
+
+	// 首尾帧
+	if _, err := decode(model, `[{"role":"first_frame","url":"https://a"},{"role":"last_frame","url":"https://b"}]`); err != nil {
+		t.Fatalf("首尾帧应通过: %v", err)
+	}
+
+	rejects := []struct {
+		name, model, refs string
+	}{
+		{"1.x 不支持多模态参考", "doubao-seedance-1-0-pro-250528", `[{"role":"reference_image","url":"https://a"}]`},
+		{"音频须搭配图或视频", model, `[{"role":"reference_audio","url":"https://a.mp3"}]`},
+		{"参考视频不收 base64", model, `[{"role":"reference_video","url":"data:video/mp4;base64,AAAA"}]`},
+		{"尾帧须搭配首帧", model, `[{"role":"last_frame","url":"https://b"}]`},
+		{"参考视频超 3 段", model, `[{"role":"reference_video","url":"https://1"},{"role":"reference_video","url":"https://2"},{"role":"reference_video","url":"https://3"},{"role":"reference_video","url":"https://4"}]`},
+		{"未解析的 file_id", model, `[{"role":"reference_image","file_id":"file-abc12345"}]`},
+	}
+	for _, c := range rejects {
+		if _, err := decode(c.model, c.refs); err == nil {
+			t.Errorf("%s：应拒绝", c.name)
+		}
+	}
+}

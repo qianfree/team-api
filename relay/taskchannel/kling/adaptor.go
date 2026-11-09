@@ -113,7 +113,9 @@ func (a *KlingAdaptor) ValidateRequest(_ context.Context, _ *common.RelayInfo, b
 	if _, ok := req["model"]; !ok {
 		return &common.TaskError{StatusCode: http.StatusBadRequest, Message: "model is required"}
 	}
-	return nil
+	// 标准端点参考素材：本适配器只承接首帧（images[]/metadata.image 兼容字段），其余角色明确拒绝
+	model, _ := req["model"].(string)
+	return common.RejectUnsupportedReferences(common.ReferencesFromTaskBody(req), model, common.RefRoleFirstFrame)
 }
 
 func (a *KlingAdaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, body []byte) map[string]any {

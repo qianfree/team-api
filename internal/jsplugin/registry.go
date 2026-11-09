@@ -234,10 +234,9 @@ func (r *Registry) Upload(ctx context.Context, source string, iconDataURI string
 		return nil, gerror.Wrap(err, "写入插件版本失败")
 	}
 	// 配置默认值种入 sys_options（已存在的键不动）
-	if len(compiled.Manifest.Config) > 0 {
-		if err := seedConfigDefaults(ctx, compiled.Manifest); err != nil {
-			return nil, gerror.Wrap(err, "插件配置默认值注册失败")
-		}
+	// （含宿主内置项，恒执行）
+	if err := seedConfigDefaults(ctx, compiled.Manifest); err != nil {
+		return nil, gerror.Wrap(err, "插件配置默认值注册失败")
 	}
 	return compiled.Manifest, nil
 }

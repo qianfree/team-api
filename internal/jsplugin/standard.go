@@ -3,6 +3,7 @@ package jsplugin
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/gogf/gf/v2/errors/gerror"
 
@@ -14,6 +15,36 @@ import (
 // requestBody」的解码并合成 SubmitPlan——等价于 /pjs 分发器的 decodeRequest 环节，
 // jsbridge 提交链由此无感复用（ValidateRequest 起的全链只认计划不认入口）。
 // 插件按需经 meta.standardVideos 声明解码钩子；未声明 = 仅原生路由入口（调用方明确拒绝）。
+
+// ReferenceRoleError 插件未声明承接的参考素材角色（调用方映射为 reference_not_supported）。
+type ReferenceRoleError struct {
+	PluginKey string
+	Role      string
+}
+
+func (e *ReferenceRoleError) Error() string {
+	return fmt.Sprintf("reference role %q is not supported by plugin %q", e.Role, e.PluginKey)
+}
+
+// checkReferenceRoles 标准端点参考素材的插件能力拦截：通用任务体 references[] 中出现插件
+// 未在 meta.referenceRoles 声明的角色即拒绝——未升级的插件只读兼容字段（首帧），放行会把
+// 参考图/视频/音频静默丢弃。非 JSON / 无 references 时不拦截。
+func checkReferenceRoles(m *contract.Manifest, pluginKey string, body []byte) error {
+	var probe struct {
+		References []struct {
+			Role string `json:"role"`
+		} `json:"references"`
+	}
+	if json.Unmarshal(body, &probe) != nil {
+		return nil
+	}
+	for _, ref := range probe.References {
+		if !m.SupportsReferenceRole(ref.Role) {
+			return &ReferenceRoleError{PluginKey: pluginKey, Role: ref.Role}
+		}
+	}
+	return nil
+}
 
 // SynthesizeStandardPlan 调用插件 standardVideos 声明的解码钩子，合成标准端点的
 // 解码计划。pluginKey 由调用方解析（渠道显式配置优先，缺省按模型解析——与
@@ -32,6 +63,9 @@ func SynthesizeStandardPlan(ctx context.Context, pluginKey, surface, path string
 	hook := plugin.Manifest.StandardVideos
 	if hook == "" {
 		return nil, nil
+	}
+	if err := checkReferenceRoles(plugin.Manifest, pluginKey, body); err != nil {
+		return nil, err
 	}
 
 	args, err := json.Marshal(contract.StandardEntryContext{

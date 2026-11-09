@@ -140,7 +140,7 @@
 
 错误响应为 OpenAI 风格 OaiError（`{"error": {"type": "...", "message": "..."}}`），与官方 v2 一致。
 
-**OpenAI 协议互通**：同一渠道下 `POST /v1/videos`（OpenAI Videos 协议）与 `POST /v1/video/generations`（通用任务体）可直接调用 MiniMax 视频模型（H3 与 Hailuo 系列按模型自动分派 v2/v1 上游协议）。`size` 只借 OpenAI 协议的字段形态、**值原样透传不换算**——请直接传目标供应商的原生分辨率词汇（H3：`768P`/`2K`/`480P`；Hailuo 2.x：`768P`/`1080P`）；非官方档位值会原样送达上游（上游 400 则任务提交失败、预扣全额退款）。时长取 `seconds`/`duration`/`metadata.duration`（缺省 6 秒），`input_reference`/`images[0]` 作为首帧图（v1 转为 `first_frame_image`），纯文生视频时 v2 ratio 默认 `16:9`。
+**OpenAI 协议互通**：同一渠道下 `POST /v1/videos`（OpenAI Videos 协议）与 `POST /v1/video/generations`（通用任务体）可直接调用 MiniMax 视频模型（H3 与 Hailuo 系列按模型自动分派 v2/v1 上游协议）。`size` 只借 OpenAI 协议的字段形态、**值原样透传不换算**——请直接传目标供应商的原生分辨率词汇（H3：`768P`/`2K`/`480P`；Hailuo 2.x：`768P`/`1080P`）；非官方档位值会原样送达上游（上游 400 则任务提交失败、预扣全额退款）。时长取 `seconds`/`duration`/`metadata.duration`（缺省 6 秒），`input_reference`/`images[0]` 作为首帧图（v1 转为 `first_frame_image`），纯文生视频时 v2 ratio 默认 `16:9`。`/v1/videos` 扩展字段 `references[]`（`[{role, url|file_id}]`，role ∈ first_frame / last_frame / reference_image / reference_video / reference_audio）按原序映射为 v2 `content[]` 带 role 的项（H3 家族：参考合计 ≤12、图 ≤9 / 视频 ≤3 / 音频 ≤3，H3-Lite 参考模式须显式 aspect_ratio）；v1 仅承接首/尾帧（S2V-01 的单张 reference_image 映射为 subject_reference）。字段契约见 `docs/design/OpenAI-Videos协议扩展-参考素材设计方案-v1.md`。
 
 ### MiniMax 官方视频协议 v1（`/v1/video_generation`，Hailuo 系列）
 

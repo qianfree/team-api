@@ -346,3 +346,32 @@ func TestParseConfigModels(t *testing.T) {
 		t.Fatal("超上限应报错")
 	}
 }
+
+func TestHostConfigFields(t *testing.T) {
+	m := &Manifest{Config: []ConfigField{{Key: "extra_models", Label: "扩展模型", Type: "text"}}}
+	all := m.AllConfig()
+	if len(all) != 2 || all[0].Key != "extra_models" || all[1].Key != HostConfigArtifactStorage {
+		t.Fatalf("AllConfig 应为插件声明项 + 宿主内置项: %+v", all)
+	}
+	if f := m.ConfigFieldByKey(HostConfigArtifactStorage); f == nil || f.Type != "bool" || f.Default != true {
+		t.Fatalf("宿主内置项应可按 key 查到且缺省开启: %+v", f)
+	}
+	if len(m.Config) != 1 {
+		t.Fatal("AllConfig 不得改写插件声明切片")
+	}
+	reserved := &Manifest{Config: []ConfigField{{Key: HostConfigArtifactStorage, Label: "x", Type: "bool"}}}
+	if err := reserved.validateConfig(); err == nil {
+		t.Fatal("插件声明宿主保留键应被拒绝")
+	}
+}
+
+func TestReferenceRolesManifest(t *testing.T) {
+	m := &Manifest{}
+	if !m.SupportsReferenceRole("first_frame") || m.SupportsReferenceRole("reference_image") {
+		t.Fatal("未声明 referenceRoles 时应仅支持 first_frame")
+	}
+	m.ReferenceRoles = []string{"reference_image"}
+	if m.SupportsReferenceRole("first_frame") || !m.SupportsReferenceRole("reference_image") {
+		t.Fatal("声明后应按声明判定")
+	}
+}

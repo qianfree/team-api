@@ -52,7 +52,30 @@ type videoObject struct {
 	Error              *videoErrorObject `json:"error"`
 	RemixedFromVideoID *string           `json:"remixed_from_video_id"`
 	ExpiresAt          *int64            `json:"expires_at"`
+	// VideoURL 平台扩展字段（官方 schema 无此字段，SDK 忽略未知字段）：completed 时的
+	// 统一内容链接（签名直链，免鉴权可直接播放/下载）；官方 SDK 下载仍走 /content
+	VideoURL string `json:"video_url,omitempty"`
 }
+
+// taskDeliveryResolver 成功任务的交付视图解析器（宿主经 SetTaskDeliveryResolver 注入；
+// relay 层不依赖签名/存储实现）。nil = 不做交付门控、不输出链接。
+var taskDeliveryResolver func(ctx context.Context, task *common.AsyncTask) common.TaskDelivery
+
+// SetTaskDeliveryResolver 注入交付视图解析器（宿主启动期调用）。
+func SetTaskDeliveryResolver(fn func(ctx context.Context, task *common.AsyncTask) common.TaskDelivery) {
+	taskDeliveryResolver = fn
+}
+
+// resolveTaskDelivery 成功任务的交付视图（非成功任务 / 未注入解析器返回零值）。
+func resolveTaskDelivery(ctx context.Context, task *common.AsyncTask) common.TaskDelivery {
+	if taskDeliveryResolver == nil || task == nil || task.Status != "SUCCESS" {
+		return common.TaskDelivery{}
+	}
+	return taskDeliveryResolver(ctx, task)
+}
+
+// deliveryPendingProgress 转存途中对外呈现的进度（上游已完成、平台交付未就绪）
+const deliveryPendingProgress = 99
 
 // videosStatusFromTask 平台任务状态 → 官方四值状态机映射
 func videosStatusFromTask(status string) string {
@@ -178,6 +201,14 @@ func HandleVideosRetrieve(
 	}
 
 	obj := buildVideoObject(task)
+	// 上游已完成但产物仍在转存 OSS：对外保持进行中，转存完成后才给完成态 + 链接
+	if delivery := resolveTaskDelivery(ctx, task); delivery.Pending {
+		obj.Status = "in_progress"
+		obj.Progress = deliveryPendingProgress
+		obj.CompletedAt = nil
+	} else {
+		obj.VideoURL = delivery.ContentURL
+	}
 	// 非终态附带官方轮询提示头（SDK poll() 优先读取）
 	if obj.Status == "queued" || obj.Status == "in_progress" {
 		rc.Writer.Header().Set("openai-poll-after-ms", videosPollAfterMs)
@@ -231,7 +262,7 @@ func HandleVideosDelete(
 }
 
 // HandleVideosContent GET /v1/videos/{video_id}/content 成品下载管线。
-// 从任务 ResultURL 回源拉流并转发二进制（不透出上游 CDN 直链）。
+// 平台代理输出字节（不透出上游 CDN 直链），供给顺序见 ServeTaskContent。
 // 仅支持官方默认 variant=video；thumbnail/spritesheet 第三方上游无此资产。
 func HandleVideosContent(
 	ctx context.Context,
@@ -257,49 +288,90 @@ func HandleVideosContent(
 	}
 
 	// 官方语义：仅 completed 可下载（未完成/失败均报错）
-	if task.Status != "SUCCESS" {
+	// 转存途中与 retrieve 呈现的进行中保持一致
+	if task.Status != "SUCCESS" || resolveTaskDelivery(ctx, task).Pending {
 		writeTaskError(rc.Writer, http.StatusBadRequest, "video content is not available until the video is completed", "video_not_ready")
 		return
 	}
-	// 部分上游（如官方 sora）不提供成品直链，需要二跳 content 拉取——当前不支持，明确报错
+	ServeTaskContent(ctx, rc.Writer, task, "", dataProvider)
+}
+
+// ServeTaskContent 输出任务产物字节（调用方已完成归属与终态校验）。供给顺序：
+//  1. 登记产物（JS 任务插件）：已转存读平台对象存储，未转存按声明回源代理
+//     （url 直链 / 渠道鉴权端点 / inline base64）——dataProvider 实现 TaskContentOpener 时
+//  2. 任务 ResultURL 回源（非插件任务；或产物读取失败时的兜底）
+//
+// key 为空 = 主产物；指定 key 时只供给该产物，不回落 ResultURL。
+func ServeTaskContent(ctx context.Context, w http.ResponseWriter, task *common.AsyncTask, key string, dataProvider common.TaskDataProvider) {
+	openFailed := false
+	if opener, ok := dataProvider.(common.TaskContentOpener); ok {
+		artifact, found, openErr := opener.OpenTaskContent(ctx, task, key)
+		switch {
+		case found && openErr == nil && artifact != nil && artifact.Body != nil:
+			defer artifact.Body.Close()
+			writeContentStream(ctx, w, task.PublicTaskID, artifact.Body, artifact.ContentType, artifact.Size)
+			return
+		case found:
+			openFailed = true
+			g.Log().Warningf(ctx, "ServeTaskContent: open artifact failed, taskID=%s, key=%q, err=%v", task.PublicTaskID, key, openErr)
+		case key != "":
+			writeTaskError(w, http.StatusNotFound, "No content found with key '"+key+"'.", "content_not_found")
+			return
+		}
+	}
+	if key != "" && openFailed {
+		writeTaskError(w, http.StatusBadGateway, "failed to fetch content", "")
+		return
+	}
+
 	if task.ResultURL == "" {
-		writeTaskError(rc.Writer, http.StatusBadRequest, "video content is not available for this task", "content_not_available")
+		if openFailed {
+			writeTaskError(w, http.StatusBadGateway, "failed to fetch video content", "")
+			return
+		}
+		// 无登记产物且上游未给成品直链（如官方 sora 二跳 content）：明确报错
+		writeTaskError(w, http.StatusBadRequest, "video content is not available for this task", "content_not_available")
 		return
 	}
 
 	// ResultURL 来自上游响应持久化数据，仍做 scheme 白名单防异构值
 	resultURL, err := url.Parse(task.ResultURL)
 	if err != nil || (resultURL.Scheme != "http" && resultURL.Scheme != "https") {
-		g.Log().Errorf(ctx, "HandleVideosContent: invalid result url, videoID=%s, url=%q, err=%v", videoID, task.ResultURL, err)
-		writeTaskError(rc.Writer, http.StatusInternalServerError, "invalid video result url", "")
+		g.Log().Errorf(ctx, "ServeTaskContent: invalid result url, taskID=%s, url=%q, err=%v", task.PublicTaskID, task.ResultURL, err)
+		writeTaskError(w, http.StatusInternalServerError, "invalid video result url", "")
 		return
 	}
 
 	resp, err := videosContentHTTPClient.Get(task.ResultURL)
 	if err != nil {
 		// 上游拉流失败属预期内运营事件，用 Warningf 避免自动打栈（对齐任务提交链路日志分级）
-		g.Log().Warningf(ctx, "HandleVideosContent: fetch upstream failed, videoID=%s, err=%v", videoID, err)
-		writeTaskError(rc.Writer, http.StatusBadGateway, "failed to fetch video content", "")
+		g.Log().Warningf(ctx, "ServeTaskContent: fetch upstream failed, taskID=%s, err=%v", task.PublicTaskID, err)
+		writeTaskError(w, http.StatusBadGateway, "failed to fetch video content", "")
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		g.Log().Warningf(ctx, "HandleVideosContent: upstream status=%d, videoID=%s", resp.StatusCode, videoID)
-		writeTaskError(rc.Writer, http.StatusBadGateway, "failed to fetch video content", "")
+		g.Log().Warningf(ctx, "ServeTaskContent: upstream status=%d, taskID=%s", resp.StatusCode, task.PublicTaskID)
+		writeTaskError(w, http.StatusBadGateway, "failed to fetch video content", "")
 		return
 	}
+	size, _ := strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
+	writeContentStream(ctx, w, task.PublicTaskID, resp.Body, resp.Header.Get("Content-Type"), size)
+}
 
-	// 透传内容元信息后流式转发字节
-	if ct := resp.Header.Get("Content-Type"); ct != "" {
-		rc.Writer.Header().Set("Content-Type", ct)
+// writeContentStream 产物流式输出（size<=0 时不设 Content-Length，走 chunked）。
+func writeContentStream(ctx context.Context, w http.ResponseWriter, taskID string, body io.Reader, contentType string, size int64) {
+	if contentType == "" {
+		contentType = "video/mp4"
 	}
-	if cl := resp.Header.Get("Content-Length"); cl != "" {
-		rc.Writer.Header().Set("Content-Length", cl)
+	w.Header().Set("Content-Type", contentType)
+	if size > 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 	}
-	rc.Writer.WriteHeader(http.StatusOK)
-	if _, err := io.Copy(rc.Writer, resp.Body); err != nil {
+	w.WriteHeader(http.StatusOK)
+	if _, err := io.Copy(w, body); err != nil {
 		// 响应头已发出，只能记录日志，无法再改写为错误响应
-		g.Log().Warningf(ctx, "HandleVideosContent: stream copy failed, videoID=%s, err=%v", videoID, err)
+		g.Log().Warningf(ctx, "ServeTaskContent: stream copy failed, taskID=%s, err=%v", taskID, err)
 	}
 }
