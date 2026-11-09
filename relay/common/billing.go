@@ -13,6 +13,11 @@ import (
 // 返回明确的请求错误，而非误导性的"余额不足"。
 var ErrModelPricingNotConfigured = errors.New("model pricing not configured")
 
+// ErrBillingFormulaEval 表达式计费公式在本次请求上求值失败（预扣阶段哨兵错误）。
+// 公式保存时已烟测，运行期失败几乎都源于客户端请求参数与公式期望不符（如 param()
+// 取到字符串参与算术），handler 层识别后按请求错误（400）拒绝，而非「余额不足」/500
+var ErrBillingFormulaEval = errors.New("request parameters incompatible with model billing formula")
+
 // MaxImageCount 图片协议顶层 n（一次生成张数）上限，与 OpenAI images API 的 1~10 一致。
 // n 直接放大按次计费（单价 × n），超限值在入口直接 400 拒绝，防止异常大值冻结天价预扣。
 const MaxImageCount = 10

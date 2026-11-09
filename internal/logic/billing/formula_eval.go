@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/qianfree/team-api/internal/logic/billing/formula"
+	rcommon "github.com/qianfree/team-api/relay/common"
 )
 
 // EffectiveFormula 组合基础公式与请求规则为最终求值表达式：
@@ -29,7 +30,8 @@ func EffectiveFormula(base, rules string) string {
 }
 
 // ResolveFormulaRequest 按编译产物的字面探测集合从实际请求解析探测值：
-//   - HeaderKeys：http.Header 取值（键大小写不敏感）→ 小写归一存储；空值剔除
+//   - HeaderKeys：http.Header 取值（键大小写不敏感）→ 小写归一存储；空值剔除。
+//     凭证类请求头（sensitiveHeaderNames）运行时跳过，防止已保存的旧公式泄露密钥
 //   - ParamPaths：body 按点分路径（含 [*] 通配）提取，多值取首个；非 JSON/解析失败
 //     安全返回空 Params（路径缺失 ≠ 公式错误，与 u() 缺失取 0 同语义）
 //
@@ -40,6 +42,10 @@ func ResolveFormulaRequest(c *formula.Compiled, headers http.Header, body []byte
 	}
 	req := &formula.RequestInput{Headers: map[string]string{}, Params: map[string]any{}}
 	for _, key := range c.HeaderKeys {
+		// 运行时二次守卫：跳过凭证类请求头，即使公式在编译期拦截前就已保存（旧数据容错）
+		if rcommon.IsSensitiveHeader(key) {
+			continue
+		}
 		if v := strings.TrimSpace(headers.Get(key)); v != "" {
 			req.Headers[strings.ToLower(key)] = v
 		}

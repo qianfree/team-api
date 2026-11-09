@@ -279,6 +279,9 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 			if errors.Is(billErr, common.ErrModelPricingNotConfigured) {
 				return nil, nil, constant.NewRequestError("model pricing not configured: "+modelName, billErr)
 			}
+			if errors.Is(billErr, common.ErrBillingFormulaEval) {
+				return nil, nil, constant.NewRequestError(common.ErrBillingFormulaEval.Error()+": "+modelName, billErr)
+			}
 			return nil, nil, constant.NewQuotaError("insufficient balance", billErr)
 		}
 		preDeductAmount = amt

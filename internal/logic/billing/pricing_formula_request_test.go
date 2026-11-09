@@ -195,3 +195,72 @@ func TestSnapshotFormulaRules(t *testing.T) {
 		t.Fatalf("摘要应含未命中规则:\n%s", summary)
 	}
 }
+
+// TestTaskFormulaTimeOnlyFreeze 仅含时间函数（无 header/param 探针）的公式：提交时
+// 仍冻结 at+tz，结算重放（JSONB 往返）按冻结时刻与平台时区求值，不随结算时刻漂移、
+// 不回退 UTC
+func TestTaskFormulaTimeOnlyFreeze(t *testing.T) {
+	pricing := &PricingResult{
+		BillingMode: BillingModeFormula, Formula: `fixed(0.1) * seconds * (hour("") >= 20 ? 2 : 1)`,
+		TenantMultiplier: 1.0, TimeMultiplier: 1.0, Currency: "USD",
+	}
+	shanghai, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		t.Skipf("tzdata 不可用: %v", err)
+	}
+	// UTC 12:30 = 上海 20:30：按平台时区命中 ×2，若回退 UTC 则不命中
+	at := time.Date(2026, 11, 9, 12, 30, 0, 0, time.UTC)
+	ratios := map[string]any{
+		ratioKeyFormulaRequest: buildFormulaFreeze(pricing, nil, nil, at, shanghai),
+		"spec.duration":        5.0,
+	}
+	freeze := ratios[ratioKeyFormulaRequest].(map[string]any)
+	if freeze["at"] == nil || freeze["tz"] != "Asia/Shanghai" {
+		t.Fatalf("无探针公式也必须冻结 at/tz: %v", freeze)
+	}
+
+	raw, _ := json.Marshal(ratios)
+	thawed := map[string]any{}
+	if err := json.Unmarshal(raw, &thawed); err != nil {
+		t.Fatalf("JSONB 往返失败: %v", err)
+	}
+	ec := taskFormulaEvalContext(thawed)
+	if ec == nil || ec.Location == nil || ec.Location.String() != "Asia/Shanghai" || !ec.At.Equal(at) {
+		t.Fatalf("冻结上下文还原错误: %+v", ec)
+	}
+
+	g := GenericScheme{}
+	estimate := g.EstimateTaskCost(pricing, ratios, nil)
+	settled := g.SettleTaskCost(pricing, thawed, &rcommon.TaskMaterialUsage{OutputSeconds: 5})
+	// 0.1 × 5s × 2（上海 20 点后命中）= 1
+	if !estimate.Equal(decimal.NewFromInt(1)) || !settled.Equal(estimate) {
+		t.Fatalf("estimate=%v settled=%v, want 1/1", estimate, settled)
+	}
+}
+
+// TestTaskFormulaEvalContextLegacyNoTZ 存量任务（冻结值无 tz）回退 UTC，不报错
+func TestTaskFormulaEvalContextLegacyNoTZ(t *testing.T) {
+	ec := taskFormulaEvalContext(map[string]any{
+		ratioKeyFormulaRequest: map[string]any{"at": "2026-11-09T12:30:00Z"},
+	})
+	if ec == nil || ec.Location != nil || ec.At.IsZero() {
+		t.Fatalf("存量冻结值还原错误: %+v", ec)
+	}
+}
+
+// TestTaskFormulaParamTypeMismatchFails 客户端参数类型与公式不符（字符串参与算术）时
+// 任务公式求值必须报错——EstimateTaskCost 据此 fail-closed 拒绝提交，而非落占位预扣
+func TestTaskFormulaParamTypeMismatchFails(t *testing.T) {
+	pricing := &PricingResult{
+		BillingMode: BillingModeFormula, Formula: `fixed(0.1) * (param("duration") ?? 5)`,
+		TenantMultiplier: 1.0, TimeMultiplier: 1.0, Currency: "USD",
+	}
+	ok := map[string]any{ratioKeyFormulaRequest: buildFormulaFreeze(pricing, nil, []byte(`{"duration": 10}`), time.Now(), time.UTC)}
+	if cost, err := runFormulaCost(pricing, taskFormulaInput(ok, nil)); err != nil || !cost.Equal(decimal.NewFromInt(1)) {
+		t.Fatalf("数值参数应正常计价: cost=%v err=%v", cost, err)
+	}
+	bad := map[string]any{ratioKeyFormulaRequest: buildFormulaFreeze(pricing, nil, []byte(`{"duration": "10"}`), time.Now(), time.UTC)}
+	if _, err := runFormulaCost(pricing, taskFormulaInput(bad, nil)); err == nil {
+		t.Fatal("字符串参数参与算术应求值失败")
+	}
+}

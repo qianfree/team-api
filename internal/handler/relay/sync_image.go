@@ -4,6 +4,7 @@ import (
 	crand "crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -88,12 +89,19 @@ func HandleSyncImageSubmit(r *ghttp.Request, body []byte, rc *relay_handler.Task
 		writeSyncImageError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	var estimateRatios map[string]any
+	// 始终非 nil：计费层会向 ratios 注入冻结值（参数倍率命中、公式求值上下文），
+	// 随任务持久化供结算重放，nil 时注入丢失
+	estimateRatios := map[string]any{}
 	if imageCount > 1 {
-		estimateRatios = map[string]any{"base": 1.0, "count": float64(imageCount)}
+		estimateRatios["base"] = 1.0
+		estimateRatios["count"] = float64(imageCount)
 	}
 	estimatedCost, err := taskBillingProvider.EstimateTaskCost(ctx, rc.TenantID, modelName, estimateRatios, cleanBody, r.Header)
 	if err != nil {
+		if errors.Is(err, relay_common.ErrBillingFormulaEval) {
+			writeSyncImageError(w, http.StatusBadRequest, relay_common.ErrBillingFormulaEval.Error())
+			return
+		}
 		writeSyncImageError(w, http.StatusInternalServerError, "estimate cost failed: "+err.Error())
 		return
 	}

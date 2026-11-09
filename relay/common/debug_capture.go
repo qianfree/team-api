@@ -294,6 +294,12 @@ var sensitiveHeaderNames = map[string]bool{
 	"x-auth-token":        true,
 }
 
+// IsSensitiveHeader 判断请求头名是否为凭证类（不区分大小写）。
+// billing/formula 层据此拒绝 header() 引用凭证头，防止密钥明文写入计费快照
+func IsSensitiveHeader(name string) bool {
+	return sensitiveHeaderNames[strings.ToLower(name)]
+}
+
 // urlSecretParams URL query 中携带凭证的参数名（如 Gemini 的 ?key=）
 var urlSecretParams = map[string]bool{
 	"key":          true,

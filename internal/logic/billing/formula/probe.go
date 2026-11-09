@@ -5,6 +5,8 @@ import (
 
 	"github.com/expr-lang/expr/ast"
 	"github.com/expr-lang/expr/vm"
+
+	rcommon "github.com/qianfree/team-api/relay/common"
 )
 
 // 请求规则埋点内部函数名（保留字，存储的表达式中禁止直接使用）
@@ -157,7 +159,8 @@ func (c *probeCollector) Visit(node *ast.Node) {
 }
 
 // literalKey 校验 param()/header() 的单字面量参数并返回原值（header 键在
-// resolve 时统一小写归一，此处保留原文供快照展示）
+// resolve 时统一小写归一，此处保留原文供快照展示）。header() 的键额外拒绝
+// 凭证类请求头（sensitiveHeaderNames），防止 API Key 明文写入计费快照
 func literalKey(call *ast.CallNode, name string) (string, error) {
 	if len(call.Arguments) != 1 {
 		return "", fmt.Errorf("%s() 需要 1 个字符串字面量参数", name)
@@ -168,6 +171,9 @@ func literalKey(call *ast.CallNode, name string) (string, error) {
 	}
 	if str.Value == "" {
 		return "", fmt.Errorf("%s() 的参数不能为空", name)
+	}
+	if name == "header" && rcommon.IsSensitiveHeader(str.Value) {
+		return "", fmt.Errorf("header(%q) 引用了凭证类请求头，禁止在计费公式中使用（防止密钥泄露）", str.Value)
 	}
 	return str.Value, nil
 }

@@ -62,18 +62,44 @@ func (b *TaskBillingProviderImpl) EstimateTaskCost(ctx context.Context, tenantID
 			ratios[ratioKeyParamMatched] = strings.Join(matched, "|")
 		}
 	}
-	// formula 请求探测值冻结：提交时解析 header()/param() 探测值 + 时间基准注入 ratios
-	// （仅公式引用了探测函数时非空），预扣与结算重放同一份，口径恒一致
-	if pricing.BillingMode == BillingModeFormula && ratios != nil {
-		if compiled, err := formula.Compile(pricing.Formula); err == nil {
-			if req := ResolveFormulaRequest(compiled, headers, taskBody); req != nil {
-				freeze := req.ToMap()
-				freeze["at"] = time.Now().Format(time.RFC3339Nano)
-				ratios[ratioKeyFormulaRequest] = freeze
-			}
+	if pricing.BillingMode == BillingModeFormula {
+		// 无 ratios 的提交（如单张同步图片）补建空表承载冻结值，否则结算期无从重放
+		if ratios == nil {
+			ratios = map[string]any{}
+		}
+		freezeFormulaEvalContext(ctx, pricing, ratios, headers, taskBody)
+		// fail-closed：公式在本次请求上求值失败（多为客户端参数类型与公式期望不符）
+		// 直接拒绝提交，与同步路径预扣口径一致——否则 GenericScheme 会落占位预扣，
+		// 结算重放同样失败，最终按占位价收费
+		if _, err := runFormulaCost(pricing, taskFormulaInput(ratios, nil)); err != nil {
+			return Zero, gerror.Wrapf(common.ErrBillingFormulaEval, "estimate task cost: run formula (model=%s): %v", modelName, err)
 		}
 	}
 	return estimateTaskCost(pricing, ratios, taskBody), nil
+}
+
+// freezeFormulaEvalContext 冻结 formula 模式任务的求值上下文到 ratios（随 billing_context
+// 持久化）：受理时刻 + 平台计费时区 + header()/param() 探测值。时间与时区无条件冻结——
+// 任务结算滞后数分钟~小时且可能跨进程，公式只用 hour()/weekday() 等时间函数（不含探针）
+// 时若不冻结，结算会按结算时刻重放导致跨时段错价；时区不冻结则 hour() 缺省回退 UTC，
+// 与同步路径（平台时区）口径分叉
+func freezeFormulaEvalContext(ctx context.Context, pricing *PricingResult, ratios map[string]any, headers http.Header, taskBody []byte) {
+	ratios[ratioKeyFormulaRequest] = buildFormulaFreeze(pricing, headers, taskBody, time.Now(), pricingTimeLocation(ctx))
+}
+
+// buildFormulaFreeze 构造冻结 map（纯函数）：探测值 + at（RFC3339Nano）+ tz（时区名）
+func buildFormulaFreeze(pricing *PricingResult, headers http.Header, taskBody []byte, at time.Time, loc *time.Location) map[string]any {
+	freeze := map[string]any{}
+	if compiled, err := formula.Compile(pricing.Formula); err == nil {
+		if req := ResolveFormulaRequest(compiled, headers, taskBody); req != nil {
+			freeze = req.ToMap()
+		}
+	}
+	freeze["at"] = at.Format(time.RFC3339Nano)
+	if loc != nil {
+		freeze["tz"] = loc.String()
+	}
+	return freeze
 }
 
 // imagePlaceholderPreDeduct 图片等按次任务**未配置按次单价**时的占位预扣（USD）。
