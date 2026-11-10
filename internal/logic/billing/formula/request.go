@@ -87,7 +87,10 @@ type EvalContext struct {
 // 三目静态提取（条件与乘数固化），运行时由 _trace 埋点回填 Matched；随计费快照
 // 写入 bil_usage_logs 供账单解释「本次请求命中了哪些倍率规则」
 type RequestRuleTrace struct {
-	Cond       string  `json:"cond"`
+	Cond string `json:"cond"`
+	// Desc 条件的中文描述（如「周一至周五 且 09:00–18:00」），租户可见账单用；
+	// 无法描述的手写条件为空，展示方回退通用文案
+	Desc       string  `json:"desc,omitempty"`
 	Multiplier float64 `json:"multiplier"`
 	Matched    bool    `json:"matched"`
 }

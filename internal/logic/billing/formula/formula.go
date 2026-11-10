@@ -21,12 +21,12 @@ import (
 // 不另立文档副本。新增变量必须同步：
 // 1) FormulaInput.Env 注入；2) 前端 FormulaPricingEditor 变量速查；3) smoke 向量覆盖
 var knownVarDocs = map[string]string{
-	"p":           "纯文本输入 token（公式单独计价的细分类别已扣除）",
+	"p":           "输入 token：公式未单独计价的缓存/图片/音频 token 都计入 p 按输入价计；引用 cr/cc/cc1h/img/ai 后对应部分从 p 扣除",
 	"c":           "输出 token（引用 rt/img_o/ao 时扣除对应细分）",
 	"ctx":         "完整输入上下文 token（含缓存，长上下文档位判断用，不扣除）。不可命名 len——与 expr 内置函数冲突",
 	"cr":          "缓存读取（命中）token",
-	"cc":          "缓存写入 5m token（Claude ephemeral_5m / OpenAI cache_write 合并桶）",
-	"cc1h":        "缓存写入 1h token（Claude ephemeral_1h）",
+	"cc":          "缓存写入 5m token（Claude ephemeral_5m / OpenAI cache_write 合并桶）；未引用 cc1h 时，1h 写入按 cc 单价 ×1.6 计",
+	"cc1h":        "缓存写入 1h token（Claude ephemeral_1h），仅在 1h 写入价不是 cc 的 1.6 倍时才需单独写",
 	"img":         "图片输入 token",
 	"img_o":       "图片输出 token",
 	"ai":          "音频输入 token",
@@ -119,7 +119,11 @@ type Compiled struct {
 	ParamPaths []string
 	HeaderKeys []string
 	Rules      []RequestRuleTrace
-	Src        string
+	// Tiers tier("名称", 计价式) 命名档位表（_tier 埋点回填命中，账单展示命中档位与分项明细）
+	Tiers []TierDef
+	// RootTerms 无 tier() 时整体公式（剥离外层请求规则因子后）的线性计价项；nil = 非线性
+	RootTerms []Term
+	Src       string
 }
 
 // compileCache 编译缓存：key = 公式 SHA-256，FIFO 驱逐，上限 256。
@@ -149,13 +153,18 @@ func Compile(src string) (*Compiled, error) {
 
 	// 请求规则埋点在编译管线内完成（expr.Patch 先于常量折叠执行，短路分支也可静态
 	// 检测）；数值结果不变，仅把「条件 ? 乘数 : 1」改写为 _trace(idx, 条件, 乘数)
+	// 档位埋点在规则埋点之后执行（tier 计价式内的规则三目已先改写为 _trace，判为非线性）
 	patcher := &requestRulePatcher{}
-	program, err := expr.Compile(src, expr.Patch(patcher))
+	tiers := &tierPatcher{}
+	program, err := expr.Compile(src, expr.Patch(patcher), expr.Patch(tiers))
 	if err != nil {
 		return nil, fmt.Errorf("公式编译失败: %w", err)
 	}
 	if patcher.restrictedIdentifier != "" {
 		return nil, fmt.Errorf("公式编译失败: 标识符 %q 为内部埋点保留字，不可使用", patcher.restrictedIdentifier)
+	}
+	if tiers.err != nil {
+		return nil, fmt.Errorf("公式编译失败: %w", tiers.err)
 	}
 
 	ukeys, err := extractUKeys(program)
@@ -174,7 +183,11 @@ func Compile(src string) (*Compiled, error) {
 		ParamPaths: paramPaths,
 		HeaderKeys: headerKeys,
 		Rules:      patcher.rules,
+		Tiers:      tiers.tiers,
 		Src:        src,
+	}
+	if len(c.Tiers) == 0 {
+		c.RootTerms = rootTerms(program.Node())
 	}
 
 	compileCacheMu.Lock()
@@ -194,33 +207,70 @@ func Compile(src string) (*Compiled, error) {
 // 变量环境由输入内部构建（含 _trace 埋点闭包，命中规则随求值回填 Matched）；
 // 结果必须为有限数且非负（三目可能返回整数类型，统一转 float64）
 func Run(c *Compiled, in FormulaInput) (float64, []RequestRuleTrace, error) {
+	res, err := RunDetail(c, in)
+	if err != nil {
+		return 0, nil, err
+	}
+	return res.Factor, res.Rules, nil
+}
+
+// RunDetail 求值并返回完整结果：系数 + 请求规则命中 + 命中档位 + 变量取值 + 分项明细。
+// 变量取值与系数取自同一次求值的同一份环境（计费快照据此留痕，避免事后重建口径漂移）
+func RunDetail(c *Compiled, in FormulaInput) (*Result, error) {
 	trace := cloneTraces(c.Rules)
 	env := in.Env(c.Vars, trace)
+	var hit []int
+	env[tierFunction] = func(args ...any) (any, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("tier() 参数异常")
+		}
+		if idx, ok := args[0].(int); ok && idx >= 0 && idx < len(c.Tiers) && !containsInt(hit, idx) {
+			hit = append(hit, idx)
+		}
+		return args[1], nil
+	}
 	raw, err := expr.Run(c.Program, env)
 	if err != nil {
-		return 0, nil, fmt.Errorf("公式求值失败: %w", err)
+		return nil, fmt.Errorf("公式求值失败: %w", err)
 	}
 	v, ok := toFloat64(raw)
 	if !ok {
-		return 0, nil, fmt.Errorf("公式结果不是数值: %T", raw)
+		return nil, fmt.Errorf("公式结果不是数值: %T", raw)
 	}
 	if math.IsNaN(v) || math.IsInf(v, 0) {
-		return 0, nil, fmt.Errorf("公式结果非有限数: %v", v)
+		return nil, fmt.Errorf("公式结果非有限数: %v", v)
 	}
 	if v < 0 {
-		return 0, nil, fmt.Errorf("公式结果为负数: %v", v)
+		return nil, fmt.Errorf("公式结果为负数: %v", v)
 	}
 	if v == 0 {
 		// 负零归一（"-p" 在 p=0 时产生 -0.0，数学上等于 0，按免费档放行）
-		return 0, trace, nil
+		v = 0
 	}
-	return v, trace, nil
+	res := &Result{Factor: v, Rules: trace, Vars: snapshotVarsFromEnv(c, in, env)}
+	for _, idx := range hit {
+		res.Tiers = append(res.Tiers, c.Tiers[idx].Name)
+	}
+	res.Items, res.RuleMultiplier = decompose(c, hit, env, in, trace, v)
+	return res, nil
+}
+
+func containsInt(s []int, v int) bool {
+	for _, x := range s {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }
 
 // BuiltinFuncs 公式内置函数（注入每个求值环境）：
 //   - fixed(x)：按次金额。内部返回 x×1e6，把「每次请求金额」换算成
 //     与 token 系数相同的每 1M 口径，金额统一 = 结果 / 1e6
 //   - min/max/abs/ceil/floor：数值辅助（expr 内置不含这组数学函数）
+//
+// tier("名称", 计价式) 不在此表：编译期改写为 _tier 埋点（见 tierPatcher），
+// 由 Env/RunDetail 注入实现
 func BuiltinFuncs() map[string]any {
 	return map[string]any{
 		"fixed": func(args ...any) (any, error) {

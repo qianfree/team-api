@@ -93,15 +93,15 @@ func TestExclusionSemanticsOpenAI(t *testing.T) {
 	}
 	in := FromUsage(baseInput, output, cacheRead, cc5m, cc1h, u)
 
-	// 1) 只用 p：图片/音频输入 token 保留在 p 内（17000）
+	// 1) 只用 p：未引用的缓存（读 8000 + 写 5000）与图片/音频 token 全部留在 p 内（30000）
 	_, env := mustRun(t, "p", in)
-	if env["p"].(float64) != 17000 {
-		t.Fatalf("未引用细分时 p 应保留全部模态 token: %v", env["p"])
+	if env["p"].(float64) != 30000 {
+		t.Fatalf("未引用细分时 p 应保留全部缓存与模态 token: %v", env["p"])
 	}
 
-	// 2) 引用 img/ai：p 扣除图片与音频 → 15000
+	// 2) 引用 img/ai：p 扣除图片与音频，未引用的缓存仍在 p 内 → 30000 - 2000 = 28000
 	_, env = mustRun(t, "p + img + ai", in)
-	if env["p"].(float64) != 15000 {
+	if env["p"].(float64) != 28000 {
 		t.Fatalf("引用 img/ai 后 p 应扣除模态 token: %v", env["p"])
 	}
 	if env["img"].(float64) != 1500 || env["ai"].(float64) != 500 {
@@ -129,9 +129,9 @@ func TestExclusionSemanticsOpenAI(t *testing.T) {
 		t.Fatalf("缓存变量异常: %v %v %v", env["cr"], env["cc"], env["cc1h"])
 	}
 
-	// 6) 金额口径：p*2.5 → 系数 17000*2.5=42500，金额 = 42500/1e6 = 0.0425 本位币
+	// 6) 金额口径：p*2.5 → 系数 30000*2.5=75000，金额 = 75000/1e6 = 0.075 本位币
 	v, _ := mustRun(t, "p * 2.5", in)
-	if v != 42500 {
+	if v != 75000 {
 		t.Fatalf("系数计算异常: %v", v)
 	}
 
@@ -158,9 +158,10 @@ func TestExclusionSemanticsClaude(t *testing.T) {
 		t.Fatalf("Claude len 应补加缓存: %v", env["ctx"])
 	}
 
-	// Claude 语义（OpenAISemantics=false）：即使公式引用 img/ai 也不从 p 扣（细分缺省 0，防三方言口径误扣）
+	// Claude 语义（OpenAISemantics=false）：即使公式引用 img/ai 也不从 p 扣（细分缺省 0，防三方言口径误扣）；
+	// 未引用的缓存读写加回 p：15000 + 8000 + 4000 + 1000 = 28000
 	_, env = mustRun(t, "p + img + ai", in)
-	if env["p"].(float64) != 15000 {
+	if env["p"].(float64) != 28000 {
 		t.Fatalf("Claude 语义 p 不应扣减: %v", env["p"])
 	}
 
@@ -301,8 +302,8 @@ func TestEvaluate(t *testing.T) {
 	if len(results) != len(SmokeVectors()) {
 		t.Fatalf("预置向量组数异常: %d", len(results))
 	}
-	// 常规对话向量：p=10000 c=2000 → 10000*2.5 + 2000*10 = 45000
-	if results[1].Factor != 45000 {
+	// 常规对话向量：p = 10000 + 未引用缓存(读 5000 + 写 2000) = 17000，c=2000 → 17000*2.5 + 2000*10 = 62500
+	if results[1].Factor != 62500 {
 		t.Fatalf("常规对话向量系数异常: %v", results[1].Factor)
 	}
 	if c.Vars["p"] != true || c.Vars["c"] != true {

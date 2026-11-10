@@ -1172,6 +1172,22 @@ func (s *sAdmin) ValidateModelPricingFormula(ctx context.Context, req *v1.Pricin
 	res := &v1.PricingFormulaValidateRes{}
 	combined := billing.EffectiveFormula(req.Formula, req.FormulaRules)
 
+	// 时间函数省略时区时按平台计费时区求值（与线上一致；不设置会回退 UTC）
+	loc := billing.FormulaTimeLocation(ctx)
+	compiledForProbe, _ := formula.Compile(combined)
+	buildEvalContext := func(headers map[string]string, body []byte, evalAt string) *formula.EvalContext {
+		ec := &formula.EvalContext{Location: loc}
+		if compiledForProbe != nil {
+			ec.Request = billing.ResolveFormulaRequest(compiledForProbe, sampleHeaders(headers), body)
+		}
+		if evalAt != "" {
+			if t, err := time.Parse(time.RFC3339, evalAt); err == nil {
+				ec.At = t
+			}
+		}
+		return ec
+	}
+
 	custom := make([]formula.FormulaInput, 0, len(req.Samples))
 	for _, s := range req.Samples {
 		in := formula.FormulaInput{
@@ -1190,23 +1206,25 @@ func (s *sAdmin) ValidateModelPricingFormula(ctx context.Context, req *v1.Pricin
 			OpenAISemantics:   s.OpenAISemantics,
 		}
 		// 样例请求上下文：header()/param() 探测值 + 时间函数基准（与线上 resolve 同一实现）
-		ec := &formula.EvalContext{}
-		if c, err := formula.Compile(combined); err == nil {
-			ec.Request = billing.ResolveFormulaRequest(c, sampleHeaders(s.Headers), s.Body)
-		}
-		if s.EvalAt != "" {
-			if t, err := time.Parse(time.RFC3339, s.EvalAt); err == nil {
-				ec.At = t
-			}
-		}
-		in.Eval = ec
+		in.Eval = buildEvalContext(s.Headers, s.Body, s.EvalAt)
 		custom = append(custom, in)
 	}
 
 	// facts key 注册表恒随响应下发（前端速查展示；Evaluate 内含 SmokeTest 的注册校验）
 	res.KnownFactKeys = formula.KnownFactKeys()
 
-	compiled, results, err := formula.Evaluate(combined, custom)
+	var (
+		compiled *formula.Compiled
+		results  []formula.EvaluateResult
+		err      error
+	)
+	if len(custom) == 0 && req.Simulate != nil {
+		// 模拟请求：同一请求上下文套用到全部预置样例（保留样例名），试算规则命中
+		ec := buildEvalContext(req.Simulate.Headers, req.Simulate.Body, req.Simulate.EvalAt)
+		compiled, results, err = formula.EvaluateWithContext(combined, ec)
+	} else {
+		compiled, results, err = formula.Evaluate(combined, custom)
+	}
 	if err != nil {
 		res.Valid = false
 		res.Error = err.Error()
@@ -1227,6 +1245,7 @@ func (s *sAdmin) ValidateModelPricingFormula(ctx context.Context, req *v1.Pricin
 		for _, rule := range r.Rules {
 			rules = append(rules, v1.PricingFormulaRuleTrace{
 				Cond:       rule.Cond,
+				Desc:       rule.Desc,
 				Multiplier: rule.Multiplier,
 				Matched:    rule.Matched,
 			})

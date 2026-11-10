@@ -233,6 +233,16 @@ type PricingFormulaValidateReq struct {
 	FormulaRules string `json:"formula_rules,omitempty" dc:"请求规则表达式（可选）"`
 	// Samples 自定义试算样例（空 = 使用预置样例向量：空请求/常规对话/多模态满配/长上下文/多张图片/音频计量）
 	Samples []PricingFormulaSample `json:"samples" dc:"自定义试算样例（可选）"`
+	// Simulate 模拟请求（可选）：请求头/请求体/时间套用到全部预置样例（samples 为空时生效），
+	// 用于试算请求规则在指定请求下的命中情况
+	Simulate *PricingFormulaSimulate `json:"simulate,omitempty" dc:"模拟请求（可选，套用到预置样例）"`
+}
+
+// PricingFormulaSimulate 试算模拟请求上下文（header()/param()/时间函数探测）
+type PricingFormulaSimulate struct {
+	Headers map[string]string `json:"headers,omitempty" dc:"模拟请求头（header() 探测用）"`
+	Body    json.RawMessage   `json:"body,omitempty" dc:"模拟请求体 JSON（param() 探测用）"`
+	EvalAt  string            `json:"eval_at,omitempty" dc:"模拟请求时刻（RFC3339，可选，默认当前时刻）"`
 }
 
 // PricingFormulaSample 试算样例（公式变量取值；0 值字段按未上报处理）
@@ -294,6 +304,8 @@ type PricingFormulaEvalResult struct {
 type PricingFormulaRuleTrace struct {
 	// Cond 条件原文（如 header("tier") == "pro"）
 	Cond string `json:"cond"`
+	// Desc 条件中文描述（如「周一至周五 且 09:00–18:00」；无法描述的手写条件为空）
+	Desc string `json:"desc,omitempty"`
 	// Multiplier 命中时应用的乘数
 	Multiplier float64 `json:"multiplier"`
 	// Matched 本次求值是否命中

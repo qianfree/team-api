@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/shopspring/decimal"
+
 	"github.com/qianfree/team-api/internal/logic/billing/formula"
 	rcommon "github.com/qianfree/team-api/relay/common"
 )
@@ -24,15 +26,18 @@ type BillingSnapshot struct {
 	Pricing     BillingSnapshotPricing      `json:"pricing"`
 	Multipliers BillingSnapshotMultipliers  `json:"multipliers"`
 	CachePrices *BillingSnapshotCachePrices `json:"cache_prices,omitempty"`
-	TokenCosts  map[string]TokenCostDetail  `json:"token_costs"`
-	Settlement  BillingSnapshotSettlement   `json:"settlement"`
-	RequestMeta BillingSnapshotRequestMeta  `json:"request_meta"`
+	// TokenCosts token 分项费用（formula 模式不填充：公式没有逐类 token 单价，
+	// 分项明细见 Formula.Items）
+	TokenCosts  map[string]TokenCostDetail `json:"token_costs,omitempty"`
+	Settlement  BillingSnapshotSettlement  `json:"settlement"`
+	RequestMeta BillingSnapshotRequestMeta `json:"request_meta"`
 	// PerSecond 按秒/方案计费的命中明细（仅任务结算路径、按秒矩阵参与定价时填充）：
 	// 记录实际计费秒数、命中档位与单价，配合 multipliers 使
 	// 「秒数 × 档位单价 × 乘数链 ≈ 实际费用」可复算；特殊方案含素材组件时该节描述输出生成组件
 	PerSecond *BillingSnapshotPerSecond `json:"per_second,omitempty"`
-	// Formula 表达式计费命中明细（仅 billing_mode=formula 填充）：公式原文（截断）、
-	// 变量环境快照与命中系数，配合 multipliers 使「系数 / 1e6 × 乘数链 = 实际费用」可复算
+	// Formula 表达式计费命中明细（仅 billing_mode=formula 填充）：命中档位、变量取值、
+	// 分项明细（线性计价式）与公式计价，配合 multipliers 使费用可复算。
+	// 公式原文（expr/base_expr）仅供管理端展示，文本摘要不输出（租户可见）
 	Formula *BillingSnapshotFormula `json:"formula,omitempty"`
 	// ToolSurcharges 工具调用附加费明细（联网搜索/云端工具按次收费，任何计费模式可叠加）：
 	// 逐工具记录次数/结算时刻单价/费用，使「次数 × 单价 = 费用」可复算。
@@ -49,15 +54,44 @@ type BillingSnapshotFormula struct {
 	Expr string `json:"expr"`
 	// BaseExpr 基础公式原文（不含请求规则；与 Expr 相同时省略）
 	BaseExpr string `json:"base_expr,omitempty"`
+	// Tiers 命中的档位名（公式用 tier("名称", 计价式) 标记档位时填充，按求值顺序）
+	Tiers []string `json:"tiers,omitempty"`
 	// Rules 请求规则命中表（header()/param()/时间条件倍率：条件原文、乘数、是否命中）
 	Rules []formula.RequestRuleTrace `json:"rules,omitempty"`
-	// Vars 求值时的变量环境快照（仅公式引用的变量；u:key/header:key/param:path
-	// 为探针实际取值，header/param 值可能为字符串）
+	// Vars 求值时的变量取值（仅公式引用的变量；u:key/header:key/param:path
+	// 为探针实际取值，header/param 值可能为字符串）。与 Factor 出自同一次求值
 	Vars map[string]any `json:"vars,omitempty"`
-	// Factor 命中的价格系数（每 1M token 口径），金额 = Factor / 1e6 × 乘数链
+	// Factor 公式结果（每 1M 口径系数），BaseCost = Factor / 1e6
 	Factor float64 `json:"factor"`
+	// BaseCost 公式计价（本位币，已含请求规则倍率，未乘租户/时段/附加乘数）
+	BaseCost float64 `json:"base_cost"`
+	// Multiplier 公式计价之外的乘数链（租户 × 时段 × 附加乘数），Cost = BaseCost × Multiplier
+	Multiplier float64 `json:"multiplier"`
+	// Cost 公式部分费用（不含工具附加费与最低消费调整）
+	Cost float64 `json:"cost"`
+	// Items 分项明细（命中档位或整体公式为线性计价式时填充）：
+	// Σ Items.Cost = Cost（逐项四舍五入误差除外）；非线性公式为空，账单展示变量取值
+	Items []FormulaCostItem `json:"items,omitempty"`
+	// RuleMultiplier 命中请求规则乘数之积（Items 非空且 ≠1 时填充，已并入 Items.Multiplier）
+	RuleMultiplier float64 `json:"rule_multiplier,omitempty"`
 	// Error 求值失败原因（fail-safe 按预扣额结算时记录；正常为空）
 	Error string `json:"error,omitempty"`
+}
+
+// FormulaCostItem 表达式计费分项：数量 × 单价 × 乘数 = 费用
+type FormulaCostItem struct {
+	// Var 数量来源：公式变量名 / u:key / 空串（按次固定金额）
+	Var   string `json:"var"`
+	Label string `json:"label"`
+	// Unit 数量单位（tokens/张/秒/次；u:key 计量为空）
+	Unit     string  `json:"unit,omitempty"`
+	Quantity float64 `json:"quantity"`
+	// UnitPrice 单价（PerMillion=true 时为每 1M token 单价，否则为每单位单价）
+	UnitPrice  float64 `json:"unit_price"`
+	PerMillion bool    `json:"per_million,omitempty"`
+	// Multiplier 该项已乘的综合乘数（请求规则 × 租户 × 时段 × 附加乘数）
+	Multiplier float64 `json:"multiplier"`
+	Cost       float64 `json:"cost"`
 }
 
 // BillingSnapshotPerSecond 按秒计费命中明细
@@ -154,10 +188,8 @@ type BillingSnapshotRequestMeta struct {
 func GenerateBillingSnapshot(
 	pricing *PricingResult,
 	breakdown *CostBreakdown,
-	usage *rcommon.Usage,
 	settlement *SettlementResult,
 	info *rcommon.RelayInfo,
-	evalCtx *formula.EvalContext,
 ) *BillingSnapshot {
 	if pricing == nil || breakdown == nil {
 		return nil
@@ -184,7 +216,9 @@ func GenerateBillingSnapshot(
 			TimeMultiplier:   effectiveTimeMultiplier(pricing),
 			TimeRule:         pricing.TimeRuleName,
 		},
-		TokenCosts: buildTokenCosts(pricing, breakdown),
+	}
+	if pricing.BillingMode != BillingModeFormula {
+		snapshot.TokenCosts = buildTokenCosts(pricing, breakdown)
 	}
 
 	// 任务计费要素（仅任务结算路径填充）：附加乘数清单 + 按秒命中明细随快照留痕
@@ -215,30 +249,8 @@ func GenerateBillingSnapshot(
 		}
 	}
 
-	// 表达式计费命中明细（仅 formula 模式填充）：变量环境来自 breakdown 求值时
-	// 构建的 Env——此处重新按同一口径构建快照（computeCost 与快照的 usage 一致，
-	// 排除语义确定，重建结果与求值环境相同）。evalCtx 携带求值时的请求探测值与
-	// 时间基准（同步路径 = 结算求值上下文；任务路径 = 冻结重放上下文），nil 时
-	// 探针取空值（legacy 兜底路径）
 	if pricing.BillingMode == BillingModeFormula {
-		snap := &BillingSnapshotFormula{
-			Expr:     truncateFormulaExpr(pricing.Formula),
-			BaseExpr: truncateFormulaExpr(pricing.FormulaBase),
-			Rules:    breakdown.RequestRules,
-			Factor:   breakdown.FormulaFactor,
-			Error:    breakdown.FormulaError,
-		}
-		if pricing.FormulaBase == pricing.Formula {
-			snap.BaseExpr = "" // 无请求规则时 Expr 即基础公式，避免冗余
-		}
-		if compiled, err := formula.Compile(pricing.Formula); err == nil {
-			env := formula.FromUsage(breakdown.InputTokens, breakdown.OutputTokens,
-				breakdown.CacheReadTokens, breakdown.CacheCreation5mTokens, breakdown.CacheCreation1hTokens, usage)
-			env.ImageCount = breakdown.PerRequestCount // 与 computeCost 求值环境一致（图片张数）
-			env.Eval = evalCtx                         // 与求值同源（header/param/u 探测值进 vars）
-			snap.Vars = formula.SnapshotVars(compiled, env)
-		}
-		snapshot.Formula = snap
+		snapshot.Formula = buildFormulaSnapshot(pricing, breakdown)
 	}
 
 	// 结算信息
@@ -270,16 +282,78 @@ func GenerateBillingSnapshot(
 	return snapshot
 }
 
-// buildTokenCosts 构建各类 token 的费用明细。
-// Cost 分项为已乘综合倍率的实际费用（与 computeCost 的 InputCost/OutputCost 口径一致），
-// Multiplier 随行写入使「tokens/1M × unit_price × multiplier = cost」可自洽复算。
-// 任务路径的费用含 ratios 附加乘数（video_input 折扣等，经 RecalculateByTokens），
-// 乘数链必须把附加乘数一并纳入，否则算式两边在附加乘数 ≠ 1 时不相等。
-func buildTokenCosts(pricing *PricingResult, breakdown *CostBreakdown) map[string]TokenCostDetail {
-	// decimal 相乘后回转 float64：避免 0.85×1.2 在 IEEE double 下产生
-	// 1.0199999999999998 类尾差进入快照与展示算式
+// buildFormulaSnapshot 表达式计费明细：命中档位/变量取值/分项全部取自求值结果
+// （breakdown.FormulaDetail，与系数同一次求值），不事后重建变量环境——任务路径的
+// seconds/张数/u() 计量与同步路径的 token 口径不同，重建会导致变量与系数矛盾
+func buildFormulaSnapshot(pricing *PricingResult, breakdown *CostBreakdown) *BillingSnapshotFormula {
+	snap := &BillingSnapshotFormula{
+		Expr:     truncateFormulaExpr(pricing.Formula),
+		BaseExpr: truncateFormulaExpr(pricing.FormulaBase),
+		Rules:    breakdown.RequestRules,
+		Factor:   breakdown.FormulaFactor,
+		Error:    breakdown.FormulaError,
+	}
+	if pricing.FormulaBase == pricing.Formula {
+		snap.BaseExpr = "" // 无请求规则时 Expr 即基础公式，避免冗余
+	}
+	if snap.Error != "" {
+		return snap
+	}
+
+	million := decimal.NewFromInt(1_000_000)
+	mulD := combinedMultiplier(pricing, breakdown)
+	baseD := NewFromFloat(breakdown.FormulaFactor).Div(million)
+	snap.BaseCost = InexactFloat64(RoundMoney(baseD))
+	snap.Multiplier = InexactFloat64(mulD)
+	snap.Cost = InexactFloat64(RoundMoney(baseD.Mul(mulD)))
+
+	detail := breakdown.FormulaDetail
+	if detail == nil {
+		return snap
+	}
+	snap.Tiers = detail.Tiers
+	snap.Vars = detail.Vars
+	if detail.Items == nil {
+		return snap
+	}
+	ruleMul := detail.RuleMultiplier
+	if ruleMul <= 0 {
+		ruleMul = 1
+	}
+	if ruleMul != 1 {
+		snap.RuleMultiplier = ruleMul
+	}
+	itemMulD := NewFromFloat(ruleMul).Mul(mulD)
+	itemMul := InexactFloat64(itemMulD)
+	items := make([]FormulaCostItem, 0, len(detail.Items))
+	for _, it := range detail.Items {
+		perMillion := formula.IsTokenVar(it.Var)
+		unitPrice := it.Coef
+		if !perMillion {
+			// 非 token 计量（张/秒/次/u() 计量）按每单位单价展示：系数 / 1e6
+			unitPrice = InexactFloat64(NewFromFloat(it.Coef).Div(million))
+		}
+		cost := NewFromFloat(it.Quantity).Mul(NewFromFloat(it.Coef)).Div(million).Mul(itemMulD)
+		items = append(items, FormulaCostItem{
+			Var:        it.Var,
+			Label:      formula.VarLabel(it.Var),
+			Unit:       formula.VarUnit(it.Var),
+			Quantity:   it.Quantity,
+			UnitPrice:  unitPrice,
+			PerMillion: perMillion,
+			Multiplier: itemMul,
+			Cost:       InexactFloat64(RoundMoney(cost)),
+		})
+	}
+	snap.Items = items
+	return snap
+}
+
+// combinedMultiplier 计价之外的综合乘数链：租户 × 时段 × 附加乘数（任务路径 ratios）。
+// 附加乘数按键名排序后连乘：map 迭代序不确定，排序保证快照数值跨次一致；
+// decimal 相乘避免 0.85×1.2 类 IEEE 尾差进入快照与展示算式
+func combinedMultiplier(pricing *PricingResult, breakdown *CostBreakdown) decimal.Decimal {
 	mulD := NewFromFloat(pricing.TenantMultiplier).Mul(NewFromFloat(effectiveTimeMultiplier(pricing)))
-	// 附加乘数按键名排序后连乘：map 迭代序不确定，排序保证快照数值跨次一致
 	if breakdown.TaskFacts != nil && len(breakdown.TaskFacts.AppliedRatios) > 0 {
 		keys := make([]string, 0, len(breakdown.TaskFacts.AppliedRatios))
 		for k := range breakdown.TaskFacts.AppliedRatios {
@@ -290,7 +364,16 @@ func buildTokenCosts(pricing *PricingResult, breakdown *CostBreakdown) map[strin
 			mulD = mulD.Mul(NewFromFloat(breakdown.TaskFacts.AppliedRatios[k]))
 		}
 	}
-	mul := InexactFloat64(mulD)
+	return mulD
+}
+
+// buildTokenCosts 构建各类 token 的费用明细。
+// Cost 分项为已乘综合倍率的实际费用（与 computeCost 的 InputCost/OutputCost 口径一致），
+// Multiplier 随行写入使「tokens/1M × unit_price × multiplier = cost」可自洽复算。
+// 任务路径的费用含 ratios 附加乘数（video_input 折扣等，经 RecalculateByTokens），
+// 乘数链必须把附加乘数一并纳入，否则算式两边在附加乘数 ≠ 1 时不相等。
+func buildTokenCosts(pricing *PricingResult, breakdown *CostBreakdown) map[string]TokenCostDetail {
+	mul := InexactFloat64(combinedMultiplier(pricing, breakdown))
 
 	detail := func(tokens int, unitPrice, cost float64) TokenCostDetail {
 		return TokenCostDetail{Tokens: tokens, UnitPrice: unitPrice, Multiplier: mul, Cost: cost}
@@ -373,8 +456,12 @@ func GenerateBillingSummary(ctx context.Context, snapshot *BillingSnapshot) stri
 	}
 	lines = append(lines, "---")
 
-	// 按次计费特殊处理
-	if snapshot.Pricing.BillingMode == "per_request" {
+	isFormula := snapshot.Pricing.BillingMode == BillingModeFormula && snapshot.Formula != nil
+	if isFormula {
+		// 表达式计费：命中档位 + 分项明细（线性计价式）或变量取值 + 公式计价（非线性）。
+		// 摘要租户可见，不输出公式原文（原文仅在快照 formula.expr 供管理端查看）
+		lines = append(lines, formulaSummaryLines(snapshot.Formula, money)...)
+	} else if snapshot.Pricing.BillingMode == "per_request" {
 		// 按次单价取 PerRequestPrice（此前误用 EffectiveInputPrice = token 输入价，
 		// 纯按次模型恒为 0，摘要展示「按次单价: $0.000000」）
 		lines = append(lines, fmt.Sprintf("按次单价: %s", money(snapshot.Pricing.PerRequestPrice)))
@@ -463,23 +550,9 @@ func GenerateBillingSummary(ctx context.Context, snapshot *BillingSnapshot) stri
 			formatMultiplier(snapshot.PerSecond.Seconds), money(snapshot.PerSecond.UnitPrice), specPart))
 	}
 
-	// 表达式计费命中明细行（仅 formula 模式快照携带）：公式原文 + 命中系数，
-	// 费用 = 系数 / 1e6 × 下方乘数链；变量环境在快照 formula.vars 节供复算；
-	// 请求规则逐条列出命中状态（×乘数 ✓ / 未命中），解释系数中请求条件倍率的来源
-	if snapshot.Formula != nil {
-		if snapshot.Formula.Error != "" {
-			lines = append(lines, fmt.Sprintf("表达式计费: 求值失败（%s），按预扣额结算", snapshot.Formula.Error))
-		} else {
-			lines = append(lines, fmt.Sprintf("表达式计费: %s → 系数 %s（费用 = 系数/1M × 乘数链）",
-				snapshot.Formula.Expr, formatMultiplier(snapshot.Formula.Factor)))
-		}
-		for _, rule := range snapshot.Formula.Rules {
-			mark := "未命中"
-			if rule.Matched {
-				mark = fmt.Sprintf("命中 ×%s", formatMultiplier(rule.Multiplier))
-			}
-			lines = append(lines, fmt.Sprintf("请求规则: %s → %s", rule.Cond, mark))
-		}
+	// 表达式计费合计行：放在工具附加费之后，使「公式分项 + 工具费 = 实际费用」一行可核对
+	if isFormula {
+		lines = append(lines, formulaTotalLines(snapshot, money)...)
 	}
 
 	// 倍率说明行（所有计费模式通用）：租户/时段/附加乘数逐项列出，任一 ≠ 1 或存在附加乘数时展示。
@@ -498,8 +571,16 @@ func GenerateBillingSummary(ctx context.Context, snapshot *BillingSnapshot) stri
 		ratioKeys = append(ratioKeys, k)
 	}
 	sort.Strings(ratioKeys)
-	if (effTenant > 0 && effTenant != 1.0) || effTime != 1.0 || len(ratioKeys) > 0 {
+	// 表达式计费分项的行乘数含请求规则倍率，倍率构成里一并列出
+	formulaRuleMul := 0.0
+	if isFormula && len(snapshot.Formula.Items) > 0 && snapshot.Formula.RuleMultiplier > 0 && snapshot.Formula.RuleMultiplier != 1 {
+		formulaRuleMul = snapshot.Formula.RuleMultiplier
+	}
+	if (effTenant > 0 && effTenant != 1.0) || effTime != 1.0 || len(ratioKeys) > 0 || formulaRuleMul > 0 {
 		var parts []string
+		if formulaRuleMul > 0 {
+			parts = append(parts, fmt.Sprintf("请求规则(%s)", formatMultiplier(formulaRuleMul)))
+		}
 		if effTenant > 0 && effTenant != 1.0 {
 			parts = append(parts, fmt.Sprintf("租户倍率(%s)", formatMultiplier(effTenant)))
 		}
@@ -547,6 +628,140 @@ func GenerateBillingSummary(ctx context.Context, snapshot *BillingSnapshot) stri
 		result += line
 	}
 	return result
+}
+
+// formulaSummaryLines 表达式计费明细行（摘要租户可见，不含公式原文与求值错误细节）：
+//   - 命中档位（tier() 标记时）
+//   - 线性计价式：逐项「数量 × 单价 × 乘数 = 费用」
+//   - 非线性计价式：变量取值 + 公式计价 × 乘数 = 公式费用
+//   - 命中的请求规则（解释行乘数中的规则倍率；未命中规则不展示）
+func formulaSummaryLines(f *BillingSnapshotFormula, money func(float64) string) []string {
+	if f.Error != "" {
+		return []string{"表达式计费: 公式求值失败，按预扣额结算"}
+	}
+	var lines []string
+	if len(f.Tiers) > 0 {
+		lines = append(lines, "命中档位: "+strings.Join(f.Tiers, "、"))
+	}
+	if len(f.Items) > 0 {
+		for _, it := range f.Items {
+			multPart := ""
+			if it.Multiplier > 0 && it.Multiplier != 1.0 {
+				multPart = fmt.Sprintf(" × %s", formatMultiplier(it.Multiplier))
+			}
+			if it.PerMillion {
+				lines = append(lines, fmt.Sprintf("%s: %s tokens × %s/1M%s = %s",
+					it.Label, formatQuantity(it.Quantity), money(it.UnitPrice), multPart, money(it.Cost)))
+				continue
+			}
+			qty, per := formatQuantity(it.Quantity), ""
+			if it.Unit != "" {
+				qty += " " + it.Unit
+				per = "/" + it.Unit
+			}
+			lines = append(lines, fmt.Sprintf("%s: %s × %s%s%s = %s",
+				it.Label, qty, money(it.UnitPrice), per, multPart, money(it.Cost)))
+		}
+	} else {
+		if vars := formatFormulaVars(f.Vars); vars != "" {
+			lines = append(lines, "计费变量: "+vars)
+		}
+		lines = append(lines, fmt.Sprintf("公式计价: %s", money(f.BaseCost)))
+		if f.Multiplier > 0 && f.Multiplier != 1.0 {
+			lines = append(lines, fmt.Sprintf("公式费用: %s × %s = %s",
+				money(f.BaseCost), formatMultiplier(f.Multiplier), money(f.Cost)))
+		}
+	}
+	for i, rule := range f.Rules {
+		if rule.Matched {
+			lines = append(lines, fmt.Sprintf("请求规则: %s → 命中 ×%s", ruleSummaryText(rule, i), formatMultiplier(rule.Multiplier)))
+		}
+	}
+	return lines
+}
+
+// ruleSummaryText 请求规则的租户可见文案：优先中文描述（编译期从条件生成）；
+// 无法描述的手写条件不回退表达式原文（原文仅管理端快照可见），只标注序号
+func ruleSummaryText(rule formula.RequestRuleTrace, idx int) string {
+	if rule.Desc != "" {
+		return rule.Desc
+	}
+	return fmt.Sprintf("第 %d 条规则", idx+1)
+}
+
+// formulaTotalLines 表达式计费合计：公式分项（或公式费用）+ 工具附加费 = 实际费用；
+// 实际费用高于合计时为任务最低消费钳制（wrapSchemeCost），单独说明差额来源
+func formulaTotalLines(snapshot *BillingSnapshot, money func(float64) string) []string {
+	f := snapshot.Formula
+	if f.Error != "" {
+		return nil
+	}
+	var parts []string
+	sum := decimal.Zero
+	if len(f.Items) > 0 {
+		for _, it := range f.Items {
+			parts = append(parts, money(it.Cost))
+			sum = sum.Add(NewFromFloat(it.Cost))
+		}
+	} else {
+		parts = append(parts, money(f.Cost))
+		sum = sum.Add(NewFromFloat(f.Cost))
+	}
+	for _, item := range snapshot.ToolSurcharges {
+		parts = append(parts, money(item.Cost))
+		sum = sum.Add(NewFromFloat(item.Cost))
+	}
+	var lines []string
+	sumF := InexactFloat64(RoundMoney(sum))
+	if len(parts) > 1 {
+		lines = append(lines, fmt.Sprintf("合计: (%s) = %s", joinWithPlus(parts), money(sumF)))
+	}
+	if actual := snapshot.Settlement.ActualCost; actual > 0 && actual-sumF > 1e-7 {
+		lines = append(lines, fmt.Sprintf("最低消费: 合计 %s 不足最低消费，按 %s 计费", money(sumF), money(actual)))
+	}
+	return lines
+}
+
+// formatFormulaVars 变量取值展示（键排序保证文本稳定）：已知变量「标签 数值」，
+// 请求探测值（u:/header:/param:）「标签=值」
+func formatFormulaVars(vars map[string]any) string {
+	if len(vars) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(vars))
+	for k := range vars {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		var val string
+		switch v := vars[k].(type) {
+		case float64:
+			val = formatQuantity(v)
+		case nil:
+			val = "(空)"
+		default:
+			val = fmt.Sprint(v)
+			if val == "" {
+				val = "(空)"
+			}
+		}
+		if strings.Contains(k, ":") {
+			parts = append(parts, formula.VarLabel(k)+"="+val)
+		} else {
+			parts = append(parts, formula.VarLabel(k)+" "+val)
+		}
+	}
+	return strings.Join(parts, " · ")
+}
+
+// formatQuantity 数量展示：整数直出，小数去尾零
+func formatQuantity(v float64) string {
+	if v == float64(int64(v)) && v < 1e15 && v > -1e15 {
+		return formatInt(int(v))
+	}
+	return formatMultiplier(v)
 }
 
 // SnapshotToJSON 将快照序列化为 JSON 字符串。

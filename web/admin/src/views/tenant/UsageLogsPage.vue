@@ -283,7 +283,58 @@ function snapshotCombinedMultiplier(sp: any): number {
 	let combined = m.tenant_multiplier || 1
 	if (m.time_multiplier && m.time_multiplier > 0) combined *= m.time_multiplier
 	for (const [, v] of snapshotExtraRatios(sp)) combined *= v
+	// 表达式计费分项的行乘数含请求规则倍率（仅可拆分明细时后端填充 rule_multiplier）
+	if (sp?.formula?.items?.length && sp.formula.rule_multiplier > 0) combined *= sp.formula.rule_multiplier
 	return combined
+}
+
+// 表达式计费变量 → 展示名（与后端 formula.VarLabel 同步；u:/header:/param: 带来源前缀）
+const formulaVarLabels: Record<string, string> = {
+	p: '输入',
+	c: '输出',
+	ctx: '上下文',
+	cr: '缓存读取',
+	cc: '缓存创建(5分钟)',
+	cc1h: '缓存创建(1小时)',
+	img: '图片输入',
+	img_o: '图片输出',
+	ai: '音频输入',
+	ao: '音频输出',
+	rt: '推理输出',
+	image_count: '图片张数',
+	seconds: '计费秒数',
+}
+
+function formulaVarLabel(key: string): string {
+	if (formulaVarLabels[key]) return `${formulaVarLabels[key]} (${key})`
+	if (key.startsWith('u:')) return `计量 ${key.slice(2)}`
+	if (key.startsWith('header:')) return `请求头 ${key.slice(7)}`
+	if (key.startsWith('param:')) return `参数 ${key.slice(6)}`
+	return key
+}
+
+// 表达式计费变量取值 → 排序后的展示列表（数值千分位，空值标注）
+function formulaVarEntries(sp: any): Array<[string, string]> {
+	const vars = sp?.formula?.vars
+	if (!vars) return []
+	return Object.keys(vars)
+		.sort()
+		.map((k) => {
+			const v = vars[k]
+			if (v === null || v === undefined || v === '') return [k, '(空)']
+			return [k, typeof v === 'number' ? v.toLocaleString() : String(v)]
+		})
+}
+
+// 表达式计费分项算式：token 类按每 1M 单价，其余按每单位单价；乘数 ≠1 时显式进入算式
+function formulaItemText(item: any): string {
+	const mult = item.multiplier && item.multiplier !== 1 ? ` × ${item.multiplier}` : ''
+	const qty = (item.quantity || 0).toLocaleString()
+	if (item.per_million) {
+		return `${qty} tokens × ${formatBilling(item.unit_price || 0, 6)}/1M${mult}`
+	}
+	const unit = item.unit || ''
+	return `${qty}${unit ? ' ' + unit : ''} × ${formatBilling(item.unit_price || 0, 6)}${unit ? '/' + unit : ''}${mult}`
 }
 
 // 快照计费模式是否为 token 语义（token/tiered 展示每 1M 单价行；
@@ -308,6 +359,8 @@ function snapshotPerSecondEntries(sp: any): Array<[string, number]> {
 
 // 快照是否有 token 费用明细（视频等按秒/特殊任务 token 恒 0，隐藏空块）
 function snapshotHasTokenCosts(sp: any): boolean {
+	// 表达式计费没有逐类 token 单价，分项见「表达式费用计算」块
+	if (sp?.pricing?.billing_mode === 'formula') return false
 	return Object.values(sp?.token_costs || {}).some((tc: any) => (tc?.tokens || 0) > 0)
 }
 
@@ -1072,16 +1125,25 @@ const { exporting, exportFile } = useExport({
 										<span class="snapshot-label">按次单价</span>
 										<span class="snapshot-value">{{ formatBilling(snapshot.pricing.effective_input_price, 6) }}/次</span>
 									</div>
-									<!-- 表达式计费：命中系数 + 命中规则（完整变量环境见下方计算过程文本） -->
+									<!-- 表达式计费：命中档位 + 公式计价 + 请求规则（分项明细/变量取值见下方表达式费用块） -->
 									<template v-else-if="snapshot.formula">
-										<div class="snapshot-row">
-											<span class="snapshot-label">命中系数</span>
-											<span class="snapshot-value">{{ (snapshot.formula.factor || 0).toLocaleString() }} / 1M</span>
+										<div v-if="snapshot.formula.tiers && snapshot.formula.tiers.length > 0" class="snapshot-row">
+											<span class="snapshot-label">命中档位</span>
+											<span class="snapshot-value">{{ snapshot.formula.tiers.join('、') }}</span>
+										</div>
+										<div v-if="snapshot.formula.error" class="snapshot-row">
+											<span class="snapshot-label">求值失败</span>
+											<span class="snapshot-value text-danger">按预扣额结算</span>
+										</div>
+										<div v-else class="snapshot-row">
+											<span class="snapshot-label">公式计价</span>
+											<span class="snapshot-value">{{ formatBilling(snapshot.formula.base_cost ?? (snapshot.formula.factor || 0) / 1e6, 6) }}</span>
 										</div>
 										<div v-if="snapshot.formula.rules && snapshot.formula.rules.length > 0" class="snapshot-formula-rules">
 											<div v-for="(rule, i) in snapshot.formula.rules" :key="i" class="snapshot-rule-row">
 												<ATag :color="rule.matched ? 'green' : 'gray'" size="small">{{ rule.matched ? `×${rule.multiplier}` : '×1 未命中' }}</ATag>
-												<span class="snapshot-rule-cond">{{ rule.cond }}</span>
+												<!-- 中文描述优先（旧快照/无法描述的条件回退表达式原文），原文悬浮可见 -->
+												<span class="snapshot-rule-cond" :title="rule.cond">{{ rule.desc || rule.cond }}</span>
 											</div>
 										</div>
 									</template>
@@ -1120,6 +1182,13 @@ const { exporting, exportFile } = useExport({
 											{{ snapshot.multipliers.time_multiplier.toFixed(4) }}x<span v-if="snapshot.multipliers.time_rule"> · {{ snapshot.multipliers.time_rule }}</span>
 										</span>
 									</div>
+									<!-- 表达式计费请求规则倍率：命中规则乘数之积，已并入分项行乘数 -->
+									<div v-if="snapshot.formula && snapshot.formula.rule_multiplier && snapshot.formula.rule_multiplier !== 1" class="snapshot-row">
+										<span class="snapshot-label">请求规则倍率</span>
+										<span class="snapshot-value" :class="snapshot.formula.rule_multiplier < 1 ? 'text-success' : ''">
+											{{ snapshot.formula.rule_multiplier.toFixed(4) }}x
+										</span>
+									</div>
 									<!-- 附加乘数清单（任务路径）：视频输入折扣、画质/时长倍率、参数倍率等，=1 不显示；参数倍率附命中规则说明 -->
 									<div v-for="[key, ratio] in snapshotExtraRatios(snapshot)" :key="key" class="snapshot-row">
 										<span class="snapshot-label">{{ ratioMultiplierLabels[key] || key }}</span>
@@ -1133,6 +1202,35 @@ const { exporting, exportFile } = useExport({
 										<span class="snapshot-value" :class="snapshotCombinedMultiplier(snapshot) < 1 ? 'text-success' : ''">
 											{{ snapshotCombinedMultiplier(snapshot).toFixed(4) }}x
 										</span>
+									</div>
+								</div>
+							</div>
+
+							<!-- 表达式计费：分项明细（线性计价式）或变量取值 + 公式计价（非线性）；公式原文仅管理端可见 -->
+							<div v-if="snapshot.formula && !snapshot.formula.error" class="snapshot-block snapshot-block-full">
+								<div class="snapshot-block-title">表达式费用计算</div>
+								<div class="snapshot-block-body">
+									<template v-if="snapshot.formula.items && snapshot.formula.items.length > 0">
+										<div v-for="(item, idx) in snapshot.formula.items" :key="idx" class="snapshot-row">
+											<span class="snapshot-label">{{ item.label }}</span>
+											<span class="snapshot-value">{{ formulaItemText(item) }} = <strong>{{ formatBilling(item.cost || 0, 6) }}</strong></span>
+										</div>
+									</template>
+									<template v-else>
+										<div v-for="[key, val] in formulaVarEntries(snapshot)" :key="key" class="snapshot-row">
+											<span class="snapshot-label">{{ formulaVarLabel(key) }}</span>
+											<span class="snapshot-value">{{ val }}</span>
+										</div>
+										<div class="snapshot-row">
+											<span class="snapshot-label">公式费用</span>
+											<span class="snapshot-value">
+												{{ formatBilling(snapshot.formula.base_cost || 0, 6) }}<span v-if="snapshot.formula.multiplier && snapshot.formula.multiplier !== 1">&nbsp;&times;&nbsp;{{ snapshot.formula.multiplier }}</span> = <strong>{{ formatBilling(snapshot.formula.cost || 0, 6) }}</strong>
+											</span>
+										</div>
+									</template>
+									<div class="snapshot-formula-expr">
+										<div class="snapshot-label">计费公式</div>
+										<code class="snapshot-rule-cond">{{ snapshot.formula.base_expr || snapshot.formula.expr }}</code>
 									</div>
 								</div>
 							</div>
@@ -1575,6 +1673,15 @@ const { exporting, exportFile } = useExport({
 	margin-top: 4px;
 }
 
+.snapshot-formula-expr {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin-top: 8px;
+	padding-top: 8px;
+	border-top: 1px dashed var(--color-border-2);
+}
+
 .snapshot-rule-row {
 	display: flex;
 	align-items: center;
@@ -1621,6 +1728,7 @@ const { exporting, exportFile } = useExport({
 	word-break: break-all;
 }
 .text-success { color: #00b42a !important; }
+.text-danger { color: #f53f3f !important; }
 .text-warning { color: #ff7d00 !important; }
 
 /* 统计汇总样式 */

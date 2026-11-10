@@ -64,6 +64,12 @@ func ResolveFormulaRequest(c *formula.Compiled, headers http.Header, body []byte
 	return req
 }
 
+// FormulaTimeLocation 公式时间函数省略时区参数时的默认时区（= 平台计费时区，
+// 与线上求值同源；管理端试算构造上下文用）
+func FormulaTimeLocation(ctx context.Context) *time.Location {
+	return pricingTimeLocation(ctx)
+}
+
 // NewFormulaEvalContext 同步路径求值上下文：时间函数基准 = at（预扣传当前时刻、
 // 结算传受理时刻 billAt，两时点几乎重合且以 billAt 为准，跨小时边界不漂移），
 // 默认时区 = 平台计费时区（与时段定价共用 pricing_time_timezone 配置），

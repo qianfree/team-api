@@ -52,14 +52,14 @@ func TestSnapshotToJSON_ValidSnapshot(t *testing.T) {
 }
 
 func TestGenerateBillingSnapshot_NilPricing(t *testing.T) {
-	result := GenerateBillingSnapshot(nil, &CostBreakdown{}, nil, nil, nil, nil)
+	result := GenerateBillingSnapshot(nil, &CostBreakdown{}, nil, nil)
 	if result != nil {
 		t.Error("expected nil when pricing is nil")
 	}
 }
 
 func TestGenerateBillingSnapshot_NilBreakdown(t *testing.T) {
-	result := GenerateBillingSnapshot(&PricingResult{}, nil, nil, nil, nil, nil)
+	result := GenerateBillingSnapshot(&PricingResult{}, nil, nil, nil)
 	if result != nil {
 		t.Error("expected nil when breakdown is nil")
 	}
@@ -94,7 +94,7 @@ func TestGenerateBillingSnapshot_BasicFields(t *testing.T) {
 		RefundAmount:    0.00875,
 	}
 
-	snapshot := GenerateBillingSnapshot(pricing, breakdown, nil, settlement, nil, nil)
+	snapshot := GenerateBillingSnapshot(pricing, breakdown, settlement, nil)
 	if snapshot == nil {
 		t.Fatal("expected non-nil snapshot")
 	}
@@ -135,7 +135,7 @@ func TestGenerateBillingSnapshot_CachePrices(t *testing.T) {
 		CacheCreationCost:   0.00003,
 	}
 
-	snapshot := GenerateBillingSnapshot(pricing, breakdown, nil, nil, nil, nil)
+	snapshot := GenerateBillingSnapshot(pricing, breakdown, nil, nil)
 	if snapshot.CachePrices == nil {
 		t.Fatal("expected CachePrices to be populated when cache tokens > 0")
 	}
@@ -159,7 +159,7 @@ func TestGenerateBillingSnapshot_NoCachePrices(t *testing.T) {
 		OutputTokens: 500,
 	}
 
-	snapshot := GenerateBillingSnapshot(pricing, breakdown, nil, nil, nil, nil)
+	snapshot := GenerateBillingSnapshot(pricing, breakdown, nil, nil)
 	if snapshot.CachePrices != nil {
 		t.Error("expected CachePrices to be nil when no cache tokens")
 	}
@@ -270,7 +270,7 @@ func TestGenerateBillingSnapshot_WithRelayInfo(t *testing.T) {
 		},
 	}
 
-	snapshot := GenerateBillingSnapshot(pricing, breakdown, nil, nil, info, nil)
+	snapshot := GenerateBillingSnapshot(pricing, breakdown, nil, info)
 	if snapshot.RequestMeta.RequestedModel != "gpt-4o" {
 		t.Errorf("RequestedModel = %q, want gpt-4o", snapshot.RequestMeta.RequestedModel)
 	}
@@ -302,7 +302,7 @@ func TestGenerateBillingSnapshot_SchemeField(t *testing.T) {
 		PerSecondPrices:  map[string]float64{"768P": 0.35, "2K": 0.6},
 		Scheme:           SchemeMiniMaxMaterial,
 	}
-	snapshot := GenerateBillingSnapshot(pricing, &CostBreakdown{TotalCost: 2.1}, nil, nil, nil, nil)
+	snapshot := GenerateBillingSnapshot(pricing, &CostBreakdown{TotalCost: 2.1}, nil, nil)
 	if snapshot == nil {
 		t.Fatal("expected non-nil snapshot")
 	}
@@ -331,7 +331,7 @@ func TestGenerateBillingSnapshot_SchemeField(t *testing.T) {
 	// token 模式快照不带矩阵（omitempty，旧结构零变化）
 	tokenSnapshot := GenerateBillingSnapshot(&PricingResult{
 		BillingMode: "token", InputPrice: 0.5, OutputPrice: 1.5, TenantMultiplier: 1.0,
-	}, &CostBreakdown{}, nil, nil, nil, nil)
+	}, &CostBreakdown{}, nil, nil)
 	if tokenSnapshot.Pricing.PerSecondPrices != nil {
 		t.Errorf("token snapshot should not carry per_second_prices: %+v", tokenSnapshot.Pricing.PerSecondPrices)
 	}
@@ -557,7 +557,7 @@ func TestGenerateBillingSnapshot_TimeMultipliers(t *testing.T) {
 	}
 	breakdown := &CostBreakdown{InputTokens: 100, OutputTokens: 50}
 
-	snapshot := GenerateBillingSnapshot(pricing, breakdown, nil, nil, nil, nil)
+	snapshot := GenerateBillingSnapshot(pricing, breakdown, nil, nil)
 	assertFloat(t, snapshot.Multipliers.TimeMultiplier, 0.5, "TimeMultiplier")
 	if snapshot.Multipliers.TimeRule != "闲时" {
 		t.Errorf("TimeRule = %q, want 闲时", snapshot.Multipliers.TimeRule)
@@ -565,7 +565,7 @@ func TestGenerateBillingSnapshot_TimeMultipliers(t *testing.T) {
 
 	// 时段乘数零值兜底：快照记录 1 而非 0
 	pricing.TimeMultiplier = 0
-	snapshot = GenerateBillingSnapshot(pricing, breakdown, nil, nil, nil, nil)
+	snapshot = GenerateBillingSnapshot(pricing, breakdown, nil, nil)
 	assertFloat(t, snapshot.Multipliers.TimeMultiplier, 1.0, "TimeMultiplier (zero fallback)")
 }
 
@@ -621,10 +621,10 @@ func TestSummaryEquationConsistency(t *testing.T) {
 	usage := &rcommon.Usage{PromptTokens: 1_000_000, CompletionTokens: 500_000}
 	bd := computeCost(pricing, usage.PromptTokens, usage.CompletionTokens, usage, 1)
 
-	snap := GenerateBillingSnapshot(pricing, bd, usage, &SettlementResult{
+	snap := GenerateBillingSnapshot(pricing, bd, &SettlementResult{
 		PreDeductAmount: 6.0,
 		ActualCost:      bd.TotalCost,
-	}, nil, nil)
+	}, nil)
 	text := GenerateBillingSummary(context.Background(), snap)
 
 	// 1. 明细行算式成立：tokens × 原价 × 综合倍率 = 分项费用（0.9 × 1.2 = 1.08）
@@ -674,7 +674,7 @@ func TestSummaryNoDiscountPlain(t *testing.T) {
 	}
 	usage := &rcommon.Usage{PromptTokens: 1_000_000, CompletionTokens: 500_000}
 	bd := computeCost(pricing, usage.PromptTokens, usage.CompletionTokens, usage, 1)
-	snap := GenerateBillingSnapshot(pricing, bd, usage, &SettlementResult{ActualCost: bd.TotalCost}, nil, nil)
+	snap := GenerateBillingSnapshot(pricing, bd, &SettlementResult{ActualCost: bd.TotalCost}, nil)
 	text := GenerateBillingSummary(context.Background(), snap)
 
 	if !strings.Contains(text, "输入: 1000000 tokens × $3.000000/1M = $3.000000") {
@@ -748,7 +748,7 @@ func TestGenerateBillingSnapshot_CachePrices1h(t *testing.T) {
 	}
 	breakdown := &CostBreakdown{CacheCreationTokens: 100, CacheCreation1hTokens: 100}
 
-	snapshot := GenerateBillingSnapshot(pricing, breakdown, nil, nil, nil, nil)
+	snapshot := GenerateBillingSnapshot(pricing, breakdown, nil, nil)
 	if snapshot.CachePrices == nil {
 		t.Fatal("expected CachePrices")
 	}

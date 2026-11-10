@@ -731,13 +731,15 @@ func computeCostByMode(pricing *PricingResult, inputTokens, outputTokens int, us
 		in := formula.FromUsage(baseInputTokens, outputTokens, cacheReadTokens, cacheCreation5mTokens, cacheCreation1hTokens, usage)
 		in.ImageCount = count
 		in.Eval = ec
-		factor, rules, err := formula.Run(compiled, in)
+		detail, err := formula.RunDetail(compiled, in)
 		if err != nil {
 			bd.FormulaError = err.Error()
 			return bd
 		}
+		factor := detail.Factor
 		bd.FormulaFactor = factor
-		bd.RequestRules = rules
+		bd.RequestRules = detail.Rules
+		bd.FormulaDetail = detail
 		mul := NewFromFloat(pricing.TenantMultiplier).Mul(NewFromFloat(effectiveTimeMultiplier(pricing)))
 		totalD := NewFromFloat(factor).Div(decimal.NewFromInt(1_000_000)).Mul(mul)
 		bd.BaseCost = InexactFloat64(RoundMoney(NewFromFloat(factor).Div(decimal.NewFromInt(1_000_000))))
@@ -969,6 +971,9 @@ type CostBreakdown struct {
 	// 请求规则命中表（formula 模式：header()/param()/时间条件倍率的埋点结果，
 	// 随快照留痕供账单解释「本次请求命中了哪些倍率规则」）
 	RequestRules []formula.RequestRuleTrace
+	// FormulaDetail 公式求值完整结果（命中档位、变量取值、分项明细），与 FormulaFactor
+	// 出自同一次求值——快照直接消费，不再事后重建变量环境
+	FormulaDetail *formula.Result
 
 	// 工具调用附加费（联网搜索/云端工具按次收费，叠加在任何计费模式之上）。
 	// ToolItems 为逐工具明细（次数/单价/费用，随快照留痕），ToolSurcharge 为

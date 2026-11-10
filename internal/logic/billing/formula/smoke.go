@@ -122,7 +122,27 @@ func Evaluate(src string, custom []FormulaInput) (*Compiled, []EvaluateResult, e
 			vectors[i] = SmokeVector{Name: fmt.Sprintf("样例 %d", i+1), In: in}
 		}
 	}
+	return evaluateVectors(c, vectors)
+}
 
+// EvaluateWithContext 预置向量套用同一请求上下文（模拟请求的请求头/请求体/时间）试算，
+// 保留预置样例名——管理端据此查看请求规则在指定请求下对各类用量的命中情况
+func EvaluateWithContext(src string, ec *EvalContext) (*Compiled, []EvaluateResult, error) {
+	c, err := Compile(src)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := validateUKeys(c); err != nil {
+		return c, nil, err
+	}
+	vectors := SmokeVectors()
+	for i := range vectors {
+		vectors[i].In.Eval = ec
+	}
+	return evaluateVectors(c, vectors)
+}
+
+func evaluateVectors(c *Compiled, vectors []SmokeVector) (*Compiled, []EvaluateResult, error) {
 	results := make([]EvaluateResult, 0, len(vectors))
 	for _, v := range vectors {
 		factor, rules, err := Run(c, v.In)

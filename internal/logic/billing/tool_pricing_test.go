@@ -266,7 +266,7 @@ func TestSnapshot_ToolSurchargesSection(t *testing.T) {
 		ActualCost:        breakdown.TotalCost,
 		ToolSurchargeCost: breakdown.ToolSurcharge,
 	}
-	snapshot := GenerateBillingSnapshot(pricing, breakdown, usage, settlement, nil, nil)
+	snapshot := GenerateBillingSnapshot(pricing, breakdown, settlement, nil)
 	if len(snapshot.ToolSurcharges) != 1 {
 		t.Fatalf("ToolSurcharges = %+v, want 1 item", snapshot.ToolSurcharges)
 	}
@@ -283,7 +283,7 @@ func TestSnapshot_ToolSurchargesSection(t *testing.T) {
 
 	// 无工具计费：快照省略该节（旧快照兼容）
 	plain := computeCost(pricing, 1000, 500, &rcommon.Usage{PromptTokens: 1000, CompletionTokens: 500}, 1)
-	snapshot2 := GenerateBillingSnapshot(pricing, plain, nil, nil, nil, nil)
+	snapshot2 := GenerateBillingSnapshot(pricing, plain, nil, nil)
 	if snapshot2.ToolSurcharges != nil {
 		t.Errorf("ToolSurcharges should be omitted without tool billing, got %+v", snapshot2.ToolSurcharges)
 	}

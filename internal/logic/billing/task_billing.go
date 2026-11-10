@@ -340,7 +340,7 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 				SupplementAmount: supplementAmt,
 				DuplicateSkip:    true,
 			}
-			attachTaskSnapshot(ctx, result, pricing, breakdown, modelName, ratios)
+			attachTaskSnapshot(ctx, result, pricing, breakdown, modelName)
 			return result, nil
 		}
 		return nil, err
@@ -371,7 +371,7 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 	} else if diff.LessThan(threshold.Neg()) {
 		result.RefundAmount = InexactFloat64(diff.Neg())
 	}
-	attachTaskSnapshot(ctx, result, pricing, breakdown, modelName, ratios)
+	attachTaskSnapshot(ctx, result, pricing, breakdown, modelName)
 
 	return result, nil
 }
@@ -380,8 +380,8 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 // 正常结算与幂等重放（DuplicateSkip）共用：重放路径可能触发用量日志补写，
 // 两类结果携带的计费信息必须同源，否则补写的日志与首写的口径分叉。
 // pricing 为 nil（取价失败）时不附加，调用方已留痕。
-// ratios 携带冻结的公式请求探测值（formula 模式快照 vars 复算用）
-func attachTaskSnapshot(ctx context.Context, result *common.SettlementResult, pricing *PricingResult, breakdown *CostBreakdown, modelName string, ratios map[string]any) {
+// formula 模式的变量取值随 breakdown.FormulaDetail 携带（与结算求值同源）
+func attachTaskSnapshot(ctx context.Context, result *common.SettlementResult, pricing *PricingResult, breakdown *CostBreakdown, modelName string) {
 	if pricing == nil {
 		return
 	}
@@ -392,7 +392,7 @@ func attachTaskSnapshot(ctx context.Context, result *common.SettlementResult, pr
 		RefundAmount:     result.RefundAmount,
 		SupplementAmount: result.SupplementAmount,
 	}
-	snapshot := GenerateBillingSnapshot(pricing, breakdown, nil, internalSettlement, nil, taskFormulaEvalContext(ratios))
+	snapshot := GenerateBillingSnapshot(pricing, breakdown, internalSettlement, nil)
 	snapshot.RequestMeta.RequestedModel = modelName
 	result.BillingSnapshot = SnapshotToJSON(snapshot)
 	result.BillingSummary = GenerateBillingSummary(ctx, snapshot)
@@ -532,9 +532,10 @@ func buildTaskCostBreakdown(ctx context.Context, pricing *PricingResult, actualC
 			// 请求规则命中（编译缓存，开销可忽略）；失败时 FactorError 留痕、金额不变
 			in := taskFormulaInput(ratios, usage)
 			if compiled, err := formula.Compile(pricing.Formula); err == nil {
-				if factor, rules, rerr := formula.Run(compiled, in); rerr == nil {
-					bd.FormulaFactor = factor
-					bd.RequestRules = rules
+				if detail, rerr := formula.RunDetail(compiled, in); rerr == nil {
+					bd.FormulaFactor = detail.Factor
+					bd.RequestRules = detail.Rules
+					bd.FormulaDetail = detail
 				} else {
 					bd.FormulaError = rerr.Error()
 				}

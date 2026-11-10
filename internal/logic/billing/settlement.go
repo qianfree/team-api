@@ -413,7 +413,7 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 
 	var snapshotJSON, summaryText string
 	if pricingResult != nil {
-		snapshot := GenerateBillingSnapshot(pricingResult, breakdown, usage, settlementResult, relayInfo, evalCtx)
+		snapshot := GenerateBillingSnapshot(pricingResult, breakdown, settlementResult, relayInfo)
 		snapshotJSON = SnapshotToJSON(snapshot)
 		summaryText = GenerateBillingSummary(ctx, snapshot)
 		settlementResult.BillingMode = pricingResult.BillingMode

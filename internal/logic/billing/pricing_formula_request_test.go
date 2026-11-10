@@ -160,7 +160,7 @@ func TestTaskFormulaFreezeReplayConsistency(t *testing.T) {
 }
 
 // TestSnapshotFormulaRules 快照与摘要留痕：formula 节含基础公式/规则命中/探测值 vars，
-// 摘要文本含「请求规则: … 命中」行
+// 摘要文本只含命中规则行（未命中规则与公式原文不进租户可见摘要）
 func TestSnapshotFormulaRules(t *testing.T) {
 	pricing := formulaRequestPricing(t)
 	usage := &rcommon.Usage{PromptTokens: 1000, CompletionTokens: 200}
@@ -169,7 +169,7 @@ func TestSnapshotFormulaRules(t *testing.T) {
 	ec := testEvalContext(pricing, headers, []byte(`{"service_tier":"std"}`), time.Now())
 
 	bd := computeCostWithEval(pricing, usage.PromptTokens, usage.CompletionTokens, usage, 1, ec, nil)
-	snap := GenerateBillingSnapshot(pricing, bd, usage, &SettlementResult{ActualCost: bd.TotalCost}, nil, ec)
+	snap := GenerateBillingSnapshot(pricing, bd, &SettlementResult{ActualCost: bd.TotalCost}, nil)
 	if snap.Formula == nil {
 		t.Fatalf("formula 节缺失")
 	}
@@ -191,8 +191,11 @@ func TestSnapshotFormulaRules(t *testing.T) {
 	if !strings.Contains(summary, "请求规则:") || !strings.Contains(summary, "命中 ×2") {
 		t.Fatalf("摘要缺少命中规则行:\n%s", summary)
 	}
-	if !strings.Contains(summary, "未命中") {
-		t.Fatalf("摘要应含未命中规则:\n%s", summary)
+	if strings.Contains(summary, "未命中") {
+		t.Fatalf("摘要不应含未命中规则:\n%s", summary)
+	}
+	if strings.Contains(summary, pricing.FormulaBase) {
+		t.Fatalf("摘要不应含公式原文:\n%s", summary)
 	}
 }
 

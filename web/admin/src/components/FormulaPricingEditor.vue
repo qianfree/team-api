@@ -3,6 +3,7 @@ import { ref, watch, computed } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import request from '@/utils/request'
 import { currencySymbol } from '@/composables/useCurrency'
+import RequestRulesEditor from './RequestRulesEditor.vue'
 
 // 表达式计费编辑器（billing_mode=formula）：价格完全由公式决定——
 // 基础公式从 usage 变量环境求出「每 1M token 口径的价格系数」，金额 = 系数 / 1e6 × 租户乘数；
@@ -61,12 +62,12 @@ const usedVars = ref<string[]>([])
 
 // 变量速查表（与后端 billing/formula 包 knownVars 同步维护）
 const varDocs: Array<{ name: string; desc: string }> = [
-	{ name: 'p', desc: '纯文本输入 token（公式单独计价的缓存/图片/音频已自动扣除）' },
+	{ name: 'p', desc: '输入 token（未单独计价的缓存/图片/音频都计入 p 按输入价计；写了 cr/cc/img/ai 后对应部分自动从 p 扣除）' },
 	{ name: 'c', desc: '输出 token（引用 rt/img_o/ao 时自动扣除对应部分）' },
 	{ name: 'ctx', desc: '完整输入上下文 token（含缓存，用于阶梯档位条件判断）' },
 	{ name: 'cr', desc: '缓存读取（命中）token' },
-	{ name: 'cc', desc: '缓存写入 5m token（Claude ephemeral_5m / OpenAI cache_write）' },
-	{ name: 'cc1h', desc: '缓存写入 1h token（Claude ephemeral_1h）' },
+	{ name: 'cc', desc: '缓存写入 5m token（Claude ephemeral_5m / OpenAI cache_write）；未写 cc1h 时 1h 写入按 cc 单价 ×1.6 计' },
+	{ name: 'cc1h', desc: '缓存写入 1h token（Claude ephemeral_1h）；仅当 1h 写入价不是 cc 的 1.6 倍时才需单独写' },
 	{ name: 'img / img_o', desc: '图片输入 / 输出 token' },
 	{ name: 'ai / ao', desc: '音频输入 / 输出 token' },
 	{ name: 'rt', desc: '推理输出 token（reasoning）' },
@@ -77,27 +78,25 @@ const varDocs: Array<{ name: string; desc: string }> = [
 // 已注册 usage facts key（校验接口下发 known_fact_keys；空 = 未请求过校验）
 const knownFactKeys = ref<Record<string, string>>({})
 
-// 示例模板（点击填充到输入框）
+// 示例模板（点击填充到输入框）。多档位一律用 tier("档位名", 计价式) 标记：
+// 账单据此展示命中档位，计价式为「变量 × 单价」之和时还能拆出逐项费用明细
 const formulaTemplates: Array<{ label: string; expr: string }> = [
-	{ label: '纯 token 单价', expr: 'p * 5 + c * 20' },
-	{ label: '缓存三件套', expr: 'p * 5 + cr * 1.25 + cc * 12.5 + cc1h * 25 + c * 50' },
-	{ label: '推理 token 差价', expr: 'c * 10 + rt * 30' },
-	{ label: '音频多模态', expr: 'p * 5 + img * 8 + ai * 10 + ao * 20 + c * 30' },
-	{ label: '图片按张计费', expr: 'fixed(0.04) * image_count' },
-	{ label: '长上下文档位', expr: 'ctx <= 128000 ? p * 5 + c * 20 : p * 10 + c * 40' },
-	{ label: 'token + 按次附加费', expr: 'p * 5 + c * 20 + fixed(0.001)' },
-	{ label: '语音按秒计费', expr: 'u("audio_seconds") * 400000' },
-	{ label: '视频任务按秒', expr: 'fixed(0.4) * seconds' },
-]
-
-// 请求规则模板（填充到规则输入框，多个因子直接相乘）
-const ruleTemplates: Array<{ label: string; expr: string }> = [
-	{ label: '服务档位加价', expr: 'param("service_tier") == "priority" ? 2 : 1' },
-	{ label: 'beta 头加价', expr: 'header("anthropic-beta") has "fast-mode" ? 6 : 1' },
-	{ label: '夜间折扣', expr: 'hour("Asia/Shanghai") >= 23 || hour("Asia/Shanghai") < 8 ? 0.8 : 1' },
-	{ label: '周末折扣', expr: 'weekday("Asia/Shanghai") == 0 || weekday("Asia/Shanghai") == 6 ? 0.9 : 1' },
-	{ label: '长视频档位加价', expr: 'param("duration") >= 10 ? 1.5 : 1' },
-	{ label: '分辨率加价', expr: 'param("resolution") == "1080p" ? 2 : 1' },
+	{ label: '纯 token 单价', expr: 'tier("base", p * 5 + c * 20)' },
+	{ label: '含缓存计价', expr: 'tier("base", p * 3 + c * 15 + cr * 0.3 + cc * 3.75)' },
+	{ label: '推理 token 差价', expr: 'tier("base", p * 2 + c * 10 + rt * 30)' },
+	{ label: '音频多模态', expr: 'tier("base", p * 5 + c * 30 + img * 8 + ai * 10 + ao * 20)' },
+	{ label: '图片按张计费', expr: 'tier("per_image", fixed(0.04) * image_count)' },
+	{
+		label: '长上下文两档',
+		expr: 'ctx <= 200000\n  ? tier("standard", p * 3 + c * 15 + cr * 0.3 + cc * 3.75)\n  : tier("long_context", p * 6 + c * 22.5 + cr * 0.6 + cc * 7.5)',
+	},
+	{
+		label: '三档阶梯',
+		expr: 'ctx <= 32000\n  ? tier("short", p * 1.2 + c * 6 + cr * 0.24 + cc * 1.5)\n  : (ctx <= 128000\n    ? tier("mid", p * 2.4 + c * 12 + cr * 0.48 + cc * 3)\n    : tier("long", p * 3 + c * 15 + cr * 0.6 + cc * 3.75))',
+	},
+	{ label: 'token + 按次附加费', expr: 'tier("base", p * 5 + c * 20 + fixed(0.001))' },
+	{ label: '语音按秒计费', expr: 'tier("per_second", fixed(0.4) * u("audio_seconds"))' },
+	{ label: '视频任务按秒', expr: 'tier("per_second", fixed(0.4) * seconds)' },
 ]
 
 function applyTemplate(expr: string | number | boolean | Record<string, any> | Array<string | number | boolean | Record<string, any>>) {
@@ -106,86 +105,52 @@ function applyTemplate(expr: string | number | boolean | Record<string, any> | A
 	Message.info('模板已填充，可编辑后点「校验并试算」')
 }
 
-function applyRuleTemplate(expr: string | number | boolean | Record<string, any> | Array<string | number | boolean | Record<string, any>>) {
-	if (typeof expr !== 'string') return
-	rulesText.value = rulesText.value.trim() ? `${rulesText.value.trim()} * ${expr}` : expr
-	Message.info('规则因子已追加')
-}
+// ============ 模拟请求（试算请求规则命中） ============
+// 时间按浏览器本地时间选择，提交时转 RFC3339；留空 = 当前时刻。
+// 请求头每行「名称: 值」，请求体为 JSON；三者套用到全部预置样例
+const simAt = ref('')
+const simHeadersText = ref('')
+const simBodyText = ref('')
 
-// ============ 请求规则可视化构建器（生成因子追加到规则表达式，textarea 为唯一真相） ============
-type RuleSource = 'param' | 'header' | 'hour' | 'weekday'
-type RuleRow = {
-	source: RuleSource
-	key: string // param 路径 / header 键 / 时间函数时区（可空 = 平台默认）
-	mode: string // eq / contains / gt / gte / lt / lte
-	value: string
-	multiplier: number
-}
-
-const sourceOptions = [
-	{ label: '请求体参数 param()', value: 'param' },
-	{ label: '请求头 header()', value: 'header' },
-	{ label: '小时 hour()', value: 'hour' },
-	{ label: '星期 weekday()', value: 'weekday' },
-]
-const modeOptionsText = [
-	{ label: '等于', value: 'eq' },
-	{ label: '包含', value: 'contains' },
-]
-const modeOptionsAll = [...modeOptionsText, { label: '大于', value: 'gt' }, { label: '大于等于', value: 'gte' }, { label: '小于', value: 'lt' }, { label: '小于等于', value: 'lte' }]
-
-function rowModes(_row: RuleRow) {
-	// param 值可能是字符串或数字，全量提供；时间函数仅数值比较有意义但保持一致选项
-	return modeOptionsAll
-}
-
-function newRuleRow(): RuleRow {
-	return { source: 'param', key: '', mode: 'eq', value: '', multiplier: 2 }
-}
-
-// 生成单行因子表达式（与后端引擎语法一致；数值比较不带引号）
-function buildRowExpr(row: RuleRow): string | null {
-	const probe =
-		row.source === 'param'
-			? `param(${JSON.stringify(row.key)})`
-			: row.source === 'header'
-				? `header(${JSON.stringify(row.key)})`
-				: `${row.source}(${JSON.stringify(row.key || '')})`
-	let cond: string | null = null
-	const isNumeric = ['gt', 'gte', 'lt', 'lte'].includes(row.mode)
-	const valueStr = isNumeric ? row.value.trim() : JSON.stringify(row.value)
-	if (row.source === 'param' && !row.key) return null
-	if (row.source === 'header' && !row.key) return null
-	if (row.value === '' && row.mode !== 'contains') return null
-	switch (row.mode) {
-		case 'eq':
-			cond = `${probe} == ${valueStr}`
-			break
-		case 'contains':
-			if (!row.value) return null
-			cond = `has(${probe}, ${JSON.stringify(row.value)})`
-			break
-		case 'gt':
-		case 'gte':
-		case 'lt':
-		case 'lte':
-			if (!/^-?\d+(\.\d+)?$/.test(row.value.trim())) return null
-			cond = `${probe} ${ { gt: '>', gte: '>=', lt: '<', lte: '<=' }[row.mode] } ${row.value.trim()}`
-			break
+function parseSimHeaders(text: string): Record<string, string> {
+	const headers: Record<string, string> = {}
+	for (const line of text.split('\n')) {
+		const idx = line.indexOf(':')
+		if (idx <= 0) continue
+		const name = line.slice(0, idx).trim()
+		if (name) headers[name] = line.slice(idx + 1).trim()
 	}
-	if (!cond) return null
-	return `(${cond} ? ${row.multiplier} : 1)`
+	return headers
 }
 
-function appendRuleRow(row: RuleRow) {
-	const expr = buildRowExpr(row)
-	if (!expr) {
-		Message.warning('规则行填写不完整（路径/键、比对值、乘数均需有效）')
-		return
+// buildSimulate 组装模拟请求；请求体 JSON 非法时返回 null（调用方中止校验并提示）。
+// 即使未填写也发送空对象：后端据此按平台计费时区求值时间函数（预置样例默认无请求上下文）
+function buildSimulate(): Record<string, any> | null {
+	const sim: Record<string, any> = {}
+	if (simAt.value) {
+		const t = new Date(simAt.value.replace(' ', 'T'))
+		if (!Number.isNaN(t.getTime())) sim.eval_at = t.toISOString()
 	}
-	rulesText.value = rulesText.value.trim() ? `${rulesText.value.trim()} * ${expr}` : expr
-	Message.success('因子已生成并追加到规则表达式')
+	const headers = parseSimHeaders(simHeadersText.value)
+	if (Object.keys(headers).length > 0) sim.headers = headers
+	const body = simBodyText.value.trim()
+	if (body) {
+		try {
+			sim.body = JSON.parse(body)
+		} catch {
+			return null
+		}
+	}
+	return sim
 }
+
+// 模拟请求下的规则命中汇总（各样例请求上下文相同，取首个样例的命中表）
+const simMatchedRules = computed<any[]>(() => {
+	const rules: any[] = validateResults.value?.[0]?.rules || []
+	return rules.filter((r) => r.matched)
+})
+const simRuleCount = computed(() => (validateResults.value?.[0]?.rules || []).length)
+const simRuleProduct = computed(() => Number(simMatchedRules.value.reduce((acc, r) => acc * r.multiplier, 1).toFixed(6)))
 
 async function doValidate(): Promise<boolean> {
 	const src = formulaText.value.trim()
@@ -195,11 +160,18 @@ async function doValidate(): Promise<boolean> {
 		Message.warning('计费公式不能为空')
 		return false
 	}
+	const simulate = buildSimulate()
+	if (!simulate) {
+		validateError.value = '模拟请求体不是合法的 JSON'
+		Message.warning('模拟请求体不是合法的 JSON')
+		return false
+	}
 	validating.value = true
 	try {
 		const res: any = await request.post('/admin/models/pricing/validate-formula', {
 			formula: src,
 			formula_rules: rules || undefined,
+			simulate,
 		})
 		const data = res.data?.data
 		if (!data?.valid) {
@@ -265,7 +237,6 @@ const factKeyEntries = computed<Array<[string, string]>>(() => {
 	return Object.entries(src).sort(([a], [b]) => a.localeCompare(b))
 })
 
-const currentRow = ref<RuleRow>(newRuleRow())
 </script>
 
 <template>
@@ -282,6 +253,7 @@ const currentRow = ref<RuleRow>(newRuleRow())
 		</div>
 		<div class="fx-caption">
 			金额 = 系数 ÷ 1M × 租户乘数；<code>fixed(x)</code> = 每次请求 x {{ currencySymbol }}；
+			多档位用 <code>tier("档位名", 计价式)</code> 标记，账单可展示命中档位与逐项明细；
 			时段 / 请求参数条件写在下方「请求规则」（hour()/param()），不再单独配置时段定价与参数倍率
 		</div>
 
@@ -294,7 +266,7 @@ const currentRow = ref<RuleRow>(newRuleRow())
 			<ATextarea
 				v-model="formulaText"
 				:auto-size="{ minRows: 3, maxRows: 8 }"
-				placeholder="例如：ctx <= 128000 ? p * 5 + c * 20 : p * 10 + c * 40"
+				placeholder='例如：ctx <= 128000 ? tier("standard", p * 5 + c * 20) : tier("long_context", p * 10 + c * 40)'
 				class="fx-textarea"
 			/>
 		</div>
@@ -306,41 +278,31 @@ const currentRow = ref<RuleRow>(newRuleRow())
 					请求规则
 					<ATag size="small" class="fx-optional">可选</ATag>
 				</span>
-				<ASelect size="small" placeholder="规则模板追加…" class="fx-template-select" @change="applyRuleTemplate">
-					<AOption v-for="tpl in ruleTemplates" :key="tpl.expr" :value="tpl.expr">{{ tpl.label }}</AOption>
-				</ASelect>
+				<span class="fx-card-sub">按时间 / 请求头 / 请求参数加价或打折，命中状态随账单留痕</span>
 			</div>
-			<ATextarea
-				v-model="rulesText"
-				:auto-size="{ minRows: 2, maxRows: 6 }"
-				placeholder='按请求头/请求体参数/时间调倍率，多个因子用 * 相乘，如 param("service_tier") == "priority" ? 2 : 1；留空 = 无请求规则'
-				class="fx-textarea"
-			/>
-			<!-- 可视化构建器：生成因子追加到上方表达式（表达式框为唯一真相） -->
-			<div class="fx-builder">
-				<div class="fx-builder-labels">
-					<span>来源</span>
-					<span>键 / 路径</span>
-					<span>匹配</span>
-					<span>比对值</span>
-					<span>乘数</span>
-					<span />
-				</div>
-				<div class="fx-builder-grid">
-					<ASelect v-model="currentRow.source" size="small" :options="sourceOptions" />
-					<AInput
-						v-model="currentRow.key"
-						size="small"
-						:placeholder="currentRow.source === 'param' ? '参数路径 service_tier' : currentRow.source === 'header' ? '请求头名' : '时区（可空）'"
-					/>
-					<ASelect v-model="currentRow.mode" size="small" :options="rowModes(currentRow)" />
-					<AInput v-model="currentRow.value" size="small" placeholder="比对值" />
-					<AInputNumber v-model="currentRow.multiplier" size="small" :step="0.1" :min="0" />
-					<AButton size="small" type="outline" @click="appendRuleRow(currentRow)">追加因子</AButton>
-				</div>
-				<div class="fx-builder-hint">构建器生成的 <code>(条件 ? 乘数 : 1)</code> 因子会在账单详情留痕命中状态</div>
-			</div>
+			<RequestRulesEditor v-model="rulesText" />
 		</div>
+
+		<!-- 模拟请求：套用到全部预置样例，试算请求规则命中（默认折叠） -->
+		<ACollapse :default-active-key="[]" class="fx-sim">
+			<ACollapseItem key="sim" header="模拟请求（试算请求规则是否命中）">
+				<div class="fx-sim-grid">
+					<div class="fx-sim-field">
+						<div class="fx-sim-label">请求时间（浏览器本地时间，留空 = 当前时刻）</div>
+						<ADatePicker v-model="simAt" show-time format="YYYY-MM-DD HH:mm" value-format="YYYY-MM-DD HH:mm" class="fx-sim-date" />
+					</div>
+					<div class="fx-sim-field">
+						<div class="fx-sim-label">请求头（每行「名称: 值」）</div>
+						<ATextarea v-model="simHeadersText" :auto-size="{ minRows: 2, maxRows: 5 }" placeholder="anthropic-beta: fast-mode-2025" class="fx-textarea" />
+					</div>
+					<div class="fx-sim-field fx-sim-field--full">
+						<div class="fx-sim-label">请求体 JSON</div>
+						<ATextarea v-model="simBodyText" :auto-size="{ minRows: 2, maxRows: 6 }" placeholder='{"service_tier": "priority", "duration": 12}' class="fx-textarea" />
+					</div>
+				</div>
+				<div class="fx-sim-hint">填写后点「校验并试算」，下方试算结果按该请求计算规则命中与金额</div>
+			</ACollapseItem>
+		</ACollapse>
 
 		<!-- 校验反馈：失败走 AAlert（可直接展示后端中文报错），通过给一条持久确认 -->
 		<AAlert v-if="validateError" type="error" class="fx-feedback" :title="`校验未通过：${validateError}`" />
@@ -349,6 +311,16 @@ const currentRow = ref<RuleRow>(newRuleRow())
 			<span class="fx-feedback-text">
 				引用 {{ usedVars.length }} 个变量<template v-if="validateResults && validateResults.length">，试算 {{ validateResults.length }} 条样例</template>
 			</span>
+		</div>
+
+		<!-- 请求规则命中汇总（模拟请求下，各样例的请求上下文相同） -->
+		<div v-if="validatedMark && simRuleCount > 0" class="fx-sim-summary">
+			<span class="fx-vars-label">规则命中：</span>
+			<template v-if="simMatchedRules.length > 0">
+				<ATag v-for="(r, i) in simMatchedRules" :key="i" color="green" size="small" :title="r.cond">×{{ r.multiplier }} {{ r.desc || '' }}</ATag>
+				<span class="fx-feedback-text">命中 {{ simMatchedRules.length }}/{{ simRuleCount }} 条，规则倍率合计 ×{{ simRuleProduct }}</span>
+			</template>
+			<span v-else class="fx-feedback-text">{{ simRuleCount }} 条规则均未命中（×1）</span>
 		</div>
 
 		<!-- 引用变量 chips -->
@@ -389,7 +361,7 @@ const currentRow = ref<RuleRow>(newRuleRow())
 								<ATag :color="rule.matched ? 'green' : 'gray'" size="small">
 									{{ rule.matched ? `×${rule.multiplier}` : '×1' }}
 								</ATag>
-								<span class="rule-cond" :title="rule.cond">{{ rule.cond }}</span>
+								<span class="rule-cond" :title="rule.cond">{{ rule.desc || rule.cond }}</span>
 							</div>
 						</template>
 						<span v-else class="env-empty">（无规则）</span>
@@ -417,6 +389,14 @@ const currentRow = ref<RuleRow>(newRuleRow())
 							<td>按次金额：每次请求 x {{ currencySymbol }}（如 fixed(0.04) * image_count 按张放大）</td>
 						</tr>
 						<tr>
+							<td class="mono vars-name">tier("名称", 计价式)</td>
+							<td>
+								标记计价档位：值等于计价式，账单展示命中的档位名。计价式写成「变量 × 单价」之和
+								（可含 fixed()）时，账单还会逐项列出「数量 × 单价 = 费用」明细；
+								例：ctx &lt;= 128000 ? tier("≤128K", p * 5 + c * 20) : tier("&gt;128K", p * 10 + c * 40)
+							</td>
+						</tr>
+						<tr>
 							<td class="mono vars-name">u("key")</td>
 							<td>
 								取 usage 旁路计量值（非 token 计量，如音频秒数）。key 必须已注册（见下表），
@@ -432,8 +412,8 @@ const currentRow = ref<RuleRow>(newRuleRow())
 							<td class="mono vars-name">header("key")</td>
 							<td>
 								请求感知：读客户端请求头值（键大小写不敏感，缺失为空串）。
-								仅限请求规则区使用；key 须为字符串字面量。
-								例：header("anthropic-beta") has "fast-mode" ? 6 : 1
+								仅限请求规则区使用；key 须为字符串字面量；值为字符串，只能做等于/包含匹配。
+								例：(has(header("anthropic-beta"), "fast-mode") ? 6 : 1)
 							</td>
 						</tr>
 						<tr>
@@ -441,7 +421,8 @@ const currentRow = ref<RuleRow>(newRuleRow())
 							<td>
 								请求感知：按点分路径读请求体 JSON 值（如 param("service_tier")，支持
 								metadata.image 嵌套与 content[*].type 通配；缺失为 nil）。
-								仅限请求规则区；路径须为字符串字面量。异步任务在提交时冻结探测值，结算重放
+								仅限请求规则区；路径须为字符串字面量。异步任务在提交时冻结探测值，结算重放。
+								与数字比较时写 (param("duration") ?? 0) >= 10（请求不带该参数时按 0 处理）
 							</td>
 						</tr>
 						<tr>
@@ -453,7 +434,7 @@ const currentRow = ref<RuleRow>(newRuleRow())
 							<td>
 								时间感知：请求受理时刻在指定时区的钟表时间（weekday 0=周日）。时区省略或非法
 								取平台计费时区。预扣与结算同为受理时刻，跨小时边界不漂移。
-								例：hour("Asia/Shanghai") >= 23 || hour("Asia/Shanghai") &lt; 8 ? 0.8 : 1
+								例：(hour() >= 23 || hour() &lt; 8 ? 0.8 : 1)；多条规则用 * 连乘，每条须带外层括号
 							</td>
 						</tr>
 					</tbody>
@@ -562,43 +543,50 @@ const currentRow = ref<RuleRow>(newRuleRow())
 	font-size: 13px;
 }
 
-/* 构建器：网格布局，窄屏自动两列换行；列标签与控件共用同一套轨道 */
-.fx-builder {
+/* 模拟请求：两列网格（时间 + 请求头），请求体独占一行；窄屏单列 */
+.fx-sim-grid {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 10px 12px;
+}
+
+.fx-sim-field {
 	display: flex;
 	flex-direction: column;
-	gap: 6px;
-	padding-top: 10px;
-	border-top: 1px dashed var(--color-border-2);
+	gap: 4px;
+	min-width: 0;
 }
 
-/* 六列轨道集中定义：标签行与控件行各用一份 grid 保证逐列对齐 */
-.fx-builder-labels,
-.fx-builder-grid {
-	display: grid;
-	grid-template-columns: 184px minmax(112px, 1fr) 88px minmax(96px, 1fr) 96px 96px;
-	gap: 8px;
-	align-items: center;
+.fx-sim-field--full {
+	grid-column: 1 / -1;
 }
 
-.fx-builder-labels {
+.fx-sim-label {
 	font-size: 12px;
 	color: var(--ta-text-tertiary);
-	line-height: 1.4;
+}
+
+.fx-sim-date {
+	width: 100%;
+}
+
+.fx-sim-hint {
+	margin-top: 8px;
+	font-size: 12px;
+	color: var(--ta-text-tertiary);
+}
+
+.fx-sim-summary {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 6px;
 }
 
 @media (max-width: 720px) {
-	.fx-builder-labels {
-		display: none;
+	.fx-sim-grid {
+		grid-template-columns: 1fr;
 	}
-
-	.fx-builder-grid {
-		grid-template-columns: 1fr 1fr;
-	}
-}
-
-.fx-builder-hint {
-	font-size: 12px;
-	color: var(--ta-text-tertiary);
 }
 
 /* 校验反馈：失败态用 AAlert 撑满一行，通过态用一条轻量确认行 */

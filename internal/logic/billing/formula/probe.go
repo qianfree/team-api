@@ -39,7 +39,7 @@ type requestRulePatcher struct {
 func (p *requestRulePatcher) Visit(node *ast.Node) {
 	if identifier, ok := (*node).(*ast.IdentifierNode); ok {
 		switch identifier.Value {
-		case traceFunction, traceIntFunction:
+		case traceFunction, traceIntFunction, tierFunction:
 			p.restrictedIdentifier = identifier.Value
 		}
 		return
@@ -58,6 +58,7 @@ func (p *requestRulePatcher) Visit(node *ast.Node) {
 	ruleIndex := len(p.rules)
 	p.rules = append(p.rules, RequestRuleTrace{
 		Cond:       conditional.Cond.String(),
+		Desc:       describeRuleCond(conditional.Cond),
 		Multiplier: multiplier,
 	})
 

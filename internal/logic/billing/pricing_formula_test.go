@@ -33,13 +33,14 @@ func TestComputeCostFormula(t *testing.T) {
 	if bd.FormulaError != "" {
 		t.Fatalf("公式求值失败: %s", bd.FormulaError)
 	}
-	// p = 30000 - 8000 - 5000 = 17000（cr/cc 引用后剩余留在 p——img/ai 未引用不扣）
-	// 系数 = 17000*2.5 + 6000*10 + 8000*1.25 = 42500 + 60000 + 10000 = 112500
-	if bd.FormulaFactor != 112500 {
+	// p = 30000 - 8000(cr，已单独计价) = 22000：未引用的缓存写入 5000 留在 p 按输入价计
+	// （此前被扣出 p 又不单独计价，等于免费）；img/ai 未引用同样留在 p
+	// 系数 = 22000*2.5 + 6000*10 + 8000*1.25 = 55000 + 60000 + 10000 = 125000
+	if bd.FormulaFactor != 125000 {
 		t.Fatalf("系数异常: %v", bd.FormulaFactor)
 	}
-	// 金额 = 112500 / 1e6 = 0.1125
-	if math.Abs(bd.TotalCost-0.1125) > 1e-9 {
+	// 金额 = 125000 / 1e6 = 0.125
+	if math.Abs(bd.TotalCost-0.125) > 1e-9 {
 		t.Fatalf("金额异常: %v", bd.TotalCost)
 	}
 	if bd.BillingMode != BillingModeFormula || bd.InputTokens != 17000 || bd.OutputTokens != 6000 {
@@ -50,7 +51,7 @@ func TestComputeCostFormula(t *testing.T) {
 	pricing.TenantMultiplier = 0.8
 	pricing.TimeMultiplier = 1.5
 	bd = computeCost(pricing, usage.PromptTokens, usage.CompletionTokens, usage, 1)
-	if math.Abs(bd.TotalCost-0.1125*0.8*1.5) > 1e-9 {
+	if math.Abs(bd.TotalCost-0.125*0.8*1.5) > 1e-9 {
 		t.Fatalf("乘数链金额异常: %v", bd.TotalCost)
 	}
 }

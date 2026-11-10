@@ -40,6 +40,15 @@ type FormulaInput struct {
 	Eval *EvalContext
 }
 
+// CacheCreation1hMultiplier 1h 缓存写入相对 5m 写入价的倍数（官方 1h=2× 输入价、5m=1.25×，
+// 2÷1.25=1.6；与 billing 包 token 模式的 1h 价推导一致）。公式引用 cc 未引用 cc1h 时使用
+const CacheCreation1hMultiplier = 1.6
+
+// cc1hMergedIntoCC 公式引用 cc 未引用 cc1h 且确有 1h 写入：1h 写入按 cc 单价 ×1.6 并入 cc 求值
+func (in FormulaInput) cc1hMergedIntoCC(usedVars map[string]bool) bool {
+	return usedVars["cc"] && !usedVars["cc1h"] && in.CacheCreation1h > 0
+}
+
 // FromUsage 从 usage 细分构造公式输入。baseInput/cacheRead/cc5m/cc1h 传
 // resolveTokenCounts 的输出（口径归一已在计费主链路完成），本函数只补模态细分
 func FromUsage(baseInput, output, cacheRead, cc5m, cc1h int, usage *rcommon.Usage) FormulaInput {
@@ -75,11 +84,30 @@ func FromUsage(baseInput, output, cacheRead, cc5m, cc1h int, usage *rcommon.Usag
 //     供三目条件做长上下文档位判断，不受排除影响）
 //
 // 未被公式引用的细分类别保留在 p/c 中按基础系数计价——管理员写 "p*5+c*10"
-// 时 audio/image token 自动随 p/c 计费，无需显式穷举
-// Env 构建求值环境。trace 为请求规则命中表（Run 传入以回填 Matched；nil 时
-// _trace 退化为纯数值函数，供快照展示等不执行求值的场景复用同一构建逻辑）
+// 时缓存/音频/图片 token 自动随 p/c 计费，无需显式穷举：
+//   - 缓存：BaseInputTokens 已按 resolveTokenCounts 扣除缓存各项，未引用的 cr/cc/cc1h
+//     必须加回 p（否则这部分 token 既不在 p 也不单独计价，等于免费）
+//   - cc1h 未引用而 cc 已引用：1h 缓存写入按 cc 单价 ×1.6 计（并入 cc 的求值值，
+//     与 token 模式「1h 价 = 5m 基准 ×1.6」推导同口径）
+//
+// trace 为请求规则命中表（Run 传入以回填 Matched；nil 时 _trace 退化为纯数值函数，
+// 供快照展示等不执行求值的场景复用同一构建逻辑）
 func (in FormulaInput) Env(usedVars map[string]bool, trace []RequestRuleTrace) map[string]any {
 	p := in.BaseInputTokens
+	if !usedVars["cr"] {
+		p += in.CacheReadTokens
+	}
+	ccValue := float64(in.CacheCreation5m)
+	if !usedVars["cc"] {
+		p += in.CacheCreation5m
+	}
+	if !usedVars["cc1h"] {
+		if usedVars["cc"] {
+			ccValue += float64(in.CacheCreation1h) * CacheCreation1hMultiplier
+		} else {
+			p += in.CacheCreation1h
+		}
+	}
 	if in.OpenAISemantics {
 		if usedVars["img"] {
 			p -= in.InputImageTokens
@@ -116,7 +144,7 @@ func (in FormulaInput) Env(usedVars map[string]bool, trace []RequestRuleTrace) m
 		"c":           float64(c),
 		"ctx":         float64(in.BaseInputTokens + in.CacheReadTokens + in.CacheCreation5m + in.CacheCreation1h),
 		"cr":          float64(in.CacheReadTokens),
-		"cc":          float64(in.CacheCreation5m),
+		"cc":          ccValue,
 		"cc1h":        float64(in.CacheCreation1h),
 		"img":         float64(in.InputImageTokens),
 		"img_o":       float64(in.OutputImageTokens),
@@ -154,7 +182,7 @@ func (in FormulaInput) Env(usedVars map[string]bool, trace []RequestRuleTrace) m
 //   - hour("tz")/minute/weekday/month/day：Eval.At 在指定时区的钟表时间
 //     （tz 省略/非法回退 Eval.Location → UTC；基准取受理/冻结时刻而非 now，
 //     预扣与结算跨小时边界不漂移）
-//   - _trace/_trace_int：编译期埋点改写的内部函数（保留字），数值等价 + 命中标记
+//   - _trace/_trace_int/_tier：编译期埋点改写的内部函数（保留字），数值等价 + 命中标记
 func (in FormulaInput) injectRequestFuncs(env map[string]any, trace []RequestRuleTrace) {
 	eval := in.Eval
 	if eval == nil {
@@ -197,11 +225,18 @@ func (in FormulaInput) injectRequestFuncs(env map[string]any, trace []RequestRul
 		}
 		return evalAt.In(loc)
 	}
-	env["hour"] = func(tz string) int { return timeIn(tz).Hour() }
-	env["minute"] = func(tz string) int { return timeIn(tz).Minute() }
-	env["weekday"] = func(tz string) int { return int(timeIn(tz).Weekday()) }
-	env["month"] = func(tz string) int { return int(timeIn(tz).Month()) }
-	env["day"] = func(tz string) int { return timeIn(tz).Day() }
+	// 时区参数可省略（省略 = 平台计费时区）：变参签名，多传的参数忽略首个之外的值
+	optTZ := func(tz []string) string {
+		if len(tz) == 0 {
+			return ""
+		}
+		return tz[0]
+	}
+	env["hour"] = func(tz ...string) int { return timeIn(optTZ(tz)).Hour() }
+	env["minute"] = func(tz ...string) int { return timeIn(optTZ(tz)).Minute() }
+	env["weekday"] = func(tz ...string) int { return int(timeIn(optTZ(tz)).Weekday()) }
+	env["month"] = func(tz ...string) int { return int(timeIn(optTZ(tz)).Month()) }
+	env["day"] = func(tz ...string) int { return timeIn(optTZ(tz)).Day() }
 
 	env[traceFunction] = func(ruleIndex int, matched bool, multiplier float64) float64 {
 		if matched && ruleIndex >= 0 && ruleIndex < len(trace) {
@@ -217,18 +252,34 @@ func (in FormulaInput) injectRequestFuncs(env map[string]any, trace []RequestRul
 		}
 		return 1
 	}
+	// 档位埋点默认实现：数值透传不记录命中（RunDetail 覆盖为记录命中的闭包）
+	env[tierFunction] = func(args ...any) (any, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("tier() 参数异常")
+		}
+		return args[1], nil
+	}
 }
 
 // SnapshotVars 求值环境的变量快照（计费快照留痕用）：已知变量取值 + u:key/header:key/
 // param:path 探测值。与 Run 求值环境同源构建（口径一致），供 bil_usage_logs 的
 // billing_snapshot.formula.vars 消费；header/param 值可能为 string/any，整体 map[string]any
 func SnapshotVars(c *Compiled, in FormulaInput) map[string]any {
-	env := in.Env(c.Vars, nil)
+	return snapshotVarsFromEnv(c, in, in.Env(c.Vars, nil))
+}
+
+// snapshotVarsFromEnv 从已构建的求值环境提取变量快照（RunDetail 复用求值环境，保证同源）
+func snapshotVarsFromEnv(c *Compiled, in FormulaInput, env map[string]any) map[string]any {
 	out := make(map[string]any, len(c.Vars)+len(c.UKeys)+len(c.ParamPaths)+len(c.HeaderKeys))
 	for name := range c.Vars {
 		if v, ok := env[name]; ok {
 			out[name] = v
 		}
+	}
+	// 1h 写入并入 cc 求值时，变量快照仍展示真实 token 数（cc 求值值是 ×1.6 加权和，直接展示会误导）
+	if in.cc1hMergedIntoCC(c.Vars) {
+		out["cc"] = float64(in.CacheCreation5m)
+		out["cc1h"] = float64(in.CacheCreation1h)
 	}
 	for _, key := range c.UKeys {
 		out["u:"+key] = in.Facts[key]
