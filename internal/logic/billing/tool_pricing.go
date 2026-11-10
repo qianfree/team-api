@@ -15,48 +15,17 @@ import (
 
 // ToolCallPriceOptionKey 工具调用计费的 sys_options 键（billing 分类，JSON 类型）。
 // 值为「工具名 → 每次调用单价（本位币）」映射，key 支持「工具名:模型前缀*」按模型覆盖。
-// 与本系统 per_request 单价/全部 bil_ 层金额同为本位币口径，无积分换算；
-// 仅内置种子价以 USD 厂商列表价记账，构建索引时按当前本位币折算（见 seedToolPricesUSD）
+//
+// 配置是唯一价源：程序不内置任何工具价格，未配置的工具/模型前缀一律免费（解析为 0）。
+// 故意不设内置价——厂商列表价随时调整，写死在二进制里既无法跟价，也会让「后台配置」
+// 变成一层不可见的覆盖关系（改了配置还要猜底层是不是有种子价兜着）。
+// 与本系统 per_request 单价/全部 bil_ 层金额同为本位币口径：无积分换算、无汇率折算，
+// 管理员填什么就收什么，调整支付汇率不会让已生效的价格漂移
 const ToolCallPriceOptionKey = "tool_call_prices"
 
 // MaxBillableToolCallCount 单工具单请求的计费次数上限：上游异常 usage（脏数据/恶意放大）
 // 不得直接变成天价账单，超出部分免费。
 const MaxBillableToolCallCount = 10_000
-
-// seedToolPricesUSD 内置工具默认价（USD 口径，各厂商列表价 $/1K calls ÷ 1000）。
-// 计费生效价 = 种子价 × 当前本位币折算率（本位币=USD 时为 1；CNY 时取支付配置
-// 汇率的倒数，汇率调整后随索引缓存重建生效）——解析出的单价始终是本位币，
-// 与快照/摘要/钱包扣款同币种。管理端 tool_call_prices 配置值本身是本位币，
-// 覆盖时不二次折算；置 0 = 显式关闭该工具计费（数值 0 是终结值）。
-// 部署即生效（工具计费开启的默认意图）。
-//
-// P0 采集的 key（有渠道填充 usage.ToolCalls）：web_search（Claude server_tool_use /
-// OpenAI Responses web_search_call）、google_search（Gemini grounding 查询数）。
-// 其余 key 为 P1 渠道接入预留——未采集的渠道不产生对应计数，配置价格自然不生效。
-// 智谱/阿里系（CNY 列表价）不设种子：汇率随时间漂移，接入采集时由管理员按当期价格配置。
-var seedToolPricesUSD = map[string]float64{
-	// Anthropic Web Search / OpenAI web_search：$10 / 1K searches
-	"web_search": 0.01,
-	// OpenAI Responses web_search_preview：$10 / 1K；gpt-4o / 4.1 系 $25 / 1K
-	"web_search_preview":               0.01,
-	"web_search_preview:gpt-4o*":       0.025,
-	"web_search_preview:gpt-4.1*":      0.025,
-	"web_search_preview:gpt-4o-mini*":  0.025,
-	"web_search_preview:gpt-4.1-mini*": 0.025,
-	// Anthropic Web Fetch Tool：$10 / 1K fetches（P1 采集，DTO 需扩字段）
-	"web_fetch": 0.01,
-	// OpenAI file_search：$2.5 / 1K calls（P1 采集）
-	"file_search": 0.0025,
-	// Gemini grounding（ai.google.dev/gemini-api/docs/pricing）：
-	// Gemini 3 按 search query 计 $14/1K；2.5 及更早按 grounded prompt 计 $35/1K、query 免费
-	"google_search":                             0.014,
-	"google_search:gemini-2.5*":                 0,
-	"google_search:gemini-2.0*":                 0,
-	"google_search:gemini-1.5*":                 0,
-	"google_search_grounded_prompt:gemini-2.5*": 0.035,
-	"google_search_grounded_prompt:gemini-2.0*": 0.035,
-	"google_search_grounded_prompt:gemini-1.5*": 0.035,
-}
 
 // toolPrefixEntry 模型前缀覆盖条目（prefix 已去掉尾部 *，纯前缀匹配）
 type toolPrefixEntry struct {
@@ -64,16 +33,15 @@ type toolPrefixEntry struct {
 	price  float64
 }
 
-// toolPriceIndex 工具价格查找索引：种子价 + 管理端覆盖合并构建（构建路径非热路径）。
+// toolPriceIndex 工具价格查找索引（仅由管理端配置构建）。
 // defaults 为无模型维度的工具默认价；prefixes 按工具分组、前缀长度降序（最长前缀优先）
 type toolPriceIndex struct {
 	defaults map[string]float64
 	prefixes map[string][]toolPrefixEntry
 }
 
-// toolPriceSnapshot 缓存键 → 索引的缓存对：键 = 配置串 + 折算率（任一变化触发重建，
-// 支付汇率调整后新价格即时生效）。ConfigService 自带 L1/L2 缓存与 pub/sub 失效，
-// 外层仅需挡住「同一键反复建索引」
+// toolPriceSnapshot 缓存键 → 索引的缓存对：键 = 配置串（配置变更即重建）。
+// ConfigService 自带 L1/L2 缓存与 pub/sub 失效，外层仅需挡住「同一键反复建索引」
 type toolPriceSnapshot struct {
 	key string
 	idx *toolPriceIndex
@@ -120,41 +88,32 @@ func ValidateToolCallPricesJSON(value string) error {
 	return nil
 }
 
-// buildToolPriceIndex 从原始配置串构建索引：种子价（USD）× 折算率打底，
-// 管理端配置（本位币）逐 key 覆盖——覆盖值不二次折算。
-// usdToBase = 1 表示本位币为 USD（种子原样）；非法折算率（≤0/NaN/Inf）按 1 兜底。
+// buildToolPriceIndex 从原始配置串构建索引——配置串即唯一价源，没有内置种子价打底，
+// 未出现的工具/前缀一律解析为 0（免费）。
 // 读侧容错（对齐 ParseTenantPricingPatch 的坏数据不阻断计费原则）：
-// 非法条目逐个忽略并保留合法兄弟条目，整份非法时退回纯种子价
-func buildToolPriceIndex(raw string, usdToBase float64) *toolPriceIndex {
-	if !isValidToolCallPrice(usdToBase) || usdToBase <= 0 {
-		usdToBase = 1.0
-	}
-	merged := make(map[string]float64, len(seedToolPricesUSD)+8)
-	for k, v := range seedToolPricesUSD {
-		merged[k] = v * usdToBase
-	}
-	trimmed := strings.TrimSpace(raw)
-	if trimmed != "" && trimmed != "null" {
-		var prices map[string]float64
-		if err := json.Unmarshal([]byte(trimmed), &prices); err != nil {
-			prices = nil // 整份非法：退回种子价
-		}
-		for k, v := range prices {
-			if !toolPriceKeyPattern.MatchString(k) || !isValidToolCallPrice(v) {
-				continue // 单条非法：忽略，兄弟条目继续生效
-			}
-			merged[k] = v
-		}
-	}
-
+// 非法条目逐个忽略并保留合法兄弟条目，整份非法时等价于未配置（全部免费）
+func buildToolPriceIndex(raw string) *toolPriceIndex {
 	idx := &toolPriceIndex{
-		defaults: make(map[string]float64, len(merged)),
+		defaults: make(map[string]float64),
 		prefixes: make(map[string][]toolPrefixEntry),
 	}
-	for key, price := range merged {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || trimmed == "null" {
+		return idx
+	}
+	var prices map[string]float64
+	if err := json.Unmarshal([]byte(trimmed), &prices); err != nil {
+		return idx // 整份非法：等价于未配置
+	}
+	for key, price := range prices {
+		// key 格式、非负有限、上限三重校验与保存侧 ValidateToolCallPricesJSON 同口径，
+		// 防止绕过接口直接改 DB 时配出负价或天文数字
+		if !toolPriceKeyPattern.MatchString(key) || !isValidToolCallPrice(price) || price > maxToolCallPrice {
+			continue
+		}
 		before, after, hasColon := strings.Cut(key, ":")
 		if !hasColon {
-			idx.defaults[key] = price
+			idx.defaults[before] = price
 			continue
 		}
 		prefix := strings.TrimSuffix(after, "*")
@@ -173,36 +132,16 @@ func buildToolPriceIndex(raw string, usdToBase float64) *toolPriceIndex {
 	return idx
 }
 
-// loadToolPriceIndex 取当前生效的工具价格索引（缓存键 = 配置串 + 折算率，未变直接复用）。
-// 计费热路径每请求至多一次；配置更新经 ConfigService 缓存失效后串变化触发重建，
-// 支付汇率调整后折算率变化同样触发重建
+// loadToolPriceIndex 取当前生效的工具价格索引（缓存键 = 配置串，未变直接复用）。
+// 计费热路径每请求至多一次；配置更新经 ConfigService 缓存失效后串变化触发重建
 func loadToolPriceIndex(ctx context.Context) *toolPriceIndex {
 	raw := strings.TrimSpace(lcommon.Config().GetOption(ctx, ToolCallPriceOptionKey))
-	usdToBase := toolSeedUSDToBase(ctx)
-	key := fmt.Sprintf("%s\n%.10g", raw, usdToBase)
-	if snap := toolPriceCache.Load(); snap != nil && snap.key == key {
+	if snap := toolPriceCache.Load(); snap != nil && snap.key == raw {
 		return snap.idx
 	}
-	idx := buildToolPriceIndex(raw, usdToBase)
-	toolPriceCache.Store(&toolPriceSnapshot{key: key, idx: idx})
+	idx := buildToolPriceIndex(raw)
+	toolPriceCache.Store(&toolPriceSnapshot{key: raw, idx: idx})
 	return idx
-}
-
-// toolSeedUSDToBase 种子价 USD → 本位币折算率：本位币=USD 时恒 1（无换算）；
-// 本位币=CNY 时取支付配置汇率（payment_exchange_rate_cny_to_usd）的倒数。
-// 配置基础设施不可用（单测环境无 DB 驱动触发 panic）时 recover 兜底 1——
-// 与 Currency() 的 USD 回退口径一致（此时本位币判定本就回退 USD）
-func toolSeedUSDToBase(ctx context.Context) (rate float64) {
-	rate = 1.0
-	defer func() {
-		if r := recover(); r != nil {
-			rate = 1.0
-		}
-	}()
-	if IsCNY(ctx) {
-		rate = GetExchangeRateUSDToCNY(ctx)
-	}
-	return rate
 }
 
 // ResolveToolPrice 查工具单价：最长模型前缀匹配 → 工具默认价 → 0（免费，未配置/显式关闭）。

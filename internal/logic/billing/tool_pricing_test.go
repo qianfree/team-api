@@ -2,49 +2,47 @@ package billing
 
 import (
 	"context"
-	"math"
 	"strings"
 	"testing"
 
 	rcommon "github.com/qianfree/team-api/relay/common"
 )
 
-// buildIndexFromRaw 测试助手：从原始配置串构建索引（折算率 1 = 本位币 USD 口径）
+// buildIndexFromRaw 测试助手：从原始配置串构建索引
 func buildIndexFromRaw(t *testing.T, raw string) *toolPriceIndex {
 	t.Helper()
-	return buildToolPriceIndex(raw, 1.0)
+	return buildToolPriceIndex(raw)
 }
 
-// TestToolPriceIndex_SeedDefaults 种子价兜底：空配置退回内置默认价
-func TestToolPriceIndex_SeedDefaults(t *testing.T) {
+// TestToolPriceIndex_NoBuiltinPrice 无内置价：空配置 ⇔ 全部免费
+func TestToolPriceIndex_NoBuiltinPrice(t *testing.T) {
 	idx := buildIndexFromRaw(t, "")
-	if got := idx.resolve("web_search", "claude-sonnet-4-5"); got != 0.01 {
-		t.Errorf("web_search seed = %v, want 0.01", got)
-	}
-	if got := idx.resolve("google_search", "gemini-3-pro"); got != 0.014 {
-		t.Errorf("google_search seed = %v, want 0.014", got)
-	}
-	// Gemini ≤2.5 按查询免费（前缀置 0 是终结值）
-	if got := idx.resolve("google_search", "gemini-2.5-pro"); got != 0 {
-		t.Errorf("google_search gemini-2.5* = %v, want 0", got)
-	}
-	if got := idx.resolve("google_search_grounded_prompt", "gemini-2.5-flash"); got != 0.035 {
-		t.Errorf("grounded_prompt gemini-2.5* = %v, want 0.035", got)
+	for _, tc := range []struct{ tool, model string }{
+		{"web_search", "claude-sonnet-4-5"},
+		{"web_search", "gpt-4o"},
+		{"google_search", "gemini-3-pro"},
+		{"file_search", "gpt-4.1"},
+		{"web_fetch", ""},
+	} {
+		if got := idx.resolve(tc.tool, tc.model); got != 0 {
+			t.Errorf("未配置的 %s/%s 应为免费, got %v", tc.tool, tc.model, got)
+		}
 	}
 }
 
-// TestToolPriceIndex_AdminOverride 管理端覆盖：同 key 覆盖种子价，置 0 = 显式关闭
-func TestToolPriceIndex_AdminOverride(t *testing.T) {
+// TestToolPriceIndex_ConfigOnly 配置即唯一价源：只认后台填的 key，兄弟工具不受影响
+func TestToolPriceIndex_ConfigOnly(t *testing.T) {
 	idx := buildIndexFromRaw(t, `{"web_search": 0.02, "google_search": 0}`)
 	if got := idx.resolve("web_search", "any-model"); got != 0.02 {
-		t.Errorf("web_search override = %v, want 0.02", got)
+		t.Errorf("web_search = %v, want 0.02", got)
 	}
+	// 显式配 0 = 关闭计费，与未配置的解析结果同为 0
 	if got := idx.resolve("google_search", "gemini-3-pro"); got != 0 {
 		t.Errorf("google_search zeroed = %v, want 0", got)
 	}
-	// 未覆盖的工具回落种子价
-	if got := idx.resolve("file_search", "gpt-4.1"); got != 0.0025 {
-		t.Errorf("file_search seed = %v, want 0.0025", got)
+	// 未配置的工具不再有任何内置价兜底
+	if got := idx.resolve("file_search", "gpt-4.1"); got != 0 {
+		t.Errorf("未配置的 file_search 应为免费, got %v", got)
 	}
 }
 
@@ -83,7 +81,7 @@ func TestToolPriceIndex_UnknownToolFree(t *testing.T) {
 	}
 }
 
-// TestToolPriceIndex_InvalidEntries 读侧容错：坏条目忽略、兄弟条目保留、整份非法退回种子
+// TestToolPriceIndex_InvalidEntries 读侧容错：坏条目忽略、兄弟条目保留、整份非法⇔未配置
 func TestToolPriceIndex_InvalidEntries(t *testing.T) {
 	idx := buildIndexFromRaw(t, `{"web_search": 0.02, "BAD-KEY": 5, "file_search": -1}`)
 	if got := idx.resolve("web_search", "m"); got != 0.02 {
@@ -92,13 +90,21 @@ func TestToolPriceIndex_InvalidEntries(t *testing.T) {
 	if got := idx.resolve("BAD-KEY", "m"); got != 0 {
 		t.Errorf("invalid key should be ignored: %v", got)
 	}
-	if got := idx.resolve("file_search", "m"); got != 0.0025 {
-		t.Errorf("negative price entry ignored, seed remains: %v", got)
+	if got := idx.resolve("file_search", "m"); got != 0 {
+		t.Errorf("negative price entry ignored → free: %v", got)
 	}
-	// 整份非法 JSON：退回纯种子价
+	// 超上限条目同样忽略（与保存侧 validation 同口径）
+	idxOver := buildIndexFromRaw(t, `{"web_search": 0.02, "file_search": 1000}`)
+	if got := idxOver.resolve("web_search", "m"); got != 0.02 {
+		t.Errorf("over-limit sibling should not break valid entries: %v", got)
+	}
+	if got := idxOver.resolve("file_search", "m"); got != 0 {
+		t.Errorf("over-limit price ignored → free: %v", got)
+	}
+	// 整份非法 JSON：等价于未配置，全部免费
 	idx2 := buildIndexFromRaw(t, `{not json`)
-	if got := idx2.resolve("web_search", "m"); got != 0.01 {
-		t.Errorf("broken json falls back to seed: %v", got)
+	if got := idx2.resolve("web_search", "m"); got != 0 {
+		t.Errorf("broken json → free: %v", got)
 	}
 }
 
@@ -280,43 +286,5 @@ func TestSnapshot_ToolSurchargesSection(t *testing.T) {
 	snapshot2 := GenerateBillingSnapshot(pricing, plain, nil, nil, nil, nil)
 	if snapshot2.ToolSurcharges != nil {
 		t.Errorf("ToolSurcharges should be omitted without tool billing, got %+v", snapshot2.ToolSurcharges)
-	}
-}
-
-// TestToolPriceIndex_CNYConversion 本位币=CNY：USD 种子按折算率换算，
-// 管理端覆盖值（本位币直配）不二次折算，0 值种子折算后仍为 0（免费语义不变）
-func TestToolPriceIndex_CNYConversion(t *testing.T) {
-	rate := 7.142857142857143 // 1/0.14，与 billing.defaultUSDToCNY 一致
-	idx := buildToolPriceIndex(`{"web_search:claude-*": 0.07}`, rate)
-
-	// 种子 web_search 0.01 USD → ≈0.0714286 本位币
-	got := idx.resolve("web_search", "gpt-4o")
-	want := 0.01 * rate
-	if got < want-1e-9 || got > want+1e-9 {
-		t.Errorf("web_search CNY = %v, want %v", got, want)
-	}
-	// 管理端覆盖值 0.07 原样生效（不折算）
-	if got := idx.resolve("web_search", "claude-opus-4"); got != 0.07 {
-		t.Errorf("admin override in base currency = %v, want 0.07", got)
-	}
-	// 0 值种子：折算后仍为 0（gemini ≤2.5 按查询免费的终结语义）
-	if got := idx.resolve("google_search", "gemini-2.5-pro"); got != 0 {
-		t.Errorf("zero seed stays zero after conversion = %v", got)
-	}
-	// 未覆盖工具按折算后种子
-	got = idx.resolve("file_search", "gpt-4.1")
-	want = 0.0025 * rate
-	if got < want-1e-9 || got > want+1e-9 {
-		t.Errorf("file_search CNY = %v, want %v", got, want)
-	}
-}
-
-// TestToolPriceIndex_InvalidRate 非法折算率按 1 兜底（防御）
-func TestToolPriceIndex_InvalidRate(t *testing.T) {
-	for _, bad := range []float64{0, -1, math.NaN(), math.Inf(1)} {
-		idx := buildToolPriceIndex("", bad)
-		if got := idx.resolve("web_search", "m"); got != 0.01 {
-			t.Errorf("rate %v: web_search = %v, want 0.01 (fallback to 1)", bad, got)
-		}
 	}
 }

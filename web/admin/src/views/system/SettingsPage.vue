@@ -221,7 +221,16 @@ onMounted(() => {
 	font-size: 12px;
 	color: var(--color-text-3);
 }
+/* 撑满滚动容器（.admin-content 是 flex column）剩余高度：内容不足一屏时
+   页脚的自然位置正好落在视口底边（sticky 恒显）；内容超出一屏时页面自然
+   变高滚动，滚到底后页脚落回内容末尾，不会遮挡最后一段表单 */
+.settings-page {
+	flex: 1 0 auto;
+	display: flex;
+	flex-direction: column;
+}
 .settings-layout {
+	flex: 1;
 	display: flex;
 	gap: 24px;
 	align-items: flex-start;
@@ -250,10 +259,16 @@ onMounted(() => {
 	flex: 1;
 	min-width: 0;
 	max-width: 1200px;
+	/* 布局是 align-items:flex-start（侧栏卡片保持自然高度不拉伸），
+	   内容区单独恢复交叉轴拉伸 + 纵向 flex，让表单区弹性撑开把页脚压到列底 */
+	align-self: stretch;
+	display: flex;
+	flex-direction: column;
 }
 .settings-spin {
 	display: block;
 	width: 100%;
+	flex: 1;
 }
 
 /* 吸底保存栏：滚动长表单时始终可见。负 margin 抵消滚动容器 24px padding，

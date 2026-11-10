@@ -88,7 +88,7 @@ var Registry = []SettingDef{
 	// 工具调用计费（联网搜索/云端工具按次附加费）：价格表为 sys_options JSON，
 	// 查找与附加费计算见 internal/logic/billing/tool_pricing.go
 	{Key: "tool_call_prices", Type: SettingTypeJSON, Default: "{}", Category: "billing",
-		Label: "工具调用价格表", Description: "云端工具/联网搜索按次计费单价（每次调用，本位币）。key=工具名或 工具名:模型前缀*（最长前缀匹配），如 {\"web_search\":0.01,\"web_search:claude-*\":0.01}；0=关闭该工具计费；未列出的工具用内置默认价（厂商 USD 列表价按支付汇率折算为本位币），整体留空 {} 仅用默认价"},
+		Label: "工具调用价格表", Description: "云端工具/联网搜索按次计费单价（每次调用，本位币）。key=工具名或 工具名:模型前缀*（最长前缀匹配），如 {\"web_search\":0.01,\"web_search:claude-*\":0.01}；0=关闭该工具计费；未列出的工具不计费（免费）"},
 
 	// ── OAuth (第三方登录) ──
 	{Key: "oauth_auto_register", Type: SettingTypeBool, Default: "false", Category: "oauth",
