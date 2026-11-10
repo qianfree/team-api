@@ -147,7 +147,7 @@ func (in FormulaInput) Env(usedVars map[string]bool, trace []RequestRuleTrace) m
 	return env
 }
 
-// injectRequestFuncs 注入请求感知函数（new-api Request Rules 对齐）：
+// injectRequestFuncs 注入请求感知函数：
 //   - header("key")：请求头值（小写归一；缺失空串）
 //   - param("path")：请求体 JSON 路径值（点分路径，缺失 nil）
 //   - has(v, "s")：子串包含（header 值非精确匹配时用）

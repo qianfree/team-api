@@ -16,7 +16,7 @@ import (
 )
 
 // EffectiveFormula 组合基础公式与请求规则为最终求值表达式：
-// rules 为空返回 base 原文；否则 "(base) * (rules)"（乘法语义，与 new-api 存储形态一致）
+// rules 为空返回 base 原文；否则 "(base) * (rules)"（乘法语义组合）
 func EffectiveFormula(base, rules string) string {
 	base = strings.TrimSpace(base)
 	rules = strings.TrimSpace(rules)

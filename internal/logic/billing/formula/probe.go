@@ -26,8 +26,8 @@ var requestProbes = map[string]bool{
 	"day":     true,
 }
 
-// requestRulePatcher 编译期给请求倍率三目加 trace 副作用（参考 new-api billingexpr
-// 的 requestRulePatcher）：形状严格为「<探针条件> ? <数字字面量> : 1」的节点原地
+// requestRulePatcher 编译期给请求倍率三目加 trace 副作用：形状严格为
+// 「<探针条件> ? <数字字面量> : 1」的节点原地
 // 改写为 _trace(ruleIndex, 条件, 乘数)。数值结果完全等价（命中返回乘数、否则 1），
 // 仅顺带在 trace 表中标记该规则命中——「未命中」与「被短路跳过」都保持未命中。
 // 其他形状的三目（如 cond ? 2 : 1.5、回退非 1）正常求值但不埋点不提取

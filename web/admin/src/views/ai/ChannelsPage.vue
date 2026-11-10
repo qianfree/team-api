@@ -318,7 +318,7 @@ function openCreate() {
   showModal.value = true
 }
 
-// === 供应商分类胶囊（参考 new-api：分类过滤 + 联动类型下拉） ===
+// === 供应商分类胶囊（分类过滤 + 联动类型下拉） ===
 const providerCategory = ref('all')
 const typeOptions = computed(() => filterTypeOptionsByCategory(providerCategory.value))
 // 切换分类：当前类型不在分类内时回落到首个选项（单选项分类即自动选中）；
@@ -619,7 +619,7 @@ const { exporting, exportFile } = useExport({
     <!-- Create Channel Modal -->
     <AModal v-model:visible="showModal" title="创建渠道" :width="920" :mask-closable="false" :on-before-ok="handleSubmit" :ok-loading="formLoading">
       <AForm ref="formRef" :model="form" :rules="formRules" :auto-label-width="true" layout="vertical">
-        <!-- 供应商分类胶囊：过滤下方类型下拉（new-api 式模式切换） -->
+        <!-- 供应商分类胶囊：过滤下方类型下拉（模式切换） -->
         <div class="provider-capsules">
           <span class="provider-capsules__label">分类</span>
           <ARadioGroup v-model="providerCategory" type="button" size="small">

@@ -15,12 +15,12 @@ import (
 
 // ToolCallPriceOptionKey 工具调用计费的 sys_options 键（billing 分类，JSON 类型）。
 // 值为「工具名 → 每次调用单价（本位币）」映射，key 支持「工具名:模型前缀*」按模型覆盖。
-// 与本系统 per_request 单价/全部 bil_ 层金额同为本位币口径，无 new-api 的积分换算；
+// 与本系统 per_request 单价/全部 bil_ 层金额同为本位币口径，无积分换算；
 // 仅内置种子价以 USD 厂商列表价记账，构建索引时按当前本位币折算（见 seedToolPricesUSD）
 const ToolCallPriceOptionKey = "tool_call_prices"
 
 // MaxBillableToolCallCount 单工具单请求的计费次数上限：上游异常 usage（脏数据/恶意放大）
-// 不得直接变成天价账单，超出部分免费。对齐 new-api MaxBillableToolCallCount。
+// 不得直接变成天价账单，超出部分免费。
 const MaxBillableToolCallCount = 10_000
 
 // seedToolPricesUSD 内置工具默认价（USD 口径，各厂商列表价 $/1K calls ÷ 1000）。
@@ -160,7 +160,7 @@ func buildToolPriceIndex(raw string, usdToBase float64) *toolPriceIndex {
 		prefix := strings.TrimSuffix(after, "*")
 		idx.prefixes[before] = append(idx.prefixes[before], toolPrefixEntry{prefix: prefix, price: price})
 	}
-	// 最长前缀优先（同长度按字典序保证跨次稳定，对齐 new-api 排序语义）
+	// 最长前缀优先（同长度按字典序保证跨次稳定）
 	for tool, entries := range idx.prefixes {
 		sort.Slice(entries, func(i, j int) bool {
 			if len(entries[i].prefix) == len(entries[j].prefix) {

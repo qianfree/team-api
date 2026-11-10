@@ -55,7 +55,7 @@ func convertRequest(requestBody []byte, upstreamModelName string) ([]byte, error
 }
 
 // isQwenThinkingModel 判断模型是否属于支持 thinking_budget 的 Qwen/Qwq 系列。
-// 匹配规则对齐 new-api 的 IsQwenThinkingBudgetModel：忽略大小写与前后空白，
+// 匹配规则：忽略大小写与前后空白，
 // 模型名以 qwen/qwq 开头，或含 "/qwen"/"/qwq"（如 HF 路径 Qwen/Qwen3-...）。
 func isQwenThinkingModel(modelName string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(modelName))

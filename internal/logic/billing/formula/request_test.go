@@ -155,7 +155,7 @@ func TestRequestProbeFuncs(t *testing.T) {
 }
 
 // TestTimeFuncsBoundToEvalAt 时间函数绑定 EvalAt（非 now）与时区语义：
-// 预扣与结算共用同一 At → 跨小时边界口径一致（new-api 取 time.Now() 会漂移）
+// 预扣与结算共用同一 At → 跨小时边界口径一致（若取 time.Now() 会漂移）
 func TestTimeFuncsBoundToEvalAt(t *testing.T) {
 	// 2026-11-04 23:30 北京时间 = 15:30 UTC
 	at := time.Date(2026, 11, 4, 15, 30, 0, 0, time.UTC)

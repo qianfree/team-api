@@ -29,7 +29,7 @@ const (
 // DataHandlerFunc data 处理回调
 type DataHandlerFunc func(data string, sr *StreamResult)
 
-// StreamScannerHandler 三协程 SSE 流扫描器（对齐 new-api 架构）
+// StreamScannerHandler 三协程 SSE 流扫描器
 //
 // Scanner 协程：读取上游行，检测 [DONE] 终止标记并立即退出（不转发 [DONE] 到 dataChan）
 // DataHandler 协程：从 dataChan 读取，调用 handler 回调，持有 writeMutex
@@ -37,9 +37,9 @@ type DataHandlerFunc func(data string, sr *StreamResult)
 //
 // 超时策略：per-chunk 空闲超时，scanner.Scan() 每返回一行就通过 resetChan 通知主协程重置 timer。
 // scanner.Scan() 阻塞期间不重置，超时从最后收到的字节开始算。
-// 对齐 new-api 的 ticker.Reset(streamingTimeout) 行为，但用 Timer+resetChan 避免 ticker 跨协程操作。
+// 语义等价 ticker.Reset(streamingTimeout)，但用 Timer+resetChan 避免 ticker 跨协程操作。
 //
-// 终止流程（对齐 new-api）：
+// 终止流程：
 //  1. Scanner 检测到 [DONE] → return → close(dataChan) → safeSendBool(stopChan)
 //  2. DataHandler range 退出 → safeSendBool(stopChan)
 //  3. 主 goroutine 收到 stopChan → 进入 shutdown
@@ -59,7 +59,7 @@ func StreamScannerHandler(
 	var wg sync.WaitGroup
 	streamTimeout := getStreamTimeout(info)
 
-	// 确保 resp.Body 最终被关闭（对齐 new-api），解锁被 scanner.Scan() 阻塞的协程
+	// 确保 resp.Body 最终被关闭，解锁被 scanner.Scan() 阻塞的协程
 	defer func() {
 		if resp.Body != nil {
 			resp.Body.Close()
@@ -95,7 +95,7 @@ func StreamScannerHandler(
 			default:
 			}
 
-			// 每读一行就通知主协程重置空闲超时（对齐 new-api ticker.Reset）
+			// 每读一行就通知主协程重置空闲超时
 			select {
 			case resetChan <- struct{}{}:
 			default:
@@ -201,7 +201,7 @@ func StreamScannerHandler(
 		}
 	}()
 
-	// 主 goroutine 阻塞等待（对齐 new-api：单次 select，用 Timer 实现空闲超时）
+	// 主 goroutine 阻塞等待（单次 select，用 Timer 实现空闲超时）
 	timeoutTimer := time.NewTimer(streamTimeout)
 	defer timeoutTimer.Stop()
 
@@ -217,7 +217,7 @@ func StreamScannerHandler(
 			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, ctx.Err())
 			goto shutdown
 		case <-resetChan:
-			// scanner 每读一行都通知重置（对齐 new-api ticker.Reset）
+			// scanner 每读一行都通知重置
 			if !timeoutTimer.Stop() {
 				select {
 				case <-timeoutTimer.C:
@@ -229,7 +229,7 @@ func StreamScannerHandler(
 	}
 
 shutdown:
-	// 通知所有协程停止（对齐 new-api：先 signal 再 wait）
+	// 通知所有协程停止（先 signal 再 wait）
 	safeSendBool(stopChan)
 
 	waitDone := make(chan struct{})

@@ -29,7 +29,7 @@ export const providerTypeOptions: { label: string; value: number }[] = [
 export const providerTypeName: Record<number, string> = {}
 providerTypeOptions.forEach(o => { providerTypeName[o.value] = o.label })
 
-// 供应商分类（创建渠道表单顶部的模式切换胶囊，参考 new-api 的分类拾取器）：
+// 供应商分类（创建渠道表单顶部的模式切换胶囊）：
 // 每个类型恰好归属一类；all 为空数组表示不过滤。新增供应商时在此登记归类。
 export const providerCategoryMap: Record<string, { label: string; types: number[] }> = {
   all: { label: '全部', types: [] },

@@ -40,10 +40,6 @@ logs/
 *.tmp
 *.temp
 
-# 外部文件
-new-api/
-sub2api/
-
 # 配置文件（含敏感信息，使用 .example 模板代替）
 hack/config.yaml
 manifest/config/config.yaml

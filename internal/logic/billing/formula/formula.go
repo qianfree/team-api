@@ -1,5 +1,5 @@
 // Package formula 表达式计费引擎（billing_mode=formula）。
-// 参考 new-api pkg/billingexpr 的设计：公式从 usage 归集的变量环境取值求出
+// 公式从 usage 归集的变量环境取值求出
 // 「每 1M token 口径的价格系数」，金额 = 系数 / 1e6 × 租户乘数 × 时段乘数。
 // 公式只表达模型基础成本，与折扣/时段乘数正交（外挂，不在公式内表达）。
 package formula

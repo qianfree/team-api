@@ -33,7 +33,6 @@ func TestIsQwenThinkingModel(t *testing.T) {
 
 // TestConvertRequest_ThinkingBudgetStripping 验证 thinking_budget 仅在
 // 上游为 Qwen/Qwq 思考模型时透传，其余情况剥离；显式 0 必须保留。
-// 场景对齐 new-api #5836。
 func TestConvertRequest_ThinkingBudgetStripping(t *testing.T) {
 	tests := []struct {
 		name             string

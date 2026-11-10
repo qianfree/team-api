@@ -796,7 +796,7 @@ func computeCostByMode(pricing *PricingResult, inputTokens, outputTokens int, us
 
 // applyToolSurcharge 计算工具调用附加费并叠加到费用明细（任何计费模式通用）。
 //
-// 计费规则（参考 new-api 工具附加费语义，全额本位币口径——无积分/QuotaPerUnit 换算）：
+// 计费规则（全额本位币口径，无积分/QuotaPerUnit 换算）：
 //   - 逐工具取 usage.ToolCalls 次数，按 MaxBillableToolCallCount 钳制（防上游异常值天价账单）
 //   - 单价经 ToolPriceResolver 查全局工具价格表（tool_pricing.go，支持模型前缀覆盖；
 //     管理端配置值与种子折算后均为本位币），

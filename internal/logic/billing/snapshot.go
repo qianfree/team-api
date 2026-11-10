@@ -430,7 +430,7 @@ func GenerateBillingSummary(ctx context.Context, snapshot *BillingSnapshot) stri
 	// 工具调用附加费行（任何计费模式可叠加，仅发生工具计费时快照携带）：
 	// 逐工具「名称: N 次 × 单价/次 = 费用」。工具费独立计算，任何乘数（租户/时段/参数倍率）
 	// 均不作用——算式两端严格相等，无需倍率段。单价为结算时刻全局工具价格表的解析值
-	// （对齐 new-api tool_surcharges 快照语义）
+	// （快照记录解析值而非配置引用，历史账单不随价格表变动漂移）
 	toolNameMap := map[string]string{
 		"web_search":                    "联网搜索",
 		"web_search_preview":            "联网搜索(preview)",
