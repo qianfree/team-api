@@ -314,12 +314,12 @@ const form = reactive({ name: '', type: 1, base_url: '', api_key: '', priority: 
 
 function openCreate() {
   Object.assign(form, { name: '', type: 1, base_url: '', api_key: '', priority: 0, weight: 100, max_concurrency: 100, tier: 'primary', strict_capacity: false, test_model: '', remark: '', status: 'active', use_proxy: false, plugin_key: '' })
-  providerCategory.value = 'all'
+  providerCategory.value = 'basic'
   showModal.value = true
 }
 
 // === 供应商分类胶囊（分类过滤 + 联动类型下拉） ===
-const providerCategory = ref('all')
+const providerCategory = ref('basic')
 const typeOptions = computed(() => filterTypeOptionsByCategory(providerCategory.value))
 // 切换分类：当前类型不在分类内时回落到首个选项（单选项分类即自动选中）；
 // form.type 变化会触发上面的 watch，插件加载/清理由它接管
@@ -724,7 +724,7 @@ const { exporting, exportFile } = useExport({
     <!-- 渠道模型检测弹窗（行「检测」按钮入口） -->
     <ChannelModelTestModal
       v-model:visible="showChannelTest"
-      :channel-id="testTarget?.id"
+      :channel-id="testTarget?.id ?? null"
       :channel-name="testTarget?.name"
     />
 
