@@ -69,15 +69,21 @@ func (s *sAdmin) ListModelOptions(ctx context.Context, req *v1.ModelOptionsReq) 
 		modelOptionsCache.Set(ctx, modelOptionsCacheKey, rows)
 	}
 
-	// 沿用原接口语义：不传 status 即只要可用模型
-	status := req.Status
-	if status == "" {
-		status = "active"
+	// 沿用原接口语义：不传 status 即只要可用模型；支持逗号分隔多状态。
+	// 渠道能力弹窗需要 active,deprecated：弃用模型网关仍放行，不能被当成「平台未收录」。
+	statuses := make(map[string]bool)
+	for _, st := range strings.Split(req.Status, ",") {
+		if st = strings.TrimSpace(st); st != "" {
+			statuses[st] = true
+		}
+	}
+	if len(statuses) == 0 {
+		statuses["active"] = true
 	}
 
 	list := make([]v1.ModelOptionItem, 0, len(rows))
 	for _, r := range rows {
-		if r.Status != status {
+		if !statuses[r.Status] {
 			continue
 		}
 		if req.Category != "" && r.Category != req.Category {
@@ -88,6 +94,7 @@ func (s *sAdmin) ListModelOptions(ctx context.Context, req *v1.ModelOptionsReq) 
 			ModelId:   r.ModelId,
 			ModelName: r.ModelName,
 			Category:  r.Category,
+			Status:    r.Status,
 		})
 	}
 

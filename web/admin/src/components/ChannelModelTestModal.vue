@@ -1,6 +1,6 @@
 <!-- 渠道模型检测弹窗（渠道列表行「检测」与渠道详情模型能力行「测试」共用）：
      打开即拉取该渠道模型能力列表，逐模型快捷发起连通性测试，行内显示通过/失败，
-     右栏展示完整响应信息。测试接口与详情页测试 tab 相同（POST /admin/channels/{id}/test）
+     右栏展示完整响应信息。测试接口：POST /admin/channels/{id}/test（渠道详情原「测试」tab 已移除，统一走本弹窗）
      布局：左右两栏 + 固定高度。左栏模型列表、右栏结果详情各自滚动，
      检测结果出现时不再挤压模型列表（旧版单列堆叠会把模型顶出可视区）。 -->
 <script setup lang="ts">
@@ -79,7 +79,7 @@ async function runTest(modelName: string) {
 	try {
 		const res: any = await request.post(`/admin/channels/${props.channelId}/test`, { model_name: modelName })
 		const raw = res.data?.data ?? res.data
-		// 解析上游响应（与渠道详情测试 tab 同口径：chat choices / responses content / output.text）
+		// 解析上游响应：chat choices / responses content / output.text
 		let parsedResponse: any = null
 		if (raw?.response) {
 			try { parsedResponse = JSON.parse(raw.response) } catch { parsedResponse = raw.response }
@@ -134,8 +134,14 @@ function formatHeaders(headers: Record<string, string>): string {
 		:body-style="{ maxHeight: '74vh', overflowY: 'auto' }"
 		@cancel="emit('update:visible', false)"
 	>
-		<!-- 功能限制提示（与详情页测试 tab 同文案口径，精简为一行） -->
-		<div class="test-hint">仅支持文本对话模型的基础连通测试；视频 / 图片生成、Embeddings 等请用租户端在线体验或 API 调用验证。</div>
+		<!-- 功能限制提示（原渠道详情「测试」tab 的说明，tab 移除后迁到此处，可关闭） -->
+		<AAlert type="info" show-icon closable class="test-hint">
+			<template #title>仅支持文本对话模型测试</template>
+			<div class="test-hint-body">
+				当前检测仅支持<strong>文本对话模型</strong>（如 Chat 系列）的基础连通测试。
+				视频生成、图片生成、Embeddings 等其他类型暂不支持此方式，建议使用<strong>租户端的在线体验功能</strong>做端到端测试，或通过 <strong>API 直接调用</strong>验证。
+			</div>
+		</AAlert>
 
 		<!-- 左右两栏：固定高度，左栏模型列表 / 右栏结果详情各自独立滚动 -->
 		<div class="test-body">
@@ -270,10 +276,13 @@ function formatHeaders(headers: Record<string, string>): string {
 
 <style scoped>
 .test-hint {
-	font-size: 12px;
-	color: var(--color-text-3);
 	margin-bottom: 12px;
+}
+
+.test-hint-body {
+	font-size: 12px;
 	line-height: 1.6;
+	color: var(--color-text-2);
 }
 
 /* === 两栏容器：固定高度，避免结果出现后撑高弹窗、把模型列表顶出视口 === */
@@ -452,7 +461,7 @@ function formatHeaders(headers: Record<string, string>): string {
 	border-radius: 6px;
 }
 
-/* 结果面板（与渠道详情测试 tab 同样式） */
+/* 结果面板 */
 .test-reply {
 	white-space: pre-wrap;
 	word-break: break-word;

@@ -183,8 +183,8 @@ const abilityColumns: TableColumnData[] = [
     render({ record }) {
       return h(Switch, {
         modelValue: !!record.supports_responses,
-        size: 'mini',
-        onChange: (v: boolean) => handleToggleProtoFlag(record, 'supports_responses', v),
+        size: 'small',
+        onChange: (v: string | number | boolean) => handleToggleProtoFlag(record, 'supports_responses', Boolean(v)),
       })
     },
   },
@@ -193,20 +193,20 @@ const abilityColumns: TableColumnData[] = [
     render({ record }) {
       return h(Switch, {
         modelValue: !!record.chat_via_responses,
-        size: 'mini',
-        onChange: (v: boolean) => handleToggleProtoFlag(record, 'chat_via_responses', v),
+        size: 'small',
+        onChange: (v: string | number | boolean) => handleToggleProtoFlag(record, 'chat_via_responses', Boolean(v)),
       })
     },
   },
   {
-    title: '状态', dataIndex: 'enabled', width: 80,
+    title: '启用', dataIndex: 'enabled', width: 80,
     render({ record }) {
-      return h(Tag, {
-        color: record.enabled ? 'green' : undefined,
+      // 用开关而非文字标签：一眼能看出这是可切换项，而不是只读状态
+      return h(Switch, {
+        modelValue: !!record.enabled,
         size: 'small',
-        style: 'cursor:pointer',
-        onClick: () => handleToggleAbility(record),
-      }, () => record.enabled ? '启用' : '禁用')
+        onChange: (v: string | number | boolean) => handleToggleAbility(record, Boolean(v)),
+      })
     },
   },
 
@@ -289,12 +289,12 @@ function abilityPayload(list: any[]) {
   }
 }
 
-async function handleToggleAbility(ab: any) {
-  const newList = abilitiesData.value.map(a => a.id === ab.id ? { ...a, enabled: !a.enabled } : a)
+async function handleToggleAbility(ab: any, value: boolean) {
+  const newList = abilitiesData.value.map(a => a.id === ab.id ? { ...a, enabled: value } : a)
   try {
     await request.put(`/admin/channels/${channelId}/abilities`, abilityPayload(newList))
     abilitiesData.value = newList
-    Message.success('状态已更新')
+    Message.success(value ? '模型已启用' : '模型已禁用')
   } catch { /* error handled by interceptor */ }
 }
 
@@ -377,99 +377,271 @@ async function handleResetModelHealth(record: any) {
   }
 }
 
-// Add Ability Modal
+// === 添加模型能力弹窗 ===
+// 待添加模型只有一份数据源 pendingModelNames（元素 = 上游模型名）：手动输入、粘贴、
+// 从渠道列表点选都落到这个数组。平台模型名（映射）挂在 platformNameOverrides 上，
+// 未改写即与上游同名——映射在弹窗内的「待添加清单」逐行就地填写，提交时一次落库，
+// 不必先添加、关窗，再回能力表里逐行改。
 const showAddAbilityModal = ref(false)
-const addAbilityForm = reactive({ model_name: '', upstream_model: '', enabled: true })
 const modelsList = ref<any[]>([])
-const modelsLoading = ref(false)
 
-// 拉取全部 active 模型（下拉专用、不分页接口 /admin/models/options）。
-// 此前用分页接口 /admin/models 且 page_size=20，导致平台模型超过 20 个时
-// “添加能力”下拉只显示最新 20 条，看不到其余模型。
-async function fetchModels() {
-  modelsLoading.value = true
-  try {
-    const res: any = await request.get('/admin/models/options')
-    modelsList.value = res.data?.data?.list || res.data?.list || []
-  } catch { modelsList.value = [] } finally { modelsLoading.value = false }
+const pendingModelNames = ref<string[]>([])
+// 标签输入区自绘（不用 AInputTag）：它内部另存一份 tag 状态、不监听外部数组变化，
+// 从列表点选/取消时 UI 会滞后一拍。自绘后数组就是唯一数据源，点列表立刻同步。
+const tagInputText = ref('')
+// 上游名 → 平台名的改写；没有 key 表示「与上游同名」
+const platformNameOverrides = reactive<Record<string, string>>({})
+const tagFieldFocused = ref(false)
+const tagInputRef = ref<HTMLInputElement>()
+
+const upstreamModels = ref<{ id: string; owned_by?: string }[]>([])
+const upstreamLoading = ref(false)
+const upstreamError = ref('')
+const upstreamFetched = ref(false)
+const upstreamKeyword = ref('')
+const upstreamPanelOpen = ref(false)
+
+const existingModelNames = computed(() => new Set(abilitiesData.value.map(a => a.model_name)))
+// 已被本渠道某条能力占用的上游模型名（含映射过的 upstream_model），上游列表据此标「已配置」
+const existingUpstreamNames = computed(() => new Set(abilitiesData.value.map(a => a.upstream_model || a.model_name)))
+// 平台模型库（/admin/models/options，含 active + deprecated）里的模型名。上游独有的模型名不在其中，
+// 这类模型加了能力也上不了架、算不出价，在弹窗里明确提示而不是默默加进去。
+// deprecated 模型网关仍放行（GetModelMapping 只拒 offline），必须算作「已收录」，否则会被误标。
+const platformModelNames = computed(() => new Set(modelsList.value.map((m: any) => m.model_id as string)))
+const deprecatedModelNames = computed(() => new Set(
+  modelsList.value.filter((m: any) => m.status === 'deprecated').map((m: any) => m.model_id as string),
+))
+// 可用（active）模型名：映射建议与下拉候选只推荐它们，不引导把新渠道挂到已弃用模型上
+const activeModelNames = computed(() => new Set(
+  modelsList.value.filter((m: any) => m.status !== 'deprecated').map((m: any) => m.model_id as string),
+))
+
+// 是否「平台模型库未收录」。模型库列表拿不到时不做判断，
+// 否则会把整屏模型误标成未收录。
+function isUncataloged(name: string): boolean {
+  return modelsList.value.length > 0 && !platformModelNames.value.has(name)
 }
 
-const availableModelOptions = computed(() => {
-  const usedNames = new Set(abilitiesData.value.map(a => a.model_name))
-  return modelsList.value
-    .filter(m => !usedNames.has(m.model_id))
-    .map(m => ({ label: m.model_name ? `${m.model_name} (${m.model_id})` : m.model_id, value: m.model_id }))
+function isDeprecatedModel(name: string): boolean {
+  return deprecatedModelNames.value.has(name)
+}
+
+// 平台模型名下拉候选（AutoComplete 自带按输入过滤）
+const platformModelOptions = computed(() => [...activeModelNames.value])
+
+function platformNameOf(upstream: string): string {
+  const v = platformNameOverrides[upstream]
+  return v && v.trim() ? v.trim() : upstream
+}
+
+function setPlatformName(upstream: string, value: string) {
+  const v = (value || '').trim()
+  if (!v || v === upstream) delete platformNameOverrides[upstream]
+  else platformNameOverrides[upstream] = v
+}
+
+// 上游名不在平台模型库时，推断一个平台统一名作为映射建议：
+// 1) 去掉 vendor/ 前缀后命中（如 openai/gpt-4o → gpt-4o）；
+// 2) 最长前缀命中且其后紧跟分隔符（如 gpt-4o-2024-08-06 → gpt-4o；有 gpt-4o-mini 时 gpt-4o-mini-xxx 取更长的 gpt-4o-mini）。
+// 只给建议、不自动改写——日期快照版与平台名是否等价要由运营判断。
+function suggestPlatformName(upstream: string): string {
+  if (!modelsList.value.length || platformModelNames.value.has(upstream)) return ''
+  const set = activeModelNames.value
+  const base = upstream.includes('/') ? upstream.slice(upstream.lastIndexOf('/') + 1) : upstream
+  if (base !== upstream && set.has(base)) return base
+  let best = ''
+  for (const id of set) {
+    if (id.length > best.length && base.length > id.length && base.startsWith(id) && /[-_.:@]/.test(base[id.length])) best = id
+  }
+  return best
+}
+
+type PendingRow = { upstream: string, platform: string, mapped: boolean, status: '' | 'exists' | 'dup' | 'uncataloged' | 'deprecated', suggestion: string }
+
+// 待添加清单：每行一个上游模型及其映射，状态按「平台名」判定（能力唯一键是 渠道×平台模型名）
+const pendingRows = computed<PendingRow[]>(() => {
+  const count = new Map<string, number>()
+  for (const u of pendingModelNames.value) {
+    const p = platformNameOf(u)
+    count.set(p, (count.get(p) || 0) + 1)
+  }
+  return pendingModelNames.value.map(u => {
+    const platform = platformNameOf(u)
+    let status: PendingRow['status'] = ''
+    if (existingModelNames.value.has(platform)) status = 'exists'
+    else if ((count.get(platform) || 0) > 1) status = 'dup'
+    else if (isUncataloged(platform)) status = 'uncataloged'
+    else if (isDeprecatedModel(platform)) status = 'deprecated'
+    const suggestion = status === 'uncataloged' ? suggestPlatformName(platform) : ''
+    return { upstream: u, platform, mapped: platform !== u, status, suggestion }
+  })
 })
 
-const allModelOptions = computed(() => {
-  // 测试模型下拉列表只显示该渠道已配置的能力模型
-  return abilitiesData.value
-    .filter(a => a.enabled)
-    .map(a => ({ label: a.model_name, value: a.model_name }))
+const suggestableRows = computed(() => pendingRows.value.filter(r => r.suggestion))
+const addableCount = computed(() => pendingRows.value.filter(r => r.status !== 'exists' && r.status !== 'dup').length)
+
+function applyAllSuggestions() {
+  for (const r of suggestableRows.value) setPlatformName(r.upstream, r.suggestion)
+}
+
+const filteredUpstreamModels = computed(() => {
+  const kw = upstreamKeyword.value.trim().toLowerCase()
+  if (!kw) return upstreamModels.value
+  return upstreamModels.value.filter(m => m.id.toLowerCase().includes(kw))
 })
+
+function isPending(name: string): boolean {
+  return pendingModelNames.value.includes(name)
+}
+
+// 列表点击 = 加入 / 移出标签输入框，选中状态直接由标签数组决定，
+// 不额外维护一份勾选表，避免两边不同步。
+function toggleUpstreamModel(id: string) {
+  if (existingUpstreamNames.value.has(id)) return
+  const idx = pendingModelNames.value.indexOf(id)
+  if (idx >= 0) {
+    pendingModelNames.value.splice(idx, 1)
+    delete platformNameOverrides[id]
+  } else pendingModelNames.value.push(id)
+}
+
+// 按分隔符把一段文本拆成多个模型名加进标签区。
+// 不把 "/" 当分隔符——vendor/model 这类模型名会被拆坏。
+function addPendingNames(raw: string): number {
+  let added = 0
+  for (const piece of raw.split(/[\s,，;；、]+/)) {
+    const name = piece.trim()
+    if (!name || pendingModelNames.value.includes(name)) continue
+    pendingModelNames.value.push(name)
+    added++
+  }
+  return added
+}
+
+function commitTagInput() {
+  const text = tagInputText.value
+  if (!text.trim()) return
+  tagInputText.value = ''
+  if (!addPendingNames(text)) Message.warning('该模型已在待添加清单中')
+}
+
+function handleTagInputKeydown(e: KeyboardEvent) {
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    commitTagInput()
+  }
+}
+
+function handleTagPaste(e: ClipboardEvent) {
+  const text = e.clipboardData?.getData('text') || ''
+  // 单个名字走默认输入行为，含分隔符才接管，避免破坏手工逐字输入
+  if (!/[\s,，;；、]/.test(text.trim())) return
+  e.preventDefault()
+  addPendingNames(text)
+}
+
+function removePendingName(name: string) {
+  pendingModelNames.value = pendingModelNames.value.filter(n => n !== name)
+  delete platformNameOverrides[name]
+}
+
+function focusTagInput() {
+  tagInputRef.value?.focus()
+}
+
+// 失焦时把已输入的文本提交掉：用户输完直接点「确定」不会丢
+function handleTagInputBlur() {
+  tagFieldFocused.value = false
+  commitTagInput()
+}
+
+async function loadUpstreamModels(silent = false) {
+  upstreamLoading.value = true
+  upstreamError.value = ''
+  try {
+    const res: any = await request.get(`/admin/channels/${channelId}/upstream_models`, { _suppressErrorMsg: silent } as any)
+    const data = res.data?.data || res.data
+    upstreamModels.value = data?.list || []
+    upstreamFetched.value = true
+    if (!upstreamModels.value.length) upstreamError.value = '上游未返回模型列表，可直接在上方输入框手动填写'
+  } catch (e: any) {
+    upstreamModels.value = []
+    upstreamFetched.value = true
+    upstreamError.value = e?.response?.data?.message || e?.message || '获取失败，可在上方输入框手动填写'
+  } finally {
+    upstreamLoading.value = false
+  }
+}
+
+// 「从渠道获取」按钮：首次点击才发请求，再次点击收起列表（不重复打上游）
+async function toggleUpstreamPanel() {
+  if (upstreamPanelOpen.value) {
+    upstreamPanelOpen.value = false
+    return
+  }
+  upstreamPanelOpen.value = true
+  if (upstreamFetched.value) return
+  await loadUpstreamModels(true)
+}
+
+function clearPendingModels() {
+  pendingModelNames.value = []
+  for (const k of Object.keys(platformNameOverrides)) delete platformNameOverrides[k]
+}
+
+function resetAddAbility() {
+  clearPendingModels()
+  tagInputText.value = ''
+  upstreamKeyword.value = ''
+  upstreamError.value = ''
+  upstreamFetched.value = false
+  upstreamModels.value = []
+  upstreamPanelOpen.value = false
+}
+
+// 拉取 active + deprecated 模型（不分页接口 /admin/models/options），
+// 用来判断「平台模型库是否已收录」并给出未收录 / 已弃用提示。offline 不拉：网关对其按不存在处理。
+async function fetchModels() {
+  try {
+    const res: any = await request.get('/admin/models/options', { params: { status: 'active,deprecated' } })
+    modelsList.value = res.data?.data?.list || res.data?.list || []
+  } catch { modelsList.value = [] }
+}
 
 function openAddAbilityModal() {
-  addAbilityForm.model_name = ''
-  addAbilityForm.upstream_model = ''
-  addAbilityForm.enabled = true
+  resetAddAbility()
   showAddAbilityModal.value = true
   fetchModels()
 }
 
-async function handleAddAbility(done: () => void) {
-  if (!addAbilityForm.model_name) { Message.warning('请输入模型名'); return }
-  const newList = [...abilitiesData.value, { model_name: addAbilityForm.model_name, upstream_model: addAbilityForm.upstream_model, enabled: addAbilityForm.enabled, cost_ratio: 1 }]
+async function handleAddAbility(done: (closed: boolean) => void) {
+  // 输入框里还没回车的文本也算进来，用户输完直接点「确定」不会丢
+  commitTagInput()
+  const rows = pendingRows.value
+  if (!rows.length) { Message.warning('请先输入模型名，或点「从渠道获取」选择'); return false }
+  if (rows.some(r => r.status === 'dup')) { Message.warning('多个上游模型映射到了同一个平台模型名，请调整后再提交'); return false }
+
+  // upstream_model 显式写入：留空虽然等价于「同名」，但之后在列表里改平台名时上游名会跟着变，容易打错上游。
+  const additions = rows
+    .filter(r => r.status !== 'exists')
+    .map(r => ({ model_name: r.platform, upstream_model: r.upstream, enabled: true, cost_ratio: 1 }))
+  if (!additions.length) { Message.warning('这些模型都已在本渠道配置中'); return false }
+
+  const skipped = rows.length - additions.length
   try {
-    await request.put(`/admin/channels/${channelId}/abilities`, abilityPayload(newList))
-    Message.success('能力已添加')
-    done()
-    addAbilityForm.model_name = ''
-    addAbilityForm.upstream_model = ''
-    addAbilityForm.enabled = true
+    await request.put(`/admin/channels/${channelId}/abilities`, abilityPayload([...abilitiesData.value, ...additions]))
+    Message.success(
+      skipped > 0
+        ? `已添加 ${additions.length} 个模型能力，跳过 ${skipped} 个重复项`
+        : `已添加 ${additions.length} 个模型能力`,
+    )
+    done(true)
+    resetAddAbility()
     fetchAbilities()
   } catch { return false }
 }
 
-// === Tab 3: Test ===
-const testModelName = ref('')
-const testLoading = ref(false)
-const testResult = ref<any>(null)
-
-async function handleTest() {
-  if (!testModelName.value) { Message.warning('请输入测试模型名'); return }
-  testLoading.value = true
-  testResult.value = null
-  try {
-    const res: any = await request.post(`/admin/channels/${channelId}/test`, { model_name: testModelName.value })
-    const raw = res.data?.data ?? res.data
-    // 尝试解析上游响应
-    let parsedResponse = null
-    if (raw?.response) {
-      try { parsedResponse = JSON.parse(raw.response) } catch { parsedResponse = raw.response }
-    }
-    let content = null
-    if (parsedResponse && typeof parsedResponse === 'object') {
-      content = parsedResponse?.choices?.[0]?.message?.content
-        || parsedResponse?.content?.[0]?.text
-        || parsedResponse?.output?.text
-        || null
-    }
-    testResult.value = {
-      success: raw?.success ?? true,
-      latency_ms: raw?.latency_ms ?? 0,
-      model_name: raw?.model_name || testModelName.value,
-      content,
-      usage: (parsedResponse && typeof parsedResponse === 'object') ? parsedResponse?.usage : null,
-      error: raw?.error || null,
-      request: raw?.request || null,
-      response: raw?.response || null,
-    }
-  } catch (err: any) {
-    testResult.value = { success: false, message: err?.response?.data?.message || err?.message || '测试失败' }
-  } finally { testLoading.value = false }
-}
-
-// === Tab 4: Health Trend ===
+// === Tab 3: Health Trend ===
 const trendLoading = ref(false)
 const trendData = ref<any[]>([])
 const trendHours = ref(24)
@@ -538,7 +710,7 @@ function handleTrendHoursChange(val: string | number | boolean) {
   fetchHealthTrend()
 }
 
-// === Tab 5: Debug Logs（渠道调试日志） ===
+// === Tab 4: Debug Logs（渠道调试日志） ===
 const debugLogs = ref<any[]>([])
 const debugLoading = ref(false)
 const debugPage = ref(1)
@@ -981,7 +1153,6 @@ onBeforeUnmount(() => {
 
 function onTabChange(key: string) {
   if (key === 'abilities' && abilitiesData.value.length === 0) fetchAbilities()
-  if (key === 'test' && abilitiesData.value.length === 0) fetchAbilities()
   if (key === 'health_trend' && trendData.value.length === 0) fetchHealthTrend()
   if (key === 'debug_logs') {
     if (debugLogs.value.length === 0) fetchDebugLogs()
@@ -1033,11 +1204,6 @@ onMounted(() => {
   fetchDetail()
   window.addEventListener('resize', onWindowResize)
 })
-
-function formatJson(str: string): string {
-  if (!str) return ''
-  try { return JSON.stringify(JSON.parse(str), null, 2) } catch { return str }
-}
 
 function formatHeaders(headers: Record<string, string>): string {
   if (!headers) return ''
@@ -1220,112 +1386,15 @@ function formatHeaders(headers: Record<string, string>): string {
                   <div>
                     <span style="font-weight: 500;">Chat 经 Responses：</span>上游仅有 Responses 协议（responses-only，如 Codex 类中转）。开启后 /v1/chat/completions 请求自动经桥接转换发送到 /v1/responses。
                   </div>
+                  <div>
+                    <span style="font-weight: 500;">启用：</span>关闭后该模型在本渠道不参与调度（请求会走其它已启用渠道），配置本身保留，可随时重新打开。
+                  </div>
                 </div>
               </div>
             </ACard>
           </ATabPane>
 
-          <!-- Tab 3: Test -->
-          <ATabPane key="test" title="测试">
-            <!-- 功能限制提示 -->
-            <AAlert type="info" class="mb-4" show-icon closable>
-              <template #title>仅支持文本对话模型测试</template>
-              <div style="font-size: 12px; line-height: 1.6; color: var(--color-text-2);">
-                <div>当前渠道测试功能仅支持<strong>文本对话模型</strong>（如 Chat 系列）的基础测试。</div>
-                <div style="margin-top: 6px;">其他模型类型（如视频生成、图片生成、Embeddings 等）暂不支持此测试方式，建议：</div>
-                <ul style="margin: 6px 0 0 20px; padding: 0;">
-                  <li>使用<strong>租户端的在线体验功能</strong>进行端到端测试</li>
-                  <li>通过 <strong>API 直接调用</strong>进行验证测试</li>
-                </ul>
-              </div>
-            </AAlert>
-
-            <ACard :bordered="false">
-              <div class="flex gap-2 items-end mb-4">
-                <AFormItem label="测试模型" class="flex-1 !mb-0">
-                  <ASelect
-                    v-model="testModelName"
-                    :options="allModelOptions"
-                    :loading="abilitiesLoading"
-                    allow-search
-                    allow-clear
-                    placeholder="选择渠道支持的模型"
-                    :disabled="testLoading"
-                    @keydown.enter="handleTest"
-                  />
-                </AFormItem>
-                <AButton type="primary" :loading="testLoading" :disabled="!testModelName" @click="handleTest">
-                  {{ testLoading ? '测试中...' : '开始测试' }}
-                </AButton>
-              </div>
-
-              <!-- Loading -->
-              <div v-if="testLoading" class="test-result-area">
-                <ASpin dot />
-              </div>
-
-              <!-- Result -->
-              <div v-else-if="testResult" class="test-result-area">
-                <ACard :bordered="true" size="small" class="w-full">
-                  <template #title>
-                    <span :style="{ color: testResult.success ? '#00b42a' : '#f53f3f', fontWeight: 600 }">
-                      {{ testResult.success ? '测试通过' : '测试失败' }}
-                    </span>
-                  </template>
-                  <template #extra>
-                    <ASpace>
-                      <ATag size="small" color="arcoblue">{{ testResult.model_name }}</ATag>
-                      <ATag v-if="testResult.latency_ms" size="small">{{ testResult.latency_ms }}ms</ATag>
-                    </ASpace>
-                  </template>
-
-                  <!-- 成功时显示 AI 回复 -->
-                  <div v-if="testResult.success && testResult.content" class="test-reply">{{ testResult.content }}</div>
-                  <div v-else-if="testResult.success && !testResult.content" class="test-reply" style="color: var(--color-text-3);">（AI 无文本回复内容）</div>
-
-                  <!-- 失败时显示错误 -->
-                  <div v-if="!testResult.success && (testResult.error || testResult.message)" class="test-error">{{ testResult.error || testResult.message }}</div>
-
-                  <!-- Token 用量 -->
-                  <div v-if="testResult.usage" class="test-usage">
-                    <ATag size="small">Prompt: {{ testResult.usage.prompt_tokens }}</ATag>
-                    <ATag size="small">Completion: {{ testResult.usage.completion_tokens }}</ATag>
-                    <ATag size="small">Total: {{ testResult.usage.total_tokens }}</ATag>
-                  </div>
-
-                  <!-- 请求详情 -->
-                  <ACollapse :bordered="false" :default-active-key="testResult.success ? [] : ['request']">
-                    <ACollapseItem header="请求详情" key="request" :header-style="{ fontSize: '12px', color: 'var(--color-text-3)' }">
-                      <div v-if="testResult.request" class="test-debug-info">
-                        <div class="test-debug-row">
-                          <span class="test-debug-label">Method</span>
-                          <ATag size="small" color="gray">{{ testResult.request.method }}</ATag>
-                        </div>
-                        <div class="test-debug-row">
-                          <span class="test-debug-label">URL</span>
-                          <code class="test-debug-value">{{ testResult.request.url }}</code>
-                        </div>
-                        <div class="test-debug-row">
-                          <span class="test-debug-label">Headers</span>
-                          <pre class="test-debug-code">{{ formatHeaders(testResult.request.headers) }}</pre>
-                        </div>
-                        <div class="test-debug-row">
-                          <span class="test-debug-label">Body</span>
-                          <pre class="test-debug-code">{{ formatJson(testResult.request.body) }}</pre>
-                        </div>
-                      </div>
-                      <div v-else style="color: var(--color-text-3); font-size: 12px;">无请求信息</div>
-                    </ACollapseItem>
-                    <ACollapseItem v-if="testResult.response" header="响应内容" key="response" :header-style="{ fontSize: '12px', color: 'var(--color-text-3)' }">
-                      <pre class="test-raw">{{ formatJson(testResult.response) }}</pre>
-                    </ACollapseItem>
-                  </ACollapse>
-                </ACard>
-              </div>
-            </ACard>
-          </ATabPane>
-
-          <!-- Tab 4: Health Trend -->
+          <!-- Tab 3: Health Trend -->
           <ATabPane key="health_trend" title="健康趋势">
             <ACard :bordered="false" style="padding-bottom: 16px;">
               <div style="display: flex; justify-content: flex-end; margin-bottom: 12px;">
@@ -1342,7 +1411,7 @@ function formatHeaders(headers: Record<string, string>): string {
             </ACard>
           </ATabPane>
 
-          <!-- Tab 5: Debug Logs -->
+          <!-- Tab 4: Debug Logs -->
           <ATabPane key="debug_logs" title="调试日志">
             <!-- 配置区块 -->
             <ACard :bordered="false" class="mb-4">
@@ -1601,26 +1670,129 @@ function formatHeaders(headers: Record<string, string>): string {
       </AForm>
     </AModal>
 
-    <!-- Add Ability Modal -->
-    <AModal v-model:visible="showAddAbilityModal" title="添加模型能力" :width="450" :on-before-ok="handleAddAbility">
-      <AForm :model="addAbilityForm" :auto-label-width="true" layout="vertical">
-        <AFormItem label="平台模型名">
-          <ASelect
-            v-model="addAbilityForm.model_name"
-            :options="availableModelOptions"
-            :loading="abilitiesLoading"
-            allow-search
-            allow-clear
-            
-            placeholder="选择渠道支持的模型"
-            :fallback-option="false"
-          />
-        </AFormItem>
-        <AFormItem label="上游模型名"><AInput v-model="addAbilityForm.upstream_model" placeholder="留空则与平台模型名相同" /></AFormItem>
-        <AFormItem label="启用">
-          <ASelect v-model="addAbilityForm.enabled" :options="[{ label: '启用', value: true }, { label: '禁用', value: false }]" style="width: 120px" />
-        </AFormItem>
-      </AForm>
+    <!-- Add Ability Modal：选上游模型 → 待添加清单里就地填映射（上游名 → 平台名）→ 一次提交 -->
+    <AModal
+      v-model:visible="showAddAbilityModal"
+      title="添加模型能力"
+      :width="820"
+      :mask-closable="false"
+      :on-before-ok="handleAddAbility"
+      :ok-text="addableCount ? `添加 ${addableCount} 个模型` : '确定'"
+      unmount-on-close
+    >
+      <div class="add-ability-body">
+        <!-- ① 录入：手输 / 粘贴 / 从渠道获取，均以「上游模型名」进入待添加清单 -->
+        <div class="model-picker-row">
+          <div class="tag-field" :class="{ 'is-focus': tagFieldFocused }" @click="focusTagInput">
+            <input
+              ref="tagInputRef"
+              v-model="tagInputText"
+              class="tag-field-input"
+              aria-label="上游模型名"
+              placeholder="输入上游模型名后回车，可一次粘贴多个（逗号 / 空格 / 换行分隔）"
+              @keydown="handleTagInputKeydown"
+              @paste="handleTagPaste"
+              @focus="tagFieldFocused = true"
+              @blur="handleTagInputBlur"
+            />
+          </div>
+          <AButton class="fetch-upstream-btn" :loading="upstreamLoading" @click="toggleUpstreamPanel">
+            {{ upstreamPanelOpen ? '收起列表' : '从渠道获取' }}
+          </AButton>
+        </div>
+
+        <div v-if="upstreamPanelOpen" class="upstream-panel">
+          <div class="upstream-toolbar">
+            <AInput v-model="upstreamKeyword" size="small" placeholder="搜索上游模型名" allow-clear style="width: 220px" />
+            <AButton size="small" :loading="upstreamLoading" @click="loadUpstreamModels()">刷新</AButton>
+            <span v-if="upstreamFetched && !upstreamError" class="upstream-meta">
+              上游 {{ upstreamModels.length }} 个模型，点击加入 / 移出待添加清单
+            </span>
+          </div>
+
+          <div v-if="upstreamError" class="upstream-error">{{ upstreamError }}</div>
+
+          <ASpin :loading="upstreamLoading" style="width: 100%; display: block">
+            <div v-if="filteredUpstreamModels.length" class="upstream-list">
+              <div
+                v-for="m in filteredUpstreamModels"
+                :key="m.id"
+                class="upstream-item"
+                :class="{ 'is-existing': existingUpstreamNames.has(m.id), 'is-pending': isPending(m.id) }"
+                @click="toggleUpstreamModel(m.id)"
+              >
+                <span class="upstream-item-check" :class="{ 'is-on': isPending(m.id) }">{{ isPending(m.id) ? '✓' : '+' }}</span>
+                <span class="upstream-item-name">{{ m.id }}</span>
+                <span v-if="existingUpstreamNames.has(m.id)" class="upstream-item-tag">已配置</span>
+                <span v-else-if="isUncataloged(m.id)" class="upstream-item-tag is-warn">平台未收录</span>
+                <span v-else-if="isDeprecatedModel(m.id)" class="upstream-item-tag is-warn">已弃用</span>
+              </div>
+            </div>
+            <AEmpty v-else-if="upstreamFetched && !upstreamError" description="没有匹配的上游模型" />
+            <div v-else-if="!upstreamError" class="upstream-empty">正在获取上游模型…</div>
+          </ASpin>
+        </div>
+
+        <!-- ② 待添加清单：每行就地填写平台模型名（映射），留空 = 与上游同名 -->
+        <div class="pending-section">
+          <div class="pending-header">
+            <span class="pending-title">待添加 <b>{{ pendingRows.length }}</b> 个模型</span>
+            <span class="pending-sub">平台模型名留空即与上游同名，上游叫法不同时在此直接改写</span>
+            <span class="upstream-toolbar-gap"></span>
+            <AButton v-if="suggestableRows.length" type="text" size="mini" @click="applyAllSuggestions">
+              应用全部建议映射（{{ suggestableRows.length }}）
+            </AButton>
+            <AButton v-if="pendingRows.length" type="text" size="mini" status="danger" @click="clearPendingModels">清空</AButton>
+          </div>
+
+          <div v-if="pendingRows.length" class="pending-list">
+            <div class="pending-row pending-row-head">
+              <span>上游模型名</span>
+              <span></span>
+              <span>平台模型名</span>
+              <span>状态</span>
+              <span></span>
+            </div>
+            <div v-for="r in pendingRows" :key="r.upstream" class="pending-row" :class="{ 'is-skip': r.status === 'exists' }">
+              <span class="pending-upstream" :title="r.upstream">{{ r.upstream }}</span>
+              <span class="pending-arrow" :class="{ 'is-mapped': r.mapped }" aria-hidden="true">→</span>
+              <AAutoComplete
+                :model-value="platformNameOverrides[r.upstream] || ''"
+                :data="platformModelOptions"
+                size="small"
+                allow-clear
+                :placeholder="r.upstream"
+                :aria-label="`${r.upstream} 的平台模型名`"
+                @update:model-value="(v: string) => setPlatformName(r.upstream, v)"
+              />
+              <span class="pending-status">
+                <ATag v-if="r.status === 'exists'" size="small" color="gray">已配置，将跳过</ATag>
+                <ATag v-else-if="r.status === 'dup'" size="small" color="red">平台名重复</ATag>
+                <template v-else-if="r.status === 'uncataloged'">
+                  <AButton
+                    v-if="r.suggestion"
+                    type="text"
+                    size="mini"
+                    class="pending-suggest"
+                    :title="`平台模型库未收录 ${r.platform}，点击映射到 ${r.suggestion}`"
+                    @click="setPlatformName(r.upstream, r.suggestion)"
+                  >建议 → {{ r.suggestion }}</AButton>
+                  <ATag v-else size="small" color="orange" title="平台模型库未收录：能力可配置，但无法定价与上架">平台未收录</ATag>
+                </template>
+                <ATag
+                  v-else-if="r.status === 'deprecated'"
+                  size="small"
+                  color="orange"
+                  :title="`平台模型 ${r.platform} 已弃用：仍可调用与计费，但计划下线，新渠道建议映射到替代模型`"
+                >已弃用</ATag>
+                <ATag v-else-if="r.mapped" size="small" color="arcoblue">已映射</ATag>
+              </span>
+              <AButton type="text" size="mini" :aria-label="`移除 ${r.upstream}`" @click="removePendingName(r.upstream)">移除</AButton>
+            </div>
+          </div>
+          <div v-else class="pending-empty">还没有待添加的模型。在上方输入上游模型名，或点「从渠道获取」从上游列表中点选。</div>
+        </div>
+      </div>
     </AModal>
 
     <!-- 模型能力行快捷测试弹窗（行「测试」按钮入口，打开即自动测试对应模型） -->
@@ -1676,16 +1848,6 @@ function formatHeaders(headers: Record<string, string>): string {
 </template>
 
 <style scoped>
-.test-result-area { min-height: 60px; display: flex; align-items: flex-start; }
-.test-reply { white-space: pre-wrap; word-break: break-word; font-size: 14px; line-height: 1.6; color: var(--color-text-1); max-height: 300px; overflow-y: auto; }
-.test-usage { margin-top: 12px; display: flex; gap: 6px; flex-wrap: wrap; }
-.test-raw { font-size: 12px; background: var(--color-fill-1); padding: 8px; border-radius: 4px; max-height: 200px; overflow: auto; color: var(--color-text-3); white-space: pre-wrap; word-break: break-all; margin: 0; }
-.test-error { color: #f53f3f; font-size: 14px; line-height: 1.6; word-break: break-word; }
-.test-debug-info { display: flex; flex-direction: column; gap: 8px; }
-.test-debug-row { display: flex; gap: 12px; align-items: flex-start; }
-.test-debug-label { font-size: 12px; color: var(--color-text-3); min-width: 60px; flex-shrink: 0; padding-top: 2px; }
-.test-debug-value { font-size: 12px; color: var(--color-text-2); word-break: break-all; background: var(--color-fill-1); padding: 2px 6px; border-radius: 3px; }
-.test-debug-code { font-size: 12px; background: var(--color-fill-1); padding: 6px 8px; border-radius: 4px; max-height: 150px; overflow: auto; color: var(--color-text-3); white-space: pre-wrap; word-break: break-all; margin: 0; flex: 1; }
 .field-help { color: var(--color-text-3); font-size: 12px; }
 .debug-seg-label {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
@@ -1714,4 +1876,164 @@ function formatHeaders(headers: Record<string, string>): string {
   border-left: 3px solid #165dff;
   line-height: 1.2;
 }
+
+/* === 添加模型能力弹窗 === */
+.add-ability-body { display: flex; flex-direction: column; gap: 12px; }
+.model-picker-row { display: flex; align-items: flex-start; gap: 8px; }
+/* 待添加清单：上游名 → 平台名 映射逐行就地编辑 */
+.pending-section { display: flex; flex-direction: column; gap: 8px; }
+.pending-header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pending-title { font-size: 13px; color: var(--color-text-1); }
+.pending-title b { color: rgb(var(--primary-6)); font-variant-numeric: tabular-nums; }
+.pending-sub { font-size: 12px; color: var(--color-text-3); }
+.pending-list {
+  max-height: 300px;
+  overflow-y: auto;
+  border: 1px solid var(--color-border-2);
+  border-radius: 6px;
+}
+.pending-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 20px minmax(0, 1fr) 150px 48px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--color-border-1);
+}
+.pending-row:first-child { border-top: none; }
+.pending-row-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  font-size: 12px;
+  color: var(--color-text-3);
+  background: var(--color-fill-1);
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+.pending-row.is-skip { opacity: 0.55; }
+.pending-upstream {
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  font-size: 12px;
+  color: var(--color-text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pending-arrow { text-align: center; color: var(--color-text-4); }
+.pending-arrow.is-mapped { color: rgb(var(--primary-6)); font-weight: 700; }
+.pending-status { min-width: 0; overflow: hidden; }
+.pending-suggest { max-width: 100%; padding: 0 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pending-empty {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-3);
+  background: var(--color-fill-1);
+  border-radius: 6px;
+  padding: 12px;
+  text-align: center;
+}
+/* 标签输入区：外观对齐 Arco 输入框（同样的边框/圆角/内边距），内部是标签 + 原生 input */
+.tag-field {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 3px 8px;
+  border: 1px solid var(--color-border-2);
+  border-radius: 4px;
+  background: var(--color-bg-2);
+  cursor: text;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.tag-field.is-focus {
+  border-color: rgb(var(--primary-6));
+  box-shadow: 0 0 0 2px var(--color-primary-light-1);
+}
+.tag-field-input {
+  flex: 1;
+  min-width: 140px;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 14px;
+  line-height: 24px;
+  color: var(--color-text-1);
+  padding: 0;
+}
+.tag-field-input::placeholder { color: var(--color-text-3); }
+/* 标签多时输入框会变成多行，按钮跟第一行对齐而不是被拉高 */
+.fetch-upstream-btn { flex-shrink: 0; }
+.upstream-panel { display: flex; flex-direction: column; gap: 8px; }
+.upstream-toolbar { display: flex; align-items: center; gap: 8px; }
+.upstream-toolbar-gap { flex: 1; }
+.upstream-meta { font-size: 12px; color: var(--color-text-3); }
+.upstream-error {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-warning);
+  background: var(--color-warning-light-1);
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+.upstream-list {
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--color-border-2);
+  border-radius: 6px;
+  padding: 4px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px;
+}
+.upstream-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.upstream-item:hover { background: var(--color-fill-1); }
+.upstream-item.is-pending {
+  background: var(--color-primary-light-1);
+  border-color: var(--color-primary-light-3);
+}
+.upstream-item.is-existing { cursor: not-allowed; opacity: 0.55; }
+.upstream-item.is-existing:hover { background: transparent; }
+/* 选中标记：未选是浅色 +，已选是主色 ✓，一行内就能看出哪些已进输入框 */
+.upstream-item-check {
+  flex-shrink: 0;
+  width: 12px;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--color-text-4);
+}
+.upstream-item-check.is-on { color: rgb(var(--primary-6)); font-weight: 700; }
+.upstream-item-name {
+  font-size: 12px;
+  color: var(--color-text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.upstream-item-tag {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--color-text-3);
+  border: 1px solid var(--color-border-2);
+  border-radius: 3px;
+  padding: 0 4px;
+  line-height: 16px;
+}
+.upstream-item-tag.is-warn { color: var(--color-warning-6); border-color: var(--color-warning-3); }
+.upstream-empty { font-size: 12px; color: var(--color-text-3); padding: 12px 0; text-align: center; }
 </style>

@@ -214,6 +214,10 @@ type (
 		// 不限制渠道状态：禁用中的渠道也允许手动测试，便于管理员在启用放流量前确认已恢复；
 		// 自动探测 cron 只查 active 渠道，禁用渠道不会被自动探测。
 		TestChannel(ctx context.Context, req *v1.ChannelTestReq) (*v1.ChannelTestRes, error)
+		// FetchChannelUpstreamModels 拉取渠道上游可用模型列表（只读探测）。
+		// 用渠道自身的 base_url + 有效 Key 请求上游模型列表接口，供「添加模型能力」弹窗挑选；
+		// 不落库、不影响调度目录，失败时前端降级为手动输入。
+		FetchChannelUpstreamModels(ctx context.Context, req *v1.ChannelUpstreamModelsReq) (*v1.ChannelUpstreamModelsRes, error)
 		// CronJobList returns all registered cron jobs with their last execution status.
 		CronJobList(ctx context.Context, _ *v1.CronJobListReq) (*v1.CronJobListRes, error)
 		// CronJobTrigger manually triggers a cron job.

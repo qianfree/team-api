@@ -321,7 +321,7 @@ type ModelDeleteRes struct{}
 // ModelOptionsReq 模型选项列表请求（下拉选择专用，不分页）
 type ModelOptionsReq struct {
 	g.Meta   `path:"/models/options" method:"get" mime:"json" tags:"管理后台-模型" summary:"模型选项列表（不分页）"`
-	Status   string `json:"status" in:"query" dc:"状态筛选：active/deprecated/offline"`
+	Status   string `json:"status" in:"query" dc:"状态筛选：active/deprecated/offline，多个用英文逗号分隔（如 active,deprecated）；不传默认 active"`
 	Category string `json:"category" in:"query" dc:"模型分类筛选：chat/embedding/image/audio/rerank/video"`
 }
 
@@ -336,6 +336,7 @@ type ModelOptionItem struct {
 	ModelId   string `json:"model_id"`
 	ModelName string `json:"model_name"`
 	Category  string `json:"category"`
+	Status    string `json:"status" dc:"模型状态：active/deprecated/offline"`
 }
 
 // ModelExportReq 导出模型列表请求
