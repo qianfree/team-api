@@ -112,6 +112,7 @@ type dashScopeTaskResponse struct {
 	Usage struct {
 		Duration            float64 `json:"duration"`
 		VideoCount          int     `json:"video_count"`
+		InputVideoDuration  float64 `json:"input_video_duration"`
 		OutputVideoDuration float64 `json:"output_video_duration"`
 		SR                  int     `json:"SR"`
 		Ratio               string  `json:"ratio"`
@@ -218,6 +219,12 @@ func (a *AliAdaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, bod
 	}
 
 	return ratios
+}
+
+// ExtraProtectedPaths extra 禁止改写的计费规格字段：视频时长/分辨率（size 为 wan2.x 分辨率
+// 的原生写法），图片张数 n（同适配器承接异步图片任务）
+func (a *AliAdaptor) ExtraProtectedPaths() []string {
+	return []string{"parameters.duration", "parameters.resolution", "parameters.size", "parameters.n"}
 }
 
 func (a *AliAdaptor) AdjustBillingOnSubmit(_ *common.RelayInfo, _ []byte) map[string]any {
@@ -586,6 +593,24 @@ func (a *AliAdaptor) ParseTaskResult(body []byte) (*common.TaskInfo, error) {
 				OutputSeconds: resp.Usage.OutputVideoDuration,
 				Resolution:    resolutionFromSR(resp.Usage.SR),
 			}
+		}
+		// 用量摘要（纯展示，不参与计费）：wan3.0 官方 usage 全量归一（duration 为官方口径总时长）
+		usage := resp.Usage
+		if usage.Duration > 0 || usage.InputVideoDuration > 0 || usage.OutputVideoDuration > 0 || usage.ImageCount > 0 {
+			summary := &common.TaskUsageSummary{Resolution: resolutionFromSR(usage.SR)}
+			if usage.InputVideoDuration > 0 {
+				summary.InputVideoSeconds = common.UsageF(usage.InputVideoDuration)
+			}
+			if usage.OutputVideoDuration > 0 {
+				summary.OutputVideoSeconds = common.UsageF(usage.OutputVideoDuration)
+			}
+			if usage.Duration > 0 {
+				summary.TotalSeconds = common.UsageF(usage.Duration)
+			}
+			if usage.ImageCount > 0 {
+				summary.InputImageCount = common.UsageI(usage.ImageCount)
+			}
+			info.UsageSummary = summary
 		}
 		// 图片结果
 		if len(resp.Output.Results) > 0 {

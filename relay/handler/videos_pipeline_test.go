@@ -2,7 +2,9 @@ package handler
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -258,14 +260,16 @@ func TestHandleTaskSubmit_OpenAIVideosProtocol_Seedance(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	// multipart 创建请求：图生视频（input_reference 文件）+ 高清横屏档
+	// multipart 创建请求：图生视频（首帧经 references[].first_frame 内联 data URL）+ 高清横屏档
 	pngBytes := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}
+	firstFrame := "data:image/png;base64," + base64.StdEncoding.EncodeToString(pngBytes)
 	mBody, ct := buildMultipartVideosBody(t, map[string]string{
-		"model":   "doubao-seedance-2-0-260128",
-		"prompt":  "小猫对着镜头打哈欠",
-		"seconds": "12",
-		"size":    "1792x1024",
-	}, "input_reference", "ref.png", pngBytes)
+		"model":      "doubao-seedance-2-0-260128",
+		"prompt":     "小猫对着镜头打哈欠",
+		"seconds":    "12",
+		"size":       "1792x1024",
+		"references": fmt.Sprintf(`[{"role":"first_frame","url":"%s"}]`, firstFrame),
+	}, "", "", nil)
 	req, taskErr := ParseVideosCreateRequest(mBody, ct)
 	if taskErr != nil {
 		t.Fatalf("parse: %+v", taskErr)

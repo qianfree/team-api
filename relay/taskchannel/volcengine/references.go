@@ -33,6 +33,10 @@ func refError(format string, args ...any) *common.TaskError {
 func validateSeedanceReferences(model string, refs []common.VideoReference) *common.TaskError {
 	counts := map[string]int{}
 	multimodal := false
+	// file/link（文档/网页参考）仅万相 wan3.0 支持，Seedance 明确拒绝
+	if terr := common.RejectFileLinkRoles(refs, model); terr != nil {
+		return terr
+	}
 	for i, ref := range refs {
 		if common.ReferenceKind(ref.Role) == "" {
 			return refError("references[%d].role %q is not supported", i, ref.Role)

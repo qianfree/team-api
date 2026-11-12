@@ -43,36 +43,20 @@ func TestVideosReferences_ParseMultipart(t *testing.T) {
 	w := multipart.NewWriter(&buf)
 	_ = w.WriteField("model", "m")
 	_ = w.WriteField("prompt", "p")
-	// 官方 SDK 以对象形态传 input_reference 时的 brackets 编码
-	_ = w.WriteField("input_reference[image_url]", "https://first.png")
-	_ = w.WriteField("references", `[{"role":"last_frame","url":"https://last.png"}]`)
+	// 首帧经 references[]（role first_frame），multipart 下为 JSON 字符串
+	_ = w.WriteField("references", `[{"role":"first_frame","url":"https://first.png"},{"role":"last_frame","url":"https://last.png"}]`)
 	_ = w.Close()
 
 	req, terr := ParseVideosCreateRequest(buf.Bytes(), w.FormDataContentType())
 	if terr != nil {
 		t.Fatalf("multipart 解析失败: %+v", terr)
 	}
-	if req.InputReference != "https://first.png" {
-		t.Fatalf("input_reference[image_url] 未解析: %+v", req)
-	}
 	if terr := ValidateVideosCreateRequest(req); terr != nil {
 		t.Fatalf("首尾帧应通过: %+v", terr)
 	}
-	refs := req.allReferences()
+	refs := req.References
 	if len(refs) != 2 || refs[0].Role != common.RefRoleFirstFrame || refs[1].Role != common.RefRoleLastFrame {
-		t.Fatalf("合并顺序异常: %+v", refs)
-	}
-
-	// input_reference[file_id]
-	buf.Reset()
-	w = multipart.NewWriter(&buf)
-	_ = w.WriteField("model", "m")
-	_ = w.WriteField("prompt", "p")
-	_ = w.WriteField("input_reference[file_id]", "file-abcdef12")
-	_ = w.Close()
-	req, terr = ParseVideosCreateRequest(buf.Bytes(), w.FormDataContentType())
-	if terr != nil || req.InputReferenceFileID != "file-abcdef12" {
-		t.Fatalf("input_reference[file_id] 未解析: %+v %+v", req, terr)
+		t.Fatalf("素材顺序异常: %+v", refs)
 	}
 }
 
@@ -93,8 +77,7 @@ func TestVideosReferences_ValidationErrors(t *testing.T) {
 		{"data URL 非 base64", `{"model":"m","prompt":"p","references":[{"role":"reference_image","url":"data:image/png,abc"}]}`, errCodeInvalidReferenceSrc},
 		{"非法 file_id", `{"model":"m","prompt":"p","references":[{"role":"reference_image","file_id":"abc"}]}`, errCodeInvalidReferenceSrc},
 		{"首帧与参考互斥", `{"model":"m","prompt":"p","references":[{"role":"first_frame","url":"https://a"},{"role":"reference_image","url":"https://b"}]}`, errCodeReferenceModeConflict},
-		{"input_reference 与参考互斥", `{"model":"m","prompt":"p","input_reference":{"image_url":"https://a"},"references":[{"role":"reference_video","url":"https://v"}]}`, errCodeReferenceModeConflict},
-		{"input_reference 与 first_frame 重复", `{"model":"m","prompt":"p","input_reference":{"image_url":"https://a"},"references":[{"role":"first_frame","url":"https://b"}]}`, errCodeReferenceModeConflict},
+		{"两个首帧", `{"model":"m","prompt":"p","references":[{"role":"first_frame","url":"https://a"},{"role":"first_frame","url":"https://b"}]}`, errCodeReferenceModeConflict},
 		{"两个尾帧", `{"model":"m","prompt":"p","references":[{"role":"last_frame","url":"https://a"},{"role":"last_frame","url":"https://b"}]}`, errCodeReferenceModeConflict},
 		{"参考视频超 3", `{"model":"m","prompt":"p","references":[` + strings.Repeat(`{"role":"reference_video","url":"https://v"},`, 3) + `{"role":"reference_video","url":"https://v"}]}`, errCodeTooManyReferences},
 		{"参考图超 9", `{"model":"m","prompt":"p","references":[` + strings.Repeat(`{"role":"reference_image","url":"https://i"},`, 9) + `{"role":"reference_image","url":"https://i"}]}`, errCodeTooManyReferences},
@@ -141,8 +124,8 @@ func TestVideosReferences_ResolveFiles(t *testing.T) {
 	}); terr == nil || terr.ErrCode != errCodeReferenceFileNotFound {
 		t.Fatalf("应报 not found: %+v", terr)
 	}
-	// 类别不符：音频文件当参考图
-	req, _ = parseJSONVideos(t, `{"model":"m","prompt":"p","input_reference":{"file_id":"file-audio0001"}}`)
+	// 类别不符：音频文件当首帧
+	req, _ = parseJSONVideos(t, `{"model":"m","prompt":"p","references":[{"role":"first_frame","file_id":"file-audio0001"}]}`)
 	if terr := ResolveVideosReferenceFiles(req, resolver); terr == nil || terr.ErrCode != errCodeReferenceFileMismatch {
 		t.Fatalf("应报 type mismatch: %+v", terr)
 	}
@@ -183,8 +166,8 @@ func TestVideosReferences_TaskBody(t *testing.T) {
 		t.Fatalf("参考图不得写入兼容字段 images[]: %s", raw)
 	}
 
-	// 首尾帧：input_reference 首帧在前，兼容字段只承载首/尾帧
-	req, _ = parseJSONVideos(t, `{"model":"m","prompt":"p","input_reference":{"image_url":"https://first"},"references":[{"role":"last_frame","url":"https://last"}]}`)
+	// 首尾帧：references 列表原序，兼容字段只承载首/尾帧
+	req, _ = parseJSONVideos(t, `{"model":"m","prompt":"p","references":[{"role":"first_frame","url":"https://first"},{"role":"last_frame","url":"https://last"}]}`)
 	raw, _ = BuildVideosTaskBody(req)
 	body = nil
 	_ = json.Unmarshal(raw, &body)

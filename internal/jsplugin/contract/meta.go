@@ -56,7 +56,7 @@ type Manifest struct {
 	// ReferenceRoles 标准端点参考素材角色声明（可选）：插件 decodeVideos 能承接的
 	// references[].role（first_frame/last_frame/reference_image/reference_video/reference_audio）。
 	// 宿主在调用 decodeVideos 前拦截未声明的角色（不静默丢弃）；缺省 = 仅 first_frame
-	// （即改造前 /v1/videos 单张 input_reference 的能力，存量插件零回归）。
+	// （只认单张首帧图的存量插件零回归）。
 	ReferenceRoles []string `json:"referenceRoles,omitempty"`
 	// ModelsFromConfig 扩展模型承载配置键（可选）：该 config 键的值（换行/逗号分隔
 	// 的模型名，或 JSON 数组）在运行时并入本插件服务清单——上游新增模型无需改插件

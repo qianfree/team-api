@@ -37,7 +37,7 @@ type DecodeContext struct {
 
 // FileRef 客户端上传文件的引用描述：ref 为请求级不透明句柄，文件字节永不进 JS。
 type FileRef struct {
-	Ref      string `json:"ref"`      // 如 request_file:input_reference（首个）/ request_file:images#1（后续）
+	Ref      string `json:"ref"`      // 如 request_file:image（首个）/ request_file:images#1（后续）
 	Field    string `json:"field"`    // multipart 字段名
 	Filename string `json:"filename"` // 原始文件名
 	MimeType string `json:"mimeType"` // 探测的内容类型

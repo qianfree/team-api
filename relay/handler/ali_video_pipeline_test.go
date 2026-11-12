@@ -143,14 +143,14 @@ func TestHandleTaskSubmit_AliNativeProtocol_FullPipeline(t *testing.T) {
 }
 
 func TestHandleTaskSubmit_OpenAIVideosToWan3_Pipeline(t *testing.T) {
-	// OpenAI Videos 协议（multipart）→ BuildVideosTaskBody → ali 适配器：
-	// input_reference → media[{type:first_frame}]、seconds → duration、size 短边 → resolution、
-	// sound → audio
+	// OpenAI Videos 协议（JSON）→ BuildVideosTaskBody → ali 适配器：
+	// references[].first_frame → media[{type:first_frame}]、seconds → duration、size 短边 → resolution、
+	// 厂商音频参数经 extra 按上游原生路径 parameters.audio 透传（sound 字段已移除）
 	var upstreamReceived map[string]any
 	upstream := newAliUpstream(t, &upstreamReceived)
 	defer upstream.Close()
 
-	mBody := []byte(`{"model":"wan3.0-video","prompt":"小猫对着镜头打哈欠","seconds":"8","size":"1280x720","aspect_ratio":"9:16","sound":"on","input_reference":{"image_url":"https://example.com/ref.png"}}`)
+	mBody := []byte(`{"model":"wan3.0-video","prompt":"小猫对着镜头打哈欠","seconds":"8","size":"1280x720","aspect_ratio":"9:16","references":[{"role":"first_frame","url":"https://example.com/ref.png"}],"extra":{"parameters":{"audio":true}}}`)
 	req, taskErr := ParseVideosCreateRequest(mBody, "application/json")
 	if taskErr != nil {
 		t.Fatalf("parse: %+v", taskErr)
@@ -186,11 +186,11 @@ func TestHandleTaskSubmit_OpenAIVideosToWan3_Pipeline(t *testing.T) {
 	input, _ := upstreamReceived["input"].(map[string]any)
 	media, _ := input["media"].([]any)
 	if len(media) != 1 {
-		t.Fatalf("expected first_frame media from input_reference, got %v", input["media"])
+		t.Fatalf("expected first_frame media from references, got %v", input["media"])
 	}
 	first, _ := media[0].(map[string]any)
 	if first["type"] != "first_frame" {
-		t.Fatalf("input_reference should map to first_frame: %v", media[0])
+		t.Fatalf("references first_frame should map to media first_frame: %v", media[0])
 	}
 	params, _ := upstreamReceived["parameters"].(map[string]any)
 	if params == nil || params["duration"] != float64(8) {
@@ -203,6 +203,6 @@ func TestHandleTaskSubmit_OpenAIVideosToWan3_Pipeline(t *testing.T) {
 		t.Fatalf("aspect_ratio → ratio mapping lost: %v", upstreamReceived["parameters"])
 	}
 	if params["audio"] != true {
-		t.Fatalf("sound → audio mapping lost: %v", upstreamReceived["parameters"])
+		t.Fatalf("extra parameters.audio passthrough lost: %v", upstreamReceived["parameters"])
 	}
 }

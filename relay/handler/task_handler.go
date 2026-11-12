@@ -289,6 +289,24 @@ func HandleTaskSubmit(
 		return
 	}
 
+	// 5.5 扩展字段 extra：预扣前校验（形态 + 保护键），构建上游请求体后平铺深合并。
+	// JS 插件自行构建上游请求，extra 留在任务体内由插件解码钩子按需读取，网关不合并
+	var extra map[string]any
+	if providerType != constant.ProviderJSTask {
+		var taskErr *common.TaskError
+		if extra, taskErr = common.ParseTaskExtra(req[common.ExtraFieldName]); taskErr == nil {
+			var protected []string
+			if p, ok := adaptor.(common.ExtraProtectedPathsProvider); ok {
+				protected = p.ExtraProtectedPaths()
+			}
+			taskErr = common.ValidateTaskExtra(extra, protected)
+		}
+		if taskErr != nil {
+			writeTaskError(rc.Writer, taskErr.StatusCode, taskErr.Message, taskErr.ErrCode)
+			return
+		}
+	}
+
 	// 6. 估算计费 + 预扣（ratios 为计费上下文：float64 乘数 + spec.* 规格事实值；
 	// body 同传给 EstimateTaskCost 供参数倍率按归一化任务体匹配，命中注入 ratios）
 	ratios := adaptor.EstimateBilling(ctx, info, body)
@@ -331,6 +349,19 @@ func HandleTaskSubmit(
 		dbgAttempt.MarkFinal(err)
 		writeTaskError(rc.Writer, http.StatusInternalServerError, "build request failed: "+err.Error(), "")
 		return
+	}
+	if len(extra) > 0 {
+		merged, mergeErr := common.MergeTaskExtra(requestBody, extra)
+		if mergeErr != nil {
+			if err := billingProvider.SettleTaskFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount); err != nil {
+				g.Log().Errorf(ctx, "HandleTaskSubmit: SettleTaskFailed error, requestID=%s, amount=%.6f, err=%v", rc.RequestID, preDeductAmount.InexactFloat64(), err)
+			}
+			g.Log().Warningf(ctx, "HandleTaskSubmit: merge extra failed, model=%s, err=%v", modelName, mergeErr)
+			dbgAttempt.MarkFinal(mergeErr)
+			writeTaskError(rc.Writer, http.StatusBadRequest, "extra is not supported by this channel: "+mergeErr.Error(), common.ErrCodeInvalidExtra)
+			return
+		}
+		requestBody = merged
 	}
 
 	resp, err := adaptor.DoRequest(attemptCtx, info, requestBody)
@@ -566,6 +597,16 @@ func HandleTaskFetch(
 	}
 	if task.FinishTime != nil && !deliveryPending {
 		respBody["completed_at"] = task.FinishTime.Unix()
+	}
+	// 终态成功任务附带用量摘要（usage 对象，渠道上报了哪些字段才出现哪些；
+	// 按需从终态快照恢复，交付未就绪的 JS 转存窗口不展示）。provider 未实现
+	// 恢复能力（测试桩等）时静默省略
+	if task.Status == string(common.TaskStatusSuccess) && !deliveryPending {
+		if rec, ok := dataProvider.(common.TaskUsageRecoverer); ok {
+			if usage := rec.RecoverTaskUsage(ctx, task); usage != nil {
+				respBody["usage"] = usage
+			}
+		}
 	}
 
 	writeJSON(rc.Writer, http.StatusOK, respBody)

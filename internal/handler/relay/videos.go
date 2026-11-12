@@ -16,6 +16,22 @@ import (
 // （selectTaskChannel 渠道调度 + relay_handler.HandleTaskSubmit 计费/提交/落库）；
 // 查询/删除/内容下载直连 relay_handler 的 Videos 处理器。
 
+// relayVideosFileResolver 构造参考素材 file_id → 签名 URL 的解析器
+// （/v1/videos 与 /v1/video/generations 两入口共用：按租户查 /v1/files 记录并签发 URL）
+func relayVideosFileResolver(r *ghttp.Request) relay_handler.VideosFileResolver {
+	return func(ids []string) (map[string]relay_handler.ResolvedReferenceFile, error) {
+		files, err := relaylogic.ResolveRelayFilesForTask(r.Context(), middleware.GetTenantID(r.Context()), ids)
+		if err != nil {
+			return nil, err
+		}
+		out := make(map[string]relay_handler.ResolvedReferenceFile, len(files))
+		for id, f := range files {
+			out[id] = relay_handler.ResolvedReferenceFile{URL: f.URL, ContentType: f.MimeType}
+		}
+		return out, nil
+	}
+}
+
 // HandleVideoCreate 处理 POST /v1/videos（创建视频生成任务）
 func HandleVideoCreate(r *ghttp.Request) {
 	body := r.GetBody()
@@ -37,18 +53,7 @@ func HandleVideoCreate(r *ghttp.Request) {
 		return
 	}
 	// 参考素材 file_id（/v1/files 上传）→ 签名 URL，并校验文件类别与 role 一致（同租户）
-	tenantID := middleware.GetTenantID(r.Context())
-	if taskErr := relay_handler.ResolveVideosReferenceFiles(req, func(ids []string) (map[string]relay_handler.ResolvedReferenceFile, error) {
-		files, err := relaylogic.ResolveRelayFilesForTask(r.Context(), tenantID, ids)
-		if err != nil {
-			return nil, err
-		}
-		out := make(map[string]relay_handler.ResolvedReferenceFile, len(files))
-		for id, f := range files {
-			out[id] = relay_handler.ResolvedReferenceFile{URL: f.URL, ContentType: f.MimeType}
-		}
-		return out, nil
-	}); taskErr != nil {
+	if taskErr := relay_handler.ResolveVideosReferenceFiles(req, relayVideosFileResolver(r)); taskErr != nil {
 		writeVideosError(r, taskErr.StatusCode, taskErr.Message, taskErr.ErrCode)
 		return
 	}

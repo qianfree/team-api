@@ -31,12 +31,18 @@ export interface CompiledChat {
 	previews: AttachmentPreview[]
 }
 
+/** references[] 素材项（/v1/videos 参考素材唯一通道） */
+export interface VideoReferenceItem {
+	role: 'first_frame' | 'reference_image' | 'reference_audio'
+	url: string
+}
+
 export interface CompiledVideo {
 	/** 发给 /v1/videos 的提示词（标记已换成文字标签） */
 	prompt: string
-	/** 首帧参考图的 data URL，无图时为空串 */
-	inputReference: string
-	/** 本期协议携带不了、未随请求发出的素材 */
+	/** 全部素材经 references[] 发出（单图→first_frame 首帧；多素材→reference_* 多模态参考） */
+	references: VideoReferenceItem[]
+	/** 未随请求发出的素材（视频：上游普遍不收 base64，待接入 /v1/files 上传通道） */
 	deferred: Attachment[]
 }
 
@@ -109,14 +115,28 @@ export function compileChatParts(text: string, attachments: Attachment[]): Compi
 	}
 }
 
+/**
+ * compileVideoPrompt 把「正文 + 附件」编译成 /v1/videos 请求载荷。
+ *
+ * 参考素材统一经 references[] 发出（协议层首帧与 reference_* 互斥，不可混发）：
+ * - 恰好一张图且无音频 → 首帧模式：role first_frame（全模型兼容，含只认首帧的模型）；
+ * - 多图 / 含音频 → 参考模式：role reference_image / reference_audio（仅支持多模态
+ *   参考的模型承接——Seedance 2.x / wan3.0 / MiniMax H3；只认首帧的模型会收到明确 400）。
+ * 视频附件一律不发：上游普遍不收 base64 视频（Seedance 明确拒绝），归入 deferred 提示。
+ */
 export function compileVideoPrompt(text: string, attachments: Attachment[]): CompiledVideo {
-	// /v1/videos 的 input_reference 只能带一张图，其余素材本期发不出去
-	const firstImage = attachments.find(a => a.kind === 'image')
-	return {
-		prompt: stripMentions(text),
-		inputReference: firstImage?.dataUrl || '',
-		deferred: attachments.filter(a => a.id !== firstImage?.id),
+	const images = attachments.filter(a => a.kind === 'image')
+	const audios = attachments.filter(a => a.kind === 'audio')
+	const deferred = attachments.filter(a => a.kind === 'video')
+
+	const references: VideoReferenceItem[] = []
+	if (images.length === 1 && audios.length === 0) {
+		references.push({ role: 'first_frame', url: images[0].dataUrl })
+	} else {
+		for (const img of images) references.push({ role: 'reference_image', url: img.dataUrl })
+		for (const au of audios) references.push({ role: 'reference_audio', url: au.dataUrl })
 	}
+	return { prompt: stripMentions(text), references, deferred }
 }
 
 export interface CompiledImageReferences {

@@ -31,6 +31,10 @@ func h3RequiresExplicitRatio(model string) bool {
 // validateReferences MiniMax 模型层约束。
 func validateReferences(model string, refs []common.VideoReference, ratio string) *common.TaskError {
 	counts := map[string]int{}
+	// file/link（文档/网页参考）仅万相 wan3.0 支持，MiniMax 明确拒绝
+	if terr := common.RejectFileLinkRoles(refs, model); terr != nil {
+		return terr
+	}
 	for i, ref := range refs {
 		if common.ReferenceKind(ref.Role) == "" {
 			return refError("invalid_references", "references[%d].role %q is not supported", i, ref.Role)

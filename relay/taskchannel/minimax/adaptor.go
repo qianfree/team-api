@@ -242,6 +242,12 @@ func hasInputVideo(req map[string]any) bool {
 	return false
 }
 
+// ExtraProtectedPaths extra 禁止改写的计费规格字段（per_second 矩阵查价键）。
+// 素材类字段（content/first_frame_image 等）不保护：其计量以官方 usage 结算多退少补
+func (a *Adaptor) ExtraProtectedPaths() []string {
+	return []string{"duration", "resolution"}
+}
+
 func (a *Adaptor) AdjustBillingOnSubmit(_ *common.RelayInfo, _ []byte) map[string]any {
 	return nil
 }
@@ -318,7 +324,10 @@ func buildV2RequestBody(req map[string]any, modelName string) map[string]any {
 		}
 		out["ratio"] = ratio
 	}
+	// 水印开关：v2 原生顶层 aigc_watermark > 通用收敛词汇 metadata.watermark
 	if wm, ok := req["aigc_watermark"].(bool); ok {
+		out["aigc_watermark"] = wm
+	} else if wm, ok := metaAny(req, "watermark").(bool); ok {
 		out["aigc_watermark"] = wm
 	}
 	return out
@@ -375,6 +384,12 @@ func buildV1RequestBody(req map[string]any, modelName string) map[string]any {
 	for _, key := range []string{"prompt_optimizer", "fast_pretreatment", "aigc_watermark"} {
 		if v, ok := req[key]; ok {
 			out[key] = v
+		}
+	}
+	// 水印开关：通用收敛词汇 metadata.watermark → aigc_watermark（原生顶层已传时不覆盖）
+	if _, ok := out["aigc_watermark"]; !ok {
+		if wm, ok := metaAny(req, "watermark").(bool); ok {
+			out["aigc_watermark"] = wm
 		}
 	}
 	return out
@@ -595,6 +610,34 @@ func parseV2TaskResult(body []byte, task *VideoTask) (*common.TaskInfo, error) {
 			InputAudioSeconds: float64(task.Usage.InputAudioSeconds),
 			OutputSeconds:     float64(task.Usage.OutputSeconds),
 		}
+	}
+
+	// 用量摘要（纯展示，不参与计费）：官方 usage 全量归一 + 任务级 resolution/ratio 词汇
+	if task.Usage != nil || task.Resolution != "" {
+		summary := &common.TaskUsageSummary{Resolution: task.Resolution}
+		if task.Usage != nil {
+			if task.Usage.InputSeconds > 0 {
+				summary.InputVideoSeconds = common.UsageF(float64(task.Usage.InputSeconds))
+			}
+			if task.Usage.OutputSeconds > 0 {
+				summary.OutputVideoSeconds = common.UsageF(float64(task.Usage.OutputSeconds))
+			}
+			if task.Usage.TotalSeconds > 0 {
+				summary.TotalSeconds = common.UsageF(float64(task.Usage.TotalSeconds))
+			}
+			if task.Usage.InputImageCount > 0 {
+				summary.InputImageCount = common.UsageI(task.Usage.InputImageCount)
+			}
+			if task.Usage.InputAudioSeconds > 0 {
+				summary.InputAudioSeconds = common.UsageF(float64(task.Usage.InputAudioSeconds))
+			}
+			if task.Usage.TotalTokens > 0 {
+				summary.PromptTokens = common.UsageI(task.Usage.PromptTokens)
+				summary.CompletionTokens = common.UsageI(task.Usage.CompletionTokens)
+				summary.TotalTokens = common.UsageI(task.Usage.TotalTokens)
+			}
+		}
+		info.UsageSummary = summary
 	}
 
 	switch task.Status {

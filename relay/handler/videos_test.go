@@ -507,3 +507,53 @@ func TestHandleTaskFetch_JSDeliveryGate(t *testing.T) {
 		t.Fatalf("就绪呈现异常: %s", rec.Body.String())
 	}
 }
+
+// stubUsageRecoverProvider 在任务桩上加用量恢复能力（TaskUsageRecoverer）
+type stubUsageRecoverProvider struct {
+	stubVideosTaskProvider
+	usage *common.TaskUsageSummary
+}
+
+func (s *stubUsageRecoverProvider) RecoverTaskUsage(_ context.Context, _ *common.AsyncTask) *common.TaskUsageSummary {
+	return s.usage
+}
+
+// completed 任务的 retrieve 响应附 usage 扩展字段（与 /v1/video/generations 查询同链路）
+func TestHandleVideosRetrieve_UsageAttached(t *testing.T) {
+	now := time.Now()
+	task := &common.AsyncTask{
+		PublicTaskID: "video_u1", Status: "SUCCESS", ModelName: "wan3.0-video",
+		ResultURL: "https://example.com/v.mp4", FinishTime: &now, CreatedAt: now, BillingSettled: true,
+	}
+	p := &stubUsageRecoverProvider{usage: &common.TaskUsageSummary{
+		OutputVideoSeconds: common.UsageF(5),
+		Resolution:         "720P",
+		TotalTokens:        common.UsageI(1000),
+	}}
+	p.task = task
+
+	rec := httptest.NewRecorder()
+	HandleVideosRetrieve(context.Background(), task.PublicTaskID, videosTestRC(rec), p)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Usage *common.TaskUsageSummary `json:"usage"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Usage == nil || resp.Usage.OutputVideoSeconds == nil || *resp.Usage.OutputVideoSeconds != 5 || resp.Usage.Resolution != "720P" {
+		t.Fatalf("usage 应出现在 retrieve 响应: %s", rec.Body.String())
+	}
+
+	// 恢复出 nil（渠道无用量）时省略字段
+	p.usage = nil
+	rec2 := httptest.NewRecorder()
+	HandleVideosRetrieve(context.Background(), task.PublicTaskID, videosTestRC(rec2), p)
+	var resp2 map[string]json.RawMessage
+	_ = json.Unmarshal(rec2.Body.Bytes(), &resp2)
+	if _, ok := resp2["usage"]; ok {
+		t.Fatalf("无用量不应有 usage 字段: %s", rec2.Body.String())
+	}
+}

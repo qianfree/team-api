@@ -103,6 +103,12 @@ type TaskInfo struct {
 	// nil = 上游未提供
 	MaterialUsage *TaskMaterialUsage
 
+	// UsageSummary 终态用量摘要（面向客户端查询端点的展示视图）：各渠道官方 usage 的归一
+	// 并集（时长/张数/分辨率/tokens），由各适配器在 ParseTaskResult 中声明式填充。
+	// 纯展示、不参与计费——结算仍走 ActualCost/MaterialUsage/tokens 链路，两者互不影响。
+	// nil = 该渠道未上报用量
+	UsageSummary *TaskUsageSummary
+
 	// Token 用量（部分异步任务上游会返回，如火山引擎视频模型）
 	PromptTokens     int
 	CompletionTokens int
@@ -112,6 +118,60 @@ type TaskInfo struct {
 	// 内的取值路径（上游 URL 或 base64 字段）。字节永不进 JS，转存由宿主产物流水线
 	// 完成（internal/logic/task/artifact）；空 = 无产物需要转存
 	Artifacts []TaskArtifact
+}
+
+// TaskUsageSummary 任务终态用量摘要（查询端点展示用）：各视频渠道官方 usage 的归一并集。
+// 「没有的数据不返回」：指针字段仅在上游实际报告时填充（含有意义的 0，如火山输入 token 恒 0），
+// 空值省略；分辨率保留各渠道原生词汇（如火山 "720p"、wan3.0/MiniMax "768P"）。
+type TaskUsageSummary struct {
+	InputVideoSeconds  *float64 `json:"input_video_seconds,omitempty"`  // 输入视频时长（秒）
+	OutputVideoSeconds *float64 `json:"output_video_seconds,omitempty"` // 输出（生成）视频时长（秒）
+	TotalSeconds       *float64 `json:"total_seconds,omitempty"`        // 总时长（输入+输出，秒）
+	InputImageCount    *int     `json:"input_image_count,omitempty"`    // 输入参考图片张数
+	InputAudioSeconds  *float64 `json:"input_audio_seconds,omitempty"`  // 输入音频时长（秒）
+	Resolution         string   `json:"resolution,omitempty"`           // 实际输出分辨率（渠道原生词汇）
+	PromptTokens       *int     `json:"prompt_tokens,omitempty"`        // 输入 token
+	CompletionTokens   *int     `json:"completion_tokens,omitempty"`    // 输出 token
+	TotalTokens        *int     `json:"total_tokens,omitempty"`         // 总 token
+}
+
+// UsageF / UsageI 构造 TaskUsageSummary 指针字段的小工具（适配器填充用）
+func UsageF(v float64) *float64 { return &v }
+func UsageI(v int) *int         { return &v }
+
+// SynthesizeUsageSummary 从计费链路已有的用量事实（MaterialUsage + tokens）合成展示摘要，
+// 供未显式声明 UsageSummary 的适配器兜底（如 JS 插件的 facts 链路）。全空返回 nil。
+func SynthesizeUsageSummary(info *TaskInfo) *TaskUsageSummary {
+	if info == nil {
+		return nil
+	}
+	s := &TaskUsageSummary{}
+	if mu := info.MaterialUsage; mu != nil {
+		if mu.InputVideoSeconds > 0 {
+			s.InputVideoSeconds = UsageF(mu.InputVideoSeconds)
+		}
+		if mu.OutputSeconds > 0 {
+			s.OutputVideoSeconds = UsageF(mu.OutputSeconds)
+		}
+		if mu.InputImageCount > 0 {
+			s.InputImageCount = UsageI(mu.InputImageCount)
+		}
+		if mu.InputAudioSeconds > 0 {
+			s.InputAudioSeconds = UsageF(mu.InputAudioSeconds)
+		}
+		s.Resolution = mu.Resolution
+	}
+	if info.TotalTokens > 0 {
+		s.PromptTokens = UsageI(info.PromptTokens)
+		s.CompletionTokens = UsageI(info.CompletionTokens)
+		s.TotalTokens = UsageI(info.TotalTokens)
+	}
+	if s.InputVideoSeconds == nil && s.OutputVideoSeconds == nil && s.TotalSeconds == nil &&
+		s.InputImageCount == nil && s.InputAudioSeconds == nil && s.Resolution == "" &&
+		s.PromptTokens == nil && s.CompletionTokens == nil && s.TotalTokens == nil {
+		return nil
+	}
+	return s
 }
 
 // TaskArtifact 产物声明（转存流水线的输入，纯数据、无 JS 依赖）。

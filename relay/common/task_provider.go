@@ -58,6 +58,13 @@ type TaskContentOpener interface {
 	OpenTaskContent(ctx context.Context, task *AsyncTask, key string) (artifact *StoredArtifact, found bool, err error)
 }
 
+// TaskUsageRecoverer TaskDataProvider 的可选能力：从任务终态快照（Data 内的上游原始
+// 查询响应）恢复用量摘要，供查询端点按需展示——不落库、不参与计费，历史已完成任务
+// 也能回放。nil = 该任务无可用用量（非终态/渠道未上报/快照不可解析）
+type TaskUsageRecoverer interface {
+	RecoverTaskUsage(ctx context.Context, task *AsyncTask) *TaskUsageSummary
+}
+
 // TaskDelivery 成功任务的对外交付视图。
 // Pending=true：上游已完成但产物仍在转存平台对象存储途中——对外须呈现进行中、不给链接
 // （客户端拿到完成态时链接必然可用）。ContentURL：就绪时的主产物统一内容链接（可空）。

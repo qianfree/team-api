@@ -148,6 +148,11 @@ func (a *VolcengineVideoAdaptor) EstimateBilling(_ context.Context, info *common
 	return ratios
 }
 
+// ExtraProtectedPaths extra 禁止改写的计费规格字段：时长（duration 及其帧数等价写法 frames）与分辨率
+func (a *VolcengineVideoAdaptor) ExtraProtectedPaths() []string {
+	return []string{"duration", "frames", "resolution"}
+}
+
 func (a *VolcengineVideoAdaptor) AdjustBillingOnSubmit(_ *common.RelayInfo, _ []byte) map[string]any {
 	return nil
 }
@@ -366,6 +371,17 @@ func (a *VolcengineVideoAdaptor) ParseTaskResult(body []byte) (*common.TaskInfo,
 		info.Status = common.TaskStatusSuccess
 		info.Progress = "100%"
 		info.ResultURL = resp.Content.VideoURL
+		// 用量摘要（纯展示）：任务级 duration/resolution + usage tokens。
+		// 官方口径输入 token 恒 0（total = completion），0 亦有对账意义故照常透出
+		info.UsageSummary = &common.TaskUsageSummary{
+			PromptTokens:     common.UsageI(info.PromptTokens),
+			CompletionTokens: common.UsageI(info.CompletionTokens),
+			TotalTokens:      common.UsageI(info.TotalTokens),
+			Resolution:       resp.Resolution,
+		}
+		if resp.Duration > 0 {
+			info.UsageSummary.OutputVideoSeconds = common.UsageF(float64(resp.Duration))
+		}
 	case "failed":
 		info.Status = common.TaskStatusFailure
 		info.FailReason = resp.Error.Message

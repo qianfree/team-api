@@ -189,7 +189,7 @@ export function decodeVideos(ctx) {
   if (!prompt) throw new Error("prompt is required");
   const content = [{ type: "text", text: prompt }];
   if (Array.isArray(raw.references) && raw.references.length) {
-    // references 为唯一权威来源（含 input_reference 派生的首帧），忽略兼容字段防重复
+    // references 为唯一权威来源（首帧 = role first_frame），忽略兼容字段防重复
     Array.prototype.push.apply(content, referenceContent(model, raw.references));
   } else {
     const images = Array.isArray(raw.images) && raw.images.length

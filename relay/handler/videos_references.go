@@ -14,7 +14,8 @@ import (
 // 设计见 docs/design/OpenAI-Videos协议扩展-参考素材设计方案-v1.md：
 //   - 网关只做协议层校验（形状 / role / 来源唯一 / 模式互斥 / 安全上限 / file 归属与类别），
 //     模型特有约束（数量、音频搭配、base64 可用性）由插件/适配器校验；
-//   - 官方 input_reference 语义不变：单图 = first_frame，与 references 合并为一个有序列表。
+//   - 参考图（含首帧）唯一入口为 references[].role（首帧 = first_frame），
+//     官方 input_reference 字段已移除（命中 400 并指引改用 references[]）。
 
 // 协议层安全上限（防滥用，非模型约束；单类上限取 Seedance 2.0 与 MiniMax H3 的公共上限）
 const (
@@ -22,6 +23,9 @@ const (
 	videosMaxReferenceImages = 9
 	videosMaxReferenceVideos = 3
 	videosMaxReferenceAudios = 3
+	// file/link 上限对齐万相 wan3.0 官方规则：各最多 1 个且互斥（可与 reference_* 组合）
+	videosMaxReferenceFiles = 1
+	videosMaxReferenceLinks = 1
 )
 
 // 参考素材错误码
@@ -99,46 +103,31 @@ func deref(s *string) string {
 	return *s
 }
 
-// allReferences 合并后的有序参考素材：input_reference 派生的首帧在前，其后按 references 原序。
-func (r *videosCreateRequest) allReferences() []common.VideoReference {
-	out := make([]common.VideoReference, 0, len(r.References)+1)
-	if r.InputReference != "" || r.InputReferenceFileID != "" {
-		out = append(out, common.VideoReference{
-			Role: common.RefRoleFirstFrame, URL: r.InputReference, FileID: r.InputReferenceFileID,
-		})
-	}
-	return append(out, r.References...)
-}
-
 // validateVideosReferences 协议层校验（见设计文档 §5.2）。
+// 首帧（role first_frame）与其他参考素材同在 references[] 中，无独立字段。
 func validateVideosReferences(req *videosCreateRequest) *common.TaskError {
-	if req.InputReference == "" && req.InputReferenceFileID == "" && len(req.References) == 0 {
+	if len(req.References) == 0 {
 		return nil
 	}
 	if len(req.References) > videosMaxReferences {
 		return referencesError(errCodeTooManyReferences, "too many references: at most %d", videosMaxReferences)
 	}
-	// input_reference 是官方首帧语义，与 references 中显式的 first_frame 二者只能取一
-	if req.InputReference != "" || req.InputReferenceFileID != "" {
-		for _, ref := range req.References {
-			if ref.Role == common.RefRoleFirstFrame {
-				return referencesError(errCodeReferenceModeConflict,
-					"input_reference is the first frame; do not also pass a first_frame in references")
-			}
-		}
-	}
 
 	counts := map[string]int{}
 	frames, references := 0, 0
-	for i, ref := range req.allReferences() {
-		label := referenceLabel(req, i)
+	for i, ref := range req.References {
+		label := fmt.Sprintf("references[%d]", i)
 		kind := common.ReferenceKind(ref.Role)
 		if kind == "" {
 			return referencesError(errCodeInvalidReferenceRole,
-				"%s.role must be one of first_frame, last_frame, reference_image, reference_video, reference_audio", label)
+				"%s.role must be one of first_frame, last_frame, reference_image, reference_video, reference_audio, file, link", label)
 		}
 		if (ref.URL == "") == (ref.FileID == "") {
 			return referencesError(errCodeInvalidReferenceSrc, "%s must provide exactly one of url or file_id", label)
+		}
+		// link 是网页 URL 语义，不接受文件引用（file_id 解析侧另有兜底拦截）
+		if ref.Role == common.RefRoleLink && ref.FileID != "" {
+			return referencesError(errCodeInvalidReferenceSrc, "%s.role link does not accept file_id; use url", label)
 		}
 		if ref.FileID != "" && !videosFileIDPattern.MatchString(ref.FileID) {
 			return referencesError(errCodeInvalidReferenceSrc, "%s.file_id is not a valid file id", label)
@@ -159,10 +148,15 @@ func validateVideosReferences(req *videosCreateRequest) *common.TaskError {
 	if counts[common.RefRoleFirstFrame] > 1 || counts[common.RefRoleLastFrame] > 1 {
 		return referencesError(errCodeReferenceModeConflict, "at most one first_frame and one last_frame are allowed")
 	}
-	// 首尾帧（图生视频）与多模态参考互斥：Seedance 2.0 与 MiniMax H3 共同规则
+	// 首尾帧（图生视频）与多模态参考互斥：Seedance 2.0 / MiniMax H3 / wan3.0 共同规则
+	// （file/link 属参考侧，与首尾帧同样互斥）
 	if frames > 0 && references > 0 {
 		return referencesError(errCodeReferenceModeConflict,
-			"first_frame/last_frame (incl. input_reference) cannot be combined with reference_image/reference_video/reference_audio")
+			"first_frame/last_frame cannot be combined with reference_image/reference_video/reference_audio/file/link")
+	}
+	// file 与 link 二选一（wan3.0），均可与 reference_* 组合
+	if counts[common.RefRoleFile] > 0 && counts[common.RefRoleLink] > 0 {
+		return referencesError(errCodeReferenceModeConflict, "file and link cannot be combined; provide only one of them")
 	}
 	if counts[common.RefRoleReferenceImage] > videosMaxReferenceImages {
 		return referencesError(errCodeTooManyReferences, "too many reference_image: at most %d", videosMaxReferenceImages)
@@ -173,27 +167,37 @@ func validateVideosReferences(req *videosCreateRequest) *common.TaskError {
 	if counts[common.RefRoleReferenceAudio] > videosMaxReferenceAudios {
 		return referencesError(errCodeTooManyReferences, "too many reference_audio: at most %d", videosMaxReferenceAudios)
 	}
+	if counts[common.RefRoleFile] > videosMaxReferenceFiles {
+		return referencesError(errCodeTooManyReferences, "too many file: at most %d", videosMaxReferenceFiles)
+	}
+	if counts[common.RefRoleLink] > videosMaxReferenceLinks {
+		return referencesError(errCodeTooManyReferences, "too many link: at most %d", videosMaxReferenceLinks)
+	}
 	return nil
 }
 
-// referenceLabel 错误信息中的素材定位（input_reference 或 references[i]）。
-func referenceLabel(req *videosCreateRequest, mergedIndex int) string {
-	if req.InputReference != "" || req.InputReferenceFileID != "" {
-		if mergedIndex == 0 {
-			return "input_reference"
-		}
-		mergedIndex--
-	}
-	return fmt.Sprintf("references[%d]", mergedIndex)
-}
-
 // validateReferenceURL url 形态校验：http(s)；data URL 主类型须与 role 类别一致；
-// 厂商素材 URI（asset:// 方舟素材库、mm_file:// MiniMax 文件）原样透传，由插件按渠道校验。
+// 厂商素材 URI（asset:// 方舟素材库、mm_file:// MiniMax 文件、oss:// 百炼临时 URL）
+// 原样透传，由插件按渠道校验。file/link 为非媒体参考（wan3.0）：仅收 http(s) URL
+// （file 另收 oss:// 临时 URL），不支持 base64 与厂商素材 URI
 func validateReferenceURL(label, kind, raw string) *common.TaskError {
 	lower := strings.ToLower(raw)
+	httpOK := strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://")
+	switch kind {
+	case common.RefKindLink:
+		if httpOK {
+			return nil
+		}
+		return referencesError(errCodeInvalidReferenceSrc, "%s.url must be an http(s) URL", label)
+	case common.RefKindFile:
+		if httpOK || strings.HasPrefix(lower, "oss://") {
+			return nil
+		}
+		return referencesError(errCodeInvalidReferenceSrc, "%s.url must be an http(s) or oss:// URL", label)
+	}
 	switch {
-	case strings.HasPrefix(lower, "http://"), strings.HasPrefix(lower, "https://"),
-		strings.HasPrefix(lower, "asset://"), strings.HasPrefix(lower, "mm_file://"):
+	case httpOK, strings.HasPrefix(lower, "asset://"), strings.HasPrefix(lower, "mm_file://"),
+		strings.HasPrefix(lower, "oss://"):
 		return nil
 	case strings.HasPrefix(lower, "data:"):
 		header, _, ok := strings.Cut(raw[len("data:"):], ",")
@@ -226,7 +230,6 @@ func ResolveVideosReferenceFiles(req *videosCreateRequest, resolve VideosFileRes
 			ids = append(ids, id)
 		}
 	}
-	collect(req.InputReferenceFileID)
 	for _, ref := range req.References {
 		collect(ref.FileID)
 	}
@@ -247,6 +250,14 @@ func ResolveVideosReferenceFiles(req *videosCreateRequest, resolve VideosFileRes
 			return "", referencesError(errCodeReferenceFileNotFound, "%s.file_id %q was not found", label, id)
 		}
 		kind := common.ReferenceKind(role)
+		switch kind {
+		case common.RefKindLink:
+			// link 是网页 URL 语义，文件引用无从谈起
+			return "", referencesError(errCodeInvalidReferenceSrc, "%s.role link does not accept file_id; use url", label)
+		case common.RefKindFile:
+			// 文档类内容类型多样（application/pdf、text/markdown 等），不做主类型前缀限制
+			return file.URL, nil
+		}
 		if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(file.ContentType)), kind+"/") {
 			return "", referencesError(errCodeReferenceFileMismatch,
 				"%s.file_id %q has content type %q, expected %s/*", label, id, file.ContentType, kind)
@@ -254,13 +265,6 @@ func ResolveVideosReferenceFiles(req *videosCreateRequest, resolve VideosFileRes
 		return file.URL, nil
 	}
 
-	if req.InputReferenceFileID != "" {
-		url, terr := apply("input_reference", common.RefRoleFirstFrame, req.InputReferenceFileID)
-		if terr != nil {
-			return terr
-		}
-		req.InputReference, req.InputReferenceFileID = url, ""
-	}
 	for i := range req.References {
 		if req.References[i].FileID == "" {
 			continue

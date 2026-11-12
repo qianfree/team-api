@@ -80,6 +80,11 @@ func parseFloatOrZero(s string) float64 {
 	return f
 }
 
+// ExtraProtectedPaths extra 禁止改写的计费规格字段（EstimateBilling 读 seconds/size）
+func (a *SoraAdaptor) ExtraProtectedPaths() []string {
+	return []string{"seconds", "size"}
+}
+
 func (a *SoraAdaptor) AdjustBillingOnSubmit(_ *common.RelayInfo, _ []byte) map[string]any {
 	return nil
 }
@@ -104,6 +109,8 @@ func (a *SoraAdaptor) BuildRequestBody(_ context.Context, info *common.RelayInfo
 	if info.ChannelMeta.UpstreamModelName != "" {
 		req["model"] = info.ChannelMeta.UpstreamModelName
 	}
+	// 本适配器整体转发任务体：extra 由任务管线平铺合并，不得以原键名外泄到上游
+	delete(req, common.ExtraFieldName)
 	data, _ := json.Marshal(req)
 	return strings.NewReader(string(data)), nil
 }

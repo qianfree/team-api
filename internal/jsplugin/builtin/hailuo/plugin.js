@@ -228,7 +228,7 @@ export function decodeVideos(ctx) {
   // 分辨率：显式输入（resolution/size）经 resolutionFor 归一；缺省按协议默认——
   // H3 与 estimateUsage 的 H3 分支同口径（768P），v1 系列走 defaultResolution
   const rawResolution = trimmed(metadata.resolution) || trimmed(metadata.size);
-  // references 为唯一权威来源（含 input_reference 派生的首帧）；无则回落兼容字段
+  // references 为唯一权威来源（首帧 = role first_frame）；无则回落兼容字段
   const refs = Array.isArray(raw.references) && raw.references.length ? raw.references : null;
   const image = Array.isArray(raw.images) && raw.images.length && typeof raw.images[0] === "string" ? raw.images[0].trim() : trimmed(metadata.image);
   const lastFrame = trimmed(metadata.last_frame);

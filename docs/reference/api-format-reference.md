@@ -140,7 +140,7 @@
 
 错误响应为 OpenAI 风格 OaiError（`{"error": {"type": "...", "message": "..."}}`），与官方 v2 一致。
 
-**OpenAI 协议互通**：同一渠道下 `POST /v1/videos`（OpenAI Videos 协议）与 `POST /v1/video/generations`（通用任务体）可直接调用 MiniMax 视频模型（H3 与 Hailuo 系列按模型自动分派 v2/v1 上游协议）。`size` 只借 OpenAI 协议的字段形态、**值原样透传不换算**——请直接传目标供应商的原生分辨率词汇（H3：`768P`/`2K`/`480P`；Hailuo 2.x：`768P`/`1080P`）；非官方档位值会原样送达上游（上游 400 则任务提交失败、预扣全额退款）。时长取 `seconds`/`duration`/`metadata.duration`（缺省 6 秒），`input_reference`/`images[0]` 作为首帧图（v1 转为 `first_frame_image`），纯文生视频时 v2 ratio 默认 `16:9`。`/v1/videos` 扩展字段 `references[]`（`[{role, url|file_id}]`，role ∈ first_frame / last_frame / reference_image / reference_video / reference_audio）按原序映射为 v2 `content[]` 带 role 的项（H3 家族：参考合计 ≤12、图 ≤9 / 视频 ≤3 / 音频 ≤3，H3-Lite 参考模式须显式 aspect_ratio）；v1 仅承接首/尾帧（S2V-01 的单张 reference_image 映射为 subject_reference）。字段契约见 `docs/design/OpenAI-Videos协议扩展-参考素材设计方案-v1.md`。
+**OpenAI 协议互通**：同一渠道下 `POST /v1/videos`（OpenAI Videos 协议）与 `POST /v1/video/generations`（通用任务体）可直接调用 MiniMax 视频模型（H3 与 Hailuo 系列按模型自动分派 v2/v1 上游协议）。`size` 只借 OpenAI 协议的字段形态、**值原样透传不换算**——请直接传目标供应商的原生分辨率词汇（H3：`768P`/`2K`/`480P`；Hailuo 2.x：`768P`/`1080P`）；非官方档位值会原样送达上游（上游 400 则任务提交失败、预扣全额退款）。时长取 `seconds`/`duration`/`metadata.duration`（缺省 6 秒），首帧图取 `references[].first_frame`（任务体兼容字段 `images[0]`，v1 转为 `first_frame_image`），纯文生视频时 v2 ratio 默认 `16:9`。`references[]`（`[{role, url|file_id}]`，role ∈ first_frame / last_frame / reference_image / reference_video / reference_audio）按原序映射为 v2 `content[]` 带 role 的项（H3 家族：参考合计 ≤12、图 ≤9 / 视频 ≤3 / 音频 ≤3，H3-Lite 参考模式须显式 aspect_ratio）；v1 仅承接首/尾帧（S2V-01 的单张 reference_image 映射为 subject_reference）。字段契约见 `docs/design/OpenAI-Videos协议扩展-参考素材设计方案-v1.md`。
 
 ### MiniMax 官方视频协议 v1（`/v1/video_generation`，Hailuo 系列）
 
@@ -151,6 +151,46 @@ Hailuo 2.x 及旧型号（T2V/I2V/S2V-01，传入即转发不拦截）走 v1 扁
 - **成品二跳由网关代取**：官方流程「file_id → GET /v1/files/retrieve → download_url」在轮询时链式完成，`download_url` 落任务记录并回放到查询响应；不暴露 files/retrieve 代理端点
 - **取消/删除**：v1 上游无此能力，端点不提供（v2 的 DELETE 端点对 v1 任务返回 400）
 - v1 无 usage 返回，计费按请求规格（per_second 矩阵 × 时长），与 v2 口径一致
+
+### 视频任务扩展字段 `extra`（`/v1/videos`、`/v1/video/generations`）
+
+两个视频提交端点均接受顶层 `extra` 对象，是厂商参数的**唯一通道**（metadata 字段已并入）。提交前网关做**已知键提升**：`extra` 中网关认识的键（`mode`/`negative_prompt`/`cfg_scale`/`camera_control`/`image_tail`/`seed`/`watermark`/`return_last_frame`/`audio_url`/`prompt_extend`/音频开关 `sound`("on"/"off")/`generate_audio`(bool)——/v1/videos 已移除同名顶层字段（`watermark` 同样拒绝顶层直传、命中 400），厂商音频/水印控制唯一入口即 extra；`/v1/video/generations` 另有顶层 `watermark` 收敛词汇）搬进任务体 metadata 由适配器映射到上游正确位置并联动计费（如可灵 `mode=pro` 3.5x），并从 `extra` 剔除；其余键在适配器构建上游请求体后解包平铺、深合并（对象递归合并、数组/标量整体替换、`null` 删除该键，merge-patch 语义），`extra` 原键名不下发上游。
+
+- **编码**：JSON body 传对象；`/v1/videos` multipart 下传 JSON 字符串（与 `references` 同口径；`/v1/video/generations` 仅接受对象形态）
+- **未知键路径为上游请求体词汇**：阿里 `input.*` / `parameters.*`，Gemini `parameters.*`（`instances` 为数组只支持整体替换），其余渠道为顶层字段
+- **计费保护**：`model`、`callback_url` 与各渠道计费规格字段（时长/分辨率/档位/张数，如可灵 `duration`、Seedance `duration`/`frames`/`resolution`、阿里 `parameters.duration`/`parameters.resolution`）禁止经未知键改写，命中 400 `extra_field_protected`（预扣前拒绝，无资金副作用）；可灵 `mode` 是已知键走提升通道、计费自动联动，不受此限；控制计费规格请用标准字段（`duration` / `resolution` / `aspect_ratio`）
+- **形态校验**：非对象 / 非 JSON 返回 400 `invalid_extra`
+- **与顶层收敛词汇的冲突**：`/v1/video/generations` 顶层 `watermark` 与 `extra.watermark` 同传时归一后须一致，否则 400（错误码 `field_conflict`，不静默覆盖）
+- **JS 插件渠道**：`extra` 原样留在任务体内由插件解码钩子自读（已知键已在 metadata），网关不合并
+
+```json
+{ "model": "wan3.0-video", "prompt": "小猫奔跑", "seconds": "5",
+  "extra": { "input": { "negative_prompt": "模糊" }, "parameters": { "shot_type": "multi" } } }
+```
+
+### 通用任务端点 `/v1/video/generations` 参数契约（已收敛）
+
+客户端参数收敛为固定词汇集，网关归一成与 `/v1/videos` 同构的通用任务体后走同一管线：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `model` | string | ✅ | |
+| `prompt` | string | ✅ | 必填但可传空串（纯图生视频场景） |
+| `duration` | integer | | 时长（秒）；-1 = 智能时长（wan3.0）。统一词汇，归一层转换 |
+| `resolution` | string | | 分辨率档位（厂商原生词汇，如 `720P`/`2K`/`1080p`） |
+| `aspect_ratio` | string | | 画面比例（`16:9`/`9:16`） |
+| `sound` | string | | `"on"`/`"off"`（宽松兼容 bool） |
+| `watermark` | bool | | 水印开关（宽松兼容 `"on"`/`"off"`/`"true"`/`"false"`）；归一进 `metadata.watermark`，各适配器映射到上游原生词汇（火山 `watermark`、阿里 `parameters.watermark`、MiniMax `aigc_watermark`、可灵 `watermark_info.enabled`；Sora/Veo 上游无此参数、忽略）。与 `extra.watermark` 同传时归一后须一致，否则 400 |
+| `references[]` | array | | 参考素材唯一通道 `[{role, url|file_id}]`，role ∈ first_frame / last_frame / reference_image / reference_video / reference_audio / **file** / **link**（file=文档文件参考、link=网页链接参考，万相 wan3.0 原生词汇：各 ≤1 且互斥、可与 reference_* 组合、与首尾帧互斥，仅 wan3 类模型支持）；file_id 网关解析为签名 URL（link 不接受 file_id；file 不限内容类型） |
+| `extra` | object | | **厂商参数唯一通道**（metadata 已并入）：已知键直接写键名（可灵 `mode`(std/pro，计费联动)/`negative_prompt`/`cfg_scale`/`camera_control`/`image_tail`、火山 `seed`/`watermark`/`return_last_frame`、阿里 `negative_prompt`/`audio_url`/`prompt_extend`/`watermark`/`seed`），网关映射到上游正确位置；其余键按上游原生路径平铺深合并（见上节） |
+
+**废弃字段直接 400**（错误码 `field_deprecated`，message 给出替代指引），不静默忽略——丢弃参考素材/时长会「按请求计费、按默认档生成」：
+
+- 顶层：`images` `seconds` `mode` `size` `ratio` `generate_audio` `first_frame_image` `last_frame_image` `subject_reference` `media` `content` `prompt_optimizer` `fast_pretreatment` `aigc_watermark` `metadata`（厂商参数并入 extra）
+
+MiniMax/阿里原生直传形态由各自官方端点（`/v2/video_generation` 等）承接；JS 插件解码钩子收到的是归一后的通用任务体（`seconds`/兼容双写 `images[]`/`metadata` 形态不变，见 `docs/plugin-api/v1.md`）。
+
+**查询响应的 usage 对象**（`GET /v1/video/generations/{task_id}`，status=SUCCESS 时按渠道上报附加）：各渠道官方 usage 的归一并集——`input_video_seconds` / `output_video_seconds` / `total_seconds` / `input_image_count` / `input_audio_seconds` / `resolution`（渠道原生词汇，如火山 `720p`、wan3.0/MiniMax `768P`）/ `prompt_tokens` / `completion_tokens` / `total_tokens`。没有的数据不返回该字段（如火山无素材计量、wan3.0 无 token；火山输入 token 恒 0 属官方口径、照常透出）。用量从任务终态快照按需恢复，不参与计费，历史已完成任务同样可回放。
 
 ### OpenAI 格式端点响应
 

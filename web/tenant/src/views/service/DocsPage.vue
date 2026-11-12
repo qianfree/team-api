@@ -759,16 +759,15 @@ const categories: Category[] = [
 				method: 'POST',
 				path: '/v1/videos',
 				title: 'Create Video（OpenAI 协议）',
-				desc: '创建视频生成任务，兼容 OpenAI Videos 协议（openai-python / openai-node SDK 的 client.videos.create）。异步任务模式：提交后返回 Video 对象（status: queued），轮询 Retrieve 直到 completed。参考素材：官方 input_reference 为单张首帧图；扩展字段 references 支持多参考图、参考视频、参考音频与首尾帧（Seedance / MiniMax H3 等多模态参考模型）。参考素材参数错误返回 400，错误码：invalid_references / invalid_reference_role / invalid_reference_source / reference_mode_conflict / reference_file_not_found / reference_file_type_mismatch / too_many_references / reference_not_supported。',
+				desc: '创建视频生成任务，兼容 OpenAI Videos 协议（openai-python / openai-node SDK 的 client.videos.create）。异步任务模式：提交后返回 Video 对象（status: queued），轮询 Retrieve 直到 completed。参考素材（含首帧图）统一经 references 扩展字段传递，支持多参考图、参考视频、参考音频与首尾帧（Seedance / MiniMax H3 等多模态参考模型）；厂商音频开关等私有参数经 extra 透传。历史字段 input_reference / sound / generate_audio 已移除，命中返回 400（错误码 field_deprecated）。参考素材参数错误返回 400，错误码：invalid_references / invalid_reference_role / invalid_reference_source / reference_mode_conflict / reference_file_not_found / reference_file_type_mismatch / too_many_references / reference_not_supported。',
 				params: [
 					{ field: 'model', type: 'string', desc: '模型 ID（如 doubao-seedance-2-0-260128、MiniMax-H3）', required: true },
 					{ field: 'prompt', type: 'string', desc: '视频描述提示词。多模态参考模型在提示词中按「图片N / 视频N / 音频N」引用素材（N 为同类素材在 references 中的顺序，从 1 起）', required: true },
 					{ field: 'seconds', type: 'string | number', desc: '视频时长（秒）。官方 SDK 为字符串形态；各模型档位不同，缺省由模型决定' },
 					{ field: 'size', type: 'string', desc: '分辨率。值原样透传，请传目标模型的官方档位词汇（如 Seedance 的 720p/1080p、MiniMax H3 的 768P/2K）' },
 					{ field: 'aspect_ratio', type: 'string', desc: '屏幕比例（扩展字段，如 16:9 / 9:16 / 1:1），原样透传，不传由模型取默认' },
-					{ field: 'sound', type: 'string | boolean', desc: '是否生成音频（扩展字段："on"/"off" 或 true/false；等价布尔字段 generate_audio 在 sound 缺省时生效）' },
-					{ field: 'input_reference', type: 'file | object', desc: '官方字段：单张首帧参考图。支持文件上传（≤6MB）、{"image_url": "URL 或 base64"} 或 {"file_id": "file-xxx"}（/v1/files 上传的文件）' },
-					{ field: 'references', type: 'array', desc: '扩展字段：参考素材有序列表 [{role, url | file_id}]。role ∈ first_frame / last_frame / reference_image / reference_video / reference_audio；url 支持 http(s)、base64 data URL（MIME 须与角色匹配）、厂商素材 URI（asset:// / mm_file://，仅对应厂商渠道有效）；file_id 为 /v1/files 上传的文件（同租户，类型须与角色匹配），url 与 file_id 二选一。列表顺序即提示词「图片N/视频N/音频N」编号依据；首尾帧（含 input_reference）与 reference_* 互斥；协议层上限：总数 20、参考图 9、参考视频 3、参考音频 3，模型特有约束（数量、音频须搭配图/视频等）由模型侧校验。官方 SDK 经 extra_body 传入时须 JSON 字符串：extra_body={"references": JSON.stringify([...])}' },
+					{ field: 'references', type: 'array', desc: '参考素材唯一通道：有序列表 [{role, url | file_id}]。role ∈ first_frame / last_frame / reference_image / reference_video / reference_audio（首帧参考图用 first_frame）；url 支持 http(s)、base64 data URL（MIME 须与角色匹配）、厂商素材 URI（asset:// / mm_file://，仅对应厂商渠道有效）；file_id 为 /v1/files 上传的文件（同租户，类型须与角色匹配），url 与 file_id 二选一。列表顺序即提示词「图片N/视频N/音频N」编号依据；首尾帧与 reference_* 互斥；协议层上限：总数 20、参考图 9、参考视频 3、参考音频 3，模型特有约束（数量、音频须搭配图/视频等）由模型侧校验。官方 SDK 经 extra_body 传入时须 JSON 字符串：extra_body={"references": JSON.stringify([...])}' },
+					{ field: 'extra', type: 'object', desc: '厂商私有参数透传（扩展字段）：已知键（可灵 mode/negative_prompt/cfg_scale/camera_control、火山 seed/watermark、音频开关 sound("on"/"off")/generate_audio(bool) 等）直接写键名由网关映射并联动计费；其余键按上游原生路径平铺深合并（如万相音频 {"parameters":{"audio":true}}）' },
 				],
 				example: {
 					req: `{
@@ -837,7 +836,7 @@ const categories: Category[] = [
 				method: 'POST',
 				path: '/v1/files',
 				title: 'Upload File',
-				desc: '上传文件（multipart/form-data），返回 file_id 供视频参考素材引用（references[].file_id / input_reference.file_id）。适合超过请求体大小上限的视频/音频素材：先上传，再在创建视频时以 file_id 引用，网关提交前自动替换为签名 URL（有效期默认 24 小时，覆盖上游排队时长）。文件类型白名单与每租户配额由平台管理员配置。',
+				desc: '上传文件（multipart/form-data），返回 file_id 供视频参考素材引用（references[].file_id）。适合超过请求体大小上限的视频/音频素材：先上传，再在创建视频时以 file_id 引用，网关提交前自动替换为签名 URL（有效期默认 24 小时，覆盖上游排队时长）。文件类型白名单与每租户配额由平台管理员配置。',
 				params: [
 					{ field: 'file', type: 'file', desc: '要上传的文件（multipart 文件字段）', required: true },
 					{ field: 'purpose', type: 'string', desc: '用途标记（OpenAI 词汇，如 user_data / vision），仅作元数据，不驱动网关行为', required: true },
@@ -858,30 +857,34 @@ const categories: Category[] = [
 				method: 'POST',
 				path: '/v1/video/generations',
 				title: 'Video Generations (Submit)',
-				desc: '提交视频生成任务（通用任务端点，请求体由目标模型的插件/适配器解码）。该接口为异步任务模式，提交后返回任务 ID，通过查询接口轮询结果。参考素材以 url 形态由插件解码；file_id 引用仅 /v1/videos 支持。',
+				desc: '提交视频生成任务（通用任务端点，参数已收敛为 8 个固定词汇）。历史重复词汇（seconds/size/ratio/images/media/content/metadata 等）已废弃，命中直接返回 400 并提示替代字段。厂商参数统一经 extra 传递：网关认识的已知键（可灵 mode/cfg_scale/camera_control、火山 seed/watermark、阿里 audio_url 等）直接写键名由网关映射并联动计费，其余键按上游原生路径平铺透传。',
 				params: [
 					{ field: 'model', type: 'string', desc: '模型 ID（如 kling-video-v1）', required: true },
-					{ field: 'prompt', type: 'string', desc: '视频描述提示词' },
-					{ field: 'metadata', type: 'object', desc: '附加参数（resolution 分辨率、duration 时长、ratio 比例等）' },
-					{ field: 'images', type: 'array', desc: '参考图 URL 列表（首张作首帧；多模态参考模型建议改用 /v1/videos 的 references 字段）' },
-					{ field: 'references', type: 'array', desc: '参考素材列表 [{role, url}]，role 词汇与 /v1/videos 一致，由插件按模型解码' },
-					{ field: 'size', type: 'string', desc: '视频分辨率（已弃用，建议使用 metadata.resolution）' },
-					{ field: 'length', type: 'integer', desc: '视频时长秒数（已弃用，建议使用 metadata.duration）' },
+					{ field: 'prompt', type: 'string', desc: '视频描述提示词（必填，可传空串；纯图生视频场景）', required: true },
+					{ field: 'duration', type: 'integer', desc: '视频时长（秒）；-1 = 智能时长（部分模型支持）' },
+					{ field: 'resolution', type: 'string', desc: '分辨率档位，传目标模型的原生词汇（如 720P / 2K / 1080p）' },
+					{ field: 'aspect_ratio', type: 'string', desc: '画面比例，如 16:9 / 9:16 / 1:1' },
+					{ field: 'sound', type: 'string', desc: '音频开关："on" / "off"（部分模型支持）' },
+					{ field: 'references', type: 'array', desc: '参考素材列表 [{role, url|file_id}]，role ∈ first_frame / last_frame / reference_image / reference_video / reference_audio / file / link（file=文档文件参考、link=网页链接参考，万相 wan3.0 原生：各最多 1 个且互斥、可与 reference_* 组合）；file_id 为 /v1/files 上传文件的引用（link 不接受 file_id）' },
+					{ field: 'extra', type: 'object', desc: '厂商参数唯一通道：已知键（可灵 mode(std/pro)/negative_prompt/cfg_scale/camera_control/image_tail、火山 seed/watermark/return_last_frame、阿里 negative_prompt/audio_url/prompt_extend、音频开关 sound("on"/"off")/generate_audio(bool)）直接写键名，由网关映射到上游正确位置并联动计费；其余键按上游原生路径写（嵌套支持点路径深合并），model/callback_url 与计费规格字段受保护' },
 				],
 				example: {
 					req: `{
   "model": "kling-video-v1",
   "prompt": "A cat walking through a garden in slow motion",
-  "metadata": {
-    "resolution": "1080p",
-    "duration": 5,
-    "ratio": "16:9"
-  }
+  "duration": 5,
+  "resolution": "1080p",
+  "aspect_ratio": "16:9",
+  "references": [
+    { "role": "first_frame", "url": "https://example.com/cat.png" }
+  ],
+  "extra": { "mode": "std" }
 }`,
 					resp: `{
   "id": "task_abc123",
-  "status": "pending",
-  "model": "kling-video-v1"
+  "status": "SUBMITTED",
+  "model": "kling-video-v1",
+  "created_at": 1717100000
 }`,
 				},
 			},
@@ -890,7 +893,7 @@ const categories: Category[] = [
 				method: 'GET',
 				path: '/v1/video/generations/{task_id}',
 				title: 'Video Generations (Fetch)',
-				desc: '查询视频生成任务结果。返回任务状态与结果地址：成功（status=SUCCESS）时 url 为结果地址——JS 插件任务为平台统一内容链接（签名直链，可直接下载），其余平台为上游结果地址；上游已完成但产物仍在转存平台存储的 JS 插件任务保持 IN_PROGRESS（progress=99%），转存完成后才返回 SUCCESS + url。',
+				desc: '查询视频生成任务结果。返回任务状态与结果地址：成功（status=SUCCESS）时 url 为结果地址——JS 插件任务为平台统一内容链接（签名直链，可直接下载），其余平台为上游结果地址；上游已完成但产物仍在转存平台对象存储的 JS 插件任务保持 IN_PROGRESS（progress=99%），转存完成后才返回 SUCCESS + url。成功任务附 usage 用量对象（渠道上报了哪些字段才出现哪些）。',
 				params: [
 					{ field: 'task_id', type: 'string', desc: '任务 ID（路径参数）', required: true },
 				],
@@ -902,7 +905,14 @@ const categories: Category[] = [
   "created_at": 1717100000,
   "progress": "100%",
   "url": "https://cdn.example.com/video/abc123.mp4",
-  "completed_at": 1717100300
+  "completed_at": 1717100300,
+  "usage": {
+    "output_video_seconds": 5,
+    "resolution": "1080p",
+    "prompt_tokens": 0,
+    "completion_tokens": 38000,
+    "total_tokens": 38000
+  }
 }`,
 				},
 			},

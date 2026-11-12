@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onUnmounted } from 'vue'
-import { NInput, NInputNumber, NSwitch } from 'naive-ui'
+import { NInput, NInputNumber } from 'naive-ui'
 import { createPlaygroundApi } from '@/utils/playgroundApi'
 import { createPoller } from '@/composables/usePolling'
 import Icon from '@/components/common/Icon.vue'
@@ -45,14 +45,11 @@ const aspectRatioOptions = [
 	{ value: '3:4', label: '3:4' },
 	{ value: '21:9', label: '21:9 宽银幕' },
 ]
-// 是否包含声音：始终显式下发 on/off，让开关状态与请求一致（不依赖各上游的默认值）。
-// 目前只有可灵（metadata.sound）与豆包（metadata.generate_audio）消费该字段，
-// MiniMax / Sora 适配器不读取，传了也会被忽略——界面上已注明。
-const withSound = ref(false)
 
 // ── 参考素材 ──
-// 前端按多素材形态实现（图/视/音皆可上传、@ 列表按类型命名），但本期只有首帧参考图
-// 能随请求发出：/v1/videos 的 input_reference 仅承载一张图，其余素材待后端扩协议。
+// 全部素材随请求经 references[] 发出（compileVideoPrompt 决定角色）：单图走 first_frame
+// 首帧（全模型兼容），多图/含音频走 reference_* 多模态参考（仅多模态参考模型承接，
+// 不支持时上游明确 400）；视频附件暂不发（上游普遍不收 base64，待接入 /v1/files 上传后解开）。
 const {
 	list: attachmentList,
 	totalBytes: attachmentBytes,
@@ -140,6 +137,8 @@ interface TaskInfo {
 	error?: string
 	createdAt: number
 	completedAt?: number
+	// completed 时的用量摘要（网关扩展字段，渠道上报了哪些字段才出现哪些）
+	usage?: Record<string, any>
 }
 const currentTask = ref<TaskInfo | null>(null)
 const polling = ref(false)
@@ -167,6 +166,17 @@ const statusLabel: Record<string, string> = {
 	failed: '失败',
 }
 
+// 用量摘要（completed 时后端附带，字段随渠道而异、缺者不出现）
+const usageText = computed(() => {
+	const u = currentTask.value?.usage
+	if (!u) return ''
+	const parts: string[] = []
+	if (u.output_video_seconds != null) parts.push(`${u.output_video_seconds} 秒`)
+	if (u.resolution) parts.push(String(u.resolution))
+	if (u.total_tokens != null) parts.push(`${u.total_tokens} tokens`)
+	return parts.join(' · ')
+})
+
 function applyResolutionPreset(val: string) {
 	resolution.value = val
 }
@@ -187,8 +197,8 @@ async function submitTask() {
 		deferredNames.value = compiled.deferred.map(a => a.name)
 
 		// OpenAI Videos 协议：size 承载分辨率（像素串或命名档位如 768P/2K），seconds 承载时长；
-		// aspect_ratio / sound 是网关侧的协议扩展字段（官方 Videos 协议无此两项），
-		// 网关归一后双写进任务体 metadata，由各渠道适配器按自己的词汇消费。
+		// aspect_ratio 是网关侧的协议扩展字段（官方 Videos 协议无此项），网关归一后双写
+		// 进任务体 metadata，由各渠道适配器按自己的词汇消费。
 		const body: Record<string, any> = {
 			model: selectedModel.value,
 			prompt: compiled.prompt,
@@ -202,11 +212,9 @@ async function submitTask() {
 		if (aspectRatio.value) {
 			body.aspect_ratio = aspectRatio.value
 		}
-		body.sound = withSound.value ? 'on' : 'off'
-		if (compiled.inputReference) {
-			// 走 JSON 引用对象形态：后端 parseVideosInputReferenceJSON 接受 data URL，
-			// 无需切 multipart，也不用跟 createPlaygroundApi 固定的 Content-Type 打架
-			body.input_reference = { image_url: compiled.inputReference }
+		// 参考素材唯一通道（首帧 = role first_frame），角色选择由 compileVideoPrompt 决定
+		if (compiled.references.length) {
+			body.references = compiled.references
 		}
 
 		const res = await api.post('/v1/videos', body, { timeout: 120_000 })
@@ -265,6 +273,7 @@ async function pollLoop() {
 			progress: data.progress != null ? `${data.progress}%` : currentTask.value.progress,
 			error: data.error?.message || undefined,
 			completedAt: data.completed_at || undefined,
+			usage: data.usage || undefined,
 		}
 
 		if (data.status === 'completed' || data.status === 'failed') {
@@ -394,16 +403,6 @@ function downloadVideo() {
 								<!-- min=2 覆盖短时长档位模型；其他模型档位由上游校验 -->
 								<n-input-number v-model:value="duration" :min="2" :max="30" :step="1" class="w-full" />
 							</div>
-
-							<div class="flex items-start justify-between gap-3">
-								<div class="min-w-0">
-									<p class="text-sm font-medium text-gray-700">包含声音</p>
-									<p class="mt-0.5 text-[11px] leading-relaxed text-gray-400">
-										仅可灵 / 豆包支持，其余模型会忽略
-									</p>
-								</div>
-								<n-switch v-model:value="withSound" size="small" class="shrink-0" />
-							</div>
 						</div>
 					</div>
 				</div>
@@ -441,14 +440,14 @@ function downloadVideo() {
 							</p>
 						</div>
 
-						<!-- 本期协议带不动的素材：提交后明确告知，避免用户以为已生效 -->
+						<!-- 协议带不动的素材（视频附件）：提交后明确告知，避免用户以为已生效 -->
 						<div v-if="deferredNames.length" class="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3">
 							<div class="flex items-center gap-2 text-amber-700">
 								<Icon name="exclamationTriangle" size="sm" />
 								<span class="text-sm font-medium">部分素材未随本次请求发送</span>
 							</div>
 							<p class="mt-1 text-xs text-amber-600">
-								{{ deferredNames.join('、') }} — 当前仅支持一张首帧参考图，多素材引用待后端支持
+								{{ deferredNames.join('、') }} — 视频素材需以 URL 引用（暂不支持直接上传），本次未发送
 							</p>
 						</div>
 
@@ -496,6 +495,10 @@ function downloadVideo() {
 								<div class="flex items-center justify-between">
 									<span>任务 ID: {{ currentTask.id }}</span>
 									<span>模型: {{ currentTask.model }}</span>
+								</div>
+								<div v-if="usageText" class="flex items-center justify-between">
+									<span>用量: {{ usageText }}</span>
+									<span class="text-gray-400">实际生成规格（多退少补计费）</span>
 								</div>
 							</div>
 						</div>

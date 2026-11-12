@@ -19,6 +19,10 @@ const (
 	RefRoleReferenceImage = "reference_image"
 	RefRoleReferenceVideo = "reference_video"
 	RefRoleReferenceAudio = "reference_audio"
+	// RefRoleFile / RefRoleLink 文档文件与网页链接参考（万相 wan3.0 全能参考模式的
+	// media type 原生词汇）：file ≤1、link ≤1 且二者互斥，均可与 reference_* 组合
+	RefRoleFile = "file"
+	RefRoleLink = "link"
 )
 
 // 参考素材类别（role → 媒体主类型）
@@ -26,6 +30,10 @@ const (
 	RefKindImage = "image"
 	RefKindVideo = "video"
 	RefKindAudio = "audio"
+	// RefKindFile / RefKindLink 非媒体类别：file 内容类型多样（application/pdf、
+	// text/markdown 等，不做主类型前缀校验）；link 为网页 URL（仅 http(s)）
+	RefKindFile = "file"
+	RefKindLink = "link"
 )
 
 // ErrCodeReferenceNotSupported 目标模型不支持该参考素材角色（插件/适配器抛出）
@@ -48,9 +56,29 @@ func ReferenceKind(role string) string {
 		return RefKindVideo
 	case RefRoleReferenceAudio:
 		return RefKindAudio
+	case RefRoleFile:
+		return RefKindFile
+	case RefRoleLink:
+		return RefKindLink
 	default:
 		return ""
 	}
+}
+
+// RejectFileLinkRoles file/link 角色（文档文件与网页链接参考）目前仅万相 wan3.0 支持，
+// 其余适配器须在角色校验中显式拒绝（不静默丢弃）——ReferenceKind 对新角色返回非空
+// 类别，kind-based 白名单会误放行并在内容映射时静默丢项
+func RejectFileLinkRoles(refs []VideoReference, model string) *TaskError {
+	for _, ref := range refs {
+		if ref.Role == RefRoleFile || ref.Role == RefRoleLink {
+			return &TaskError{
+				StatusCode: http.StatusBadRequest,
+				Message:    fmt.Sprintf("reference role %q is not supported by model %q", ref.Role, model),
+				ErrCode:    ErrCodeReferenceNotSupported,
+			}
+		}
+	}
+	return nil
 }
 
 // IsFrameRole 是否首/尾帧角色（与 reference_* 多模态参考互斥）。

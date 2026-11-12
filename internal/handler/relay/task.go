@@ -44,6 +44,29 @@ func HandleTaskSubmit(r *ghttp.Request) {
 		return
 	}
 
+	// 参数收敛闸门（仅 /v1/video/generations）：废弃字段直接 400（黑名单见
+	// video_generations_convert.go），duration/resolution/aspect_ratio/sound 统一词汇，
+	// prompt 必填；归一成与 /v1/videos 同构的通用任务体后走同一管线。
+	// /suno 与厂商原生入口不受影响
+	if r.URL.Path == "/v1/video/generations" {
+		req, taskErr := relay_handler.ParseVideoGenerationsRequest(body)
+		if taskErr != nil {
+			writeVideosError(r, taskErr.StatusCode, taskErr.Message, taskErr.ErrCode)
+			return
+		}
+		// references 的 file_id（/v1/files 上传）→ 签名 URL（与 /v1/videos 同链路）
+		if taskErr := relay_handler.ResolveVideosReferenceFiles(req, relayVideosFileResolver(r)); taskErr != nil {
+			writeVideosError(r, taskErr.StatusCode, taskErr.Message, taskErr.ErrCode)
+			return
+		}
+		canonical, err := relay_handler.BuildVideosTaskBody(req)
+		if err != nil {
+			writeVideosError(r, 500, "build task body failed", "")
+			return
+		}
+		body = canonical
+	}
+
 	rc := &relay_handler.TaskRelayContext{
 		TenantID:        middleware.GetTenantID(r.Context()),
 		UserID:          middleware.GetUserID(r.Context()),

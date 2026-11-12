@@ -55,6 +55,9 @@ type videoObject struct {
 	// VideoURL 平台扩展字段（官方 schema 无此字段，SDK 忽略未知字段）：completed 时的
 	// 统一内容链接（签名直链，免鉴权可直接播放/下载）；官方 SDK 下载仍走 /content
 	VideoURL string `json:"video_url,omitempty"`
+	// Usage 平台扩展字段：completed 时的用量摘要（各渠道官方 usage 的归一并集，
+	// 渠道上报了哪些字段才出现哪些；与 /v1/video/generations 查询同链路按需恢复）
+	Usage *common.TaskUsageSummary `json:"usage,omitempty"`
 }
 
 // taskDeliveryResolver 成功任务的交付视图解析器（宿主经 SetTaskDeliveryResolver 注入；
@@ -208,6 +211,13 @@ func HandleVideosRetrieve(
 		obj.CompletedAt = nil
 	} else {
 		obj.VideoURL = delivery.ContentURL
+		// 终态成功任务附带用量摘要（扩展字段；provider 未实现恢复能力时静默省略，
+		// 与 /v1/video/generations 查询端点同一恢复链路）
+		if task.Status == string(common.TaskStatusSuccess) {
+			if rec, ok := dataProvider.(common.TaskUsageRecoverer); ok {
+				obj.Usage = rec.RecoverTaskUsage(ctx, task)
+			}
+		}
 	}
 	// 非终态附带官方轮询提示头（SDK poll() 优先读取）
 	if obj.Status == "queued" || obj.Status == "in_progress" {

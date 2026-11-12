@@ -74,6 +74,11 @@ func (a *GeminiAdaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, 
 	return ratios
 }
 
+// ExtraProtectedPaths extra 禁止改写的计费规格字段：时长、分辨率与生成条数
+func (a *GeminiAdaptor) ExtraProtectedPaths() []string {
+	return []string{"parameters.durationSeconds", "parameters.resolution", "parameters.sampleCount"}
+}
+
 func (a *GeminiAdaptor) AdjustBillingOnSubmit(_ *common.RelayInfo, _ []byte) map[string]any {
 	return nil
 }
