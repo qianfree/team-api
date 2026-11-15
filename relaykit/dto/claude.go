@@ -1,5 +1,10 @@
 package dto
 
+import (
+	"encoding/json"
+	"strings"
+)
+
 // ==================== Claude Messages API ====================
 
 // ClaudeRequest Claude Messages API 请求
@@ -133,9 +138,63 @@ type ClaudeCacheUsage struct {
 	Ephemeral1hInputTokens int `json:"ephemeral_1h_input_tokens,omitempty"`
 }
 
-// ClaudeServerToolUsage 服务器端内置工具使用统计
+// ClaudeServerToolUsage 服务器端内置工具使用统计（厂商权威累计报数）。
+// 字段命名规律固定为「工具名_requests」（web_search_requests / web_fetch_requests /
+// code_execution_requests / 未来新增工具同构），故按动态 map 解析全部字段：
+// 上游新增工具无需同步改 DTO，采集层按「去 _requests 后缀 = 计费工具名」泛化透出。
+// 误采未知字段无害：计数与价格解耦，价格表未配置的工具不计费。
 type ClaudeServerToolUsage struct {
-	WebSearchRequests int `json:"web_search_requests,omitempty"`
+	// Counts 工具名（已剥 _requests 后缀）→ 累计次数
+	Counts map[string]int `json:",omitempty"`
+}
+
+// serverToolRequestsSuffix server_tool_use 计数字段的固定后缀
+const serverToolRequestsSuffix = "_requests"
+
+// UnmarshalJSON 动态解析：仅接受「工具名_requests」且值为正整数的字段，
+// 其余字段/坏值逐个忽略（读侧容错，坏数据不阻断计费提取）。
+// 剥后缀后的 key 即计费工具名，与结算层 ToolCalls key 同构。
+func (s *ClaudeServerToolUsage) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	counts := make(map[string]int, len(raw))
+	for key, v := range raw {
+		tool, ok := strings.CutSuffix(key, serverToolRequestsSuffix)
+		if !ok || tool == "" {
+			continue
+		}
+		var n int
+		if err := json.Unmarshal(v, &n); err != nil || n <= 0 {
+			continue
+		}
+		counts[tool] = n
+	}
+	s.Counts = counts
+	return nil
+}
+
+// MarshalJSON 对称还原：工具名加回 _requests 后缀（协议转换桥重组响应时保持 wire 形态）。
+// 值接收者：ClaudeUsage.ServerToolUse 为指针时同样命中，且避免值拷贝经 interface
+// 传递后因指针方法集不可寻址而静默回退到默认结构体序列化（字段名直出破坏 wire 形态）
+func (s ClaudeServerToolUsage) MarshalJSON() ([]byte, error) {
+	if len(s.Counts) == 0 {
+		return []byte("null"), nil
+	}
+	raw := make(map[string]int, len(s.Counts))
+	for tool, n := range s.Counts {
+		raw[tool+serverToolRequestsSuffix] = n
+	}
+	return json.Marshal(raw)
+}
+
+// Count 指定工具的累计次数（未报数 / 零次 = 0）
+func (s *ClaudeServerToolUsage) Count(tool string) int {
+	if s == nil {
+		return 0
+	}
+	return s.Counts[tool]
 }
 
 // ClaudeUsage Claude 用量

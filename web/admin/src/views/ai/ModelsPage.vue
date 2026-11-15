@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, h } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   Tag, Button, Space, Popconfirm, Message, Tooltip,
 } from '@arco-design/web-vue'
@@ -16,6 +17,7 @@ import { modelCategoryOptions, modelCategoryLabelMap as categoryTagLabel, modelC
 
 const loading = ref(false)
 const data = ref<any[]>([])
+const router = useRouter()
 const pagination = reactive({
   current: 1,
   pageSize: 20,
@@ -682,6 +684,7 @@ function resetImport() {
             <ADoption @click="exportFile('xlsx')">导出 Excel</ADoption>
           </template>
         </ADropdown>
+        <AButton type="outline" @click="router.push({ name: 'AdminModelToolPricing' })">工具价格</AButton>
       </template>
     </PageHeader>
 

@@ -21,7 +21,6 @@ import ChannelTab from './settings/ChannelTab.vue'
 import StorageTab from './settings/StorageTab.vue'
 import DataGovernanceTab from './settings/DataGovernanceTab.vue'
 import AgreementTab from './settings/AgreementTab.vue'
-import BillingTab from './settings/BillingTab.vue'
 
 interface SettingCategory {
 	key: string
@@ -43,7 +42,6 @@ const categoryMap: Record<string, Component> = {
 	storage: StorageTab,
 	data_governance: DataGovernanceTab,
 	agreement: AgreementTab,
-	billing: BillingTab,
 }
 
 // 后端下发的分类 icon 名 → Arco 图标（未匹配时回落齿轮）

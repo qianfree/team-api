@@ -342,6 +342,7 @@ func (s *sTenant) UsageLogDetail(ctx context.Context, req *v1.TenantUsageLogDeta
 		       u.request_id, u.task_id, u.relay_mode, u.inbound_endpoint, u.billing_source, u.stream_end_reason,
 		       u.error_message, u.client_ip, u.user_agent, u.service_tier, u.reasoning_effort,
 		       u.image_count, u.image_size, u.billing_summary,
+		       u.tool_usage, u.tool_surcharge_cost,
 		       COALESCE(t.username, '') AS username, COALESCE(p.name, '') AS project_name, COALESCE(ak.name, '') AS api_key_name
 		 FROM bil_usage_logs u LEFT JOIN tnt_users t ON u.user_id = t.id AND u.tenant_id = t.tenant_id LEFT JOIN tnt_projects p ON u.project_id = p.id LEFT JOIN api_keys ak ON u.api_key_id = ak.id
 		 WHERE ` + conditions + ` LIMIT 1`
@@ -465,6 +466,7 @@ func (s *sTenant) ExportUsageLogs(ctx context.Context, req *v1.TenantUsageLogsEx
 		{Field: "request_type", Header: "请求类型"},
 		{Field: "input_tokens", Header: "输入Token"},
 		{Field: "output_tokens", Header: "输出Token"},
+		{Field: "tool_surcharge_cost", Header: "工具附加费"},
 		{Field: "total_cost", Header: "费用"},
 		{Field: "status", Header: "状态"},
 		{Field: "created_at", Header: "创建时间"},
@@ -498,7 +500,7 @@ func (s *sTenant) ExportUsageLogs(ctx context.Context, req *v1.TenantUsageLogsEx
 		var cursorID int64
 		for {
 			dataSQL := `SELECT u.id, COALESCE(t.username, '') AS username, COALESCE(mdl.model_name, '') AS model_display_name, u.model_name, u.request_type,
-			        u.input_tokens, u.output_tokens, COALESCE(NULLIF(u.actual_cost, 0), u.total_cost) AS total_cost, u.status, u.created_at
+			        u.input_tokens, u.output_tokens, u.tool_surcharge_cost, COALESCE(NULLIF(u.actual_cost, 0), u.total_cost) AS total_cost, u.status, u.created_at
 			 FROM ` + fromClause + ` WHERE ` + where
 			exportArgs := append([]any{}, args...)
 			if cursorID > 0 {

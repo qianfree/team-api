@@ -1622,3 +1622,40 @@ func (s *sAdmin) ExportModels(ctx context.Context, req *v1.ModelExportReq) (*v1.
 		}
 	})
 }
+
+// ── 工具调用价格表（全局价格表，配置入口在模型管理页右上角）──
+// 价格 key 含「工具名:模型前缀*」维度，本质属于模型计费体系，故端点挂在模型域；
+// 存储仍为 sys_options.tool_call_prices（计费读取侧 billing.ResolveToolPrice 只认 key 不认分类，不受入口迁移影响）。
+
+// GetModelToolPricing 读取全局工具调用价格表。
+// 读侧容错：坏数据不阻断页面（与计费读取侧 buildToolPriceIndex 同口径，整份非法等价于未配置）。
+func (s *sAdmin) GetModelToolPricing(ctx context.Context, _ *v1.ModelToolPricingGetReq) (*v1.ModelToolPricingGetRes, error) {
+	raw := strings.TrimSpace(common.Config().GetOption(ctx, billing.ToolCallPriceOptionKey))
+	prices := make(map[string]float64)
+	if raw != "" {
+		if err := json.Unmarshal([]byte(raw), &prices); err != nil {
+			prices = make(map[string]float64)
+		}
+	}
+	return &v1.ModelToolPricingGetRes{Prices: prices}, nil
+}
+
+// UpdateModelToolPricing 全量覆盖保存工具价格表：先过 billing 包的 JSON 校验
+// （key 格式 / 价格区间 0~100，保存入口拦截脏数据），再经 SetOption 落库
+// （自带 registry 校验、缓存失效与 pub/sub 广播，多副本即时生效）。
+func (s *sAdmin) UpdateModelToolPricing(ctx context.Context, req *v1.ModelToolPricingUpdateReq) (*v1.ModelToolPricingUpdateRes, error) {
+	if req.Prices == nil {
+		req.Prices = map[string]float64{}
+	}
+	raw, err := json.Marshal(req.Prices)
+	if err != nil {
+		return nil, common.NewBadRequestError("价格表序列化失败")
+	}
+	if err := billing.ValidateToolCallPricesJSON(string(raw)); err != nil {
+		return nil, common.NewBadRequestError(err.Error())
+	}
+	if err := common.Config().SetOption(ctx, billing.ToolCallPriceOptionKey, string(raw)); err != nil {
+		return nil, err
+	}
+	return &v1.ModelToolPricingUpdateRes{}, nil
+}

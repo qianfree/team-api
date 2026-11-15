@@ -151,9 +151,10 @@ func geminiToClaudeResponse(geminiResp *dto.GeminiChatResponse, info convmeta.Me
 
 	usage := claudeUsageFromGemini(geminiResp.UsageMetadata)
 	// 搜索次数透出到 usage：Google 在 token 之外按搜索次数单独计价，
-	// 不透出则计费层无从得知本次回答发起过几次搜索（定价挂接由宿主计费层完成）
+	// 不透出则计费层无从得知本次回答发起过几次搜索（定价挂接由宿主计费层完成）。
+	// ServerToolUse 动态结构：Counts key 即计费工具名（剥 _requests 后缀口径）
 	if n := citations.SearchRequestCount(); n > 0 {
-		usage.ServerToolUse = &dto.ClaudeServerToolUsage{WebSearchRequests: n}
+		usage.ServerToolUse = &dto.ClaudeServerToolUsage{Counts: map[string]int{"web_search": n}}
 	}
 
 	return &dto.ClaudeResponse{

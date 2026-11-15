@@ -71,6 +71,13 @@ const adminRoutes: RouteRecordRaw[] = [
         meta: { title: '模型管理', perm: 'model:view' },
       },
       {
+        // 工具调用价格表（全局配置页）：入口在模型列表页右上角，不进侧边菜单
+        path: 'models/tool-pricing',
+        name: 'AdminModelToolPricing',
+        component: () => import('@/views/ai/ToolPricingPage.vue'),
+        meta: { title: '工具调用价格', perm: 'model:view' },
+      },
+      {
         path: 'model-groups',
         name: 'AdminModelGroups',
         component: () => import('@/views/ai/ModelGroupsPage.vue'),

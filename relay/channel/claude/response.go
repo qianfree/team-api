@@ -308,15 +308,16 @@ func buildUsageFromClaude(u *dto.ClaudeUsage) *common.Usage {
 
 // applyClaudeServerToolUsage 将 Claude usage.server_tool_use（厂商权威累计报数，
 // 出现在非流式响应与流式 message_start/message_delta）映射为工具调用计数。
-// 当前计费 key：web_search（$10/1K searches，价格见 billing/tool_pricing.go）；
-// web_fetch/code_execution 待 DTO 扩字段后接入（P1）
+// DTO 按「工具名_requests」动态解析全部字段，此处直接透出（计费 key = 字段名剥
+// _requests 后缀）：web_search / web_fetch / code_execution / 上游未来新增工具
+// 自动纳入，无需跟进代码——计数与价格解耦，价格表未配置的工具不计费（免费）
 func applyClaudeServerToolUsage(usage *common.Usage, u *dto.ClaudeUsage) {
 	if usage == nil || u == nil || u.ServerToolUse == nil {
 		return
 	}
-	if u.ServerToolUse.WebSearchRequests > 0 {
-		// 厂商报数为累计值：替换语义（覆盖流式逐帧累计的中间结果）
-		usage.SetToolCount("web_search", u.ServerToolUse.WebSearchRequests)
+	// 厂商报数为累计值：替换语义（覆盖流式逐帧累计的中间结果）
+	for tool, count := range u.ServerToolUse.Counts {
+		usage.SetToolCount(tool, count)
 	}
 }
 

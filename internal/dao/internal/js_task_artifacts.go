@@ -27,12 +27,12 @@ type JsTaskArtifactsColumns struct {
 	PluginKey    string // 声明产物的 JS 插件 key
 	ArtifactKey  string // 产物键（任务内唯一，如 video / audio-0）
 	SourceType   string // 产物来源类型：url=下载转存 / inline=base64 直存
-	SourceUrl    string // 上游取值路径或下载 URL（声明期存 taskData 取值路径，转存时更新为真实 URL）
+	SourceUrl    string // 实际下载 URL（url 型转存时写入；存量行声明期曾存取值路径）
 	StoredKey    string // 对象存储 key（jsartifacts/{public_task_id}/{artifact_key}{ext}，stored 后非空）
 	Backend      string // 对象存储后端：s3/oss/cos/local
 	MimeType     string // 存储内容类型
 	Size         string // 转存字节数
-	Status       string // pending=待转存 running=进行中 stored=完成 failed=失败（retry_count<5 由 sweep 重试）
+	Status       string // pending=待转存 running=进行中 stored=完成 failed=失败（retry_count<5 由 sweep 重试） direct=不转存（插件关闭转存，回源代理）
 	RetryCount   string // 已重试次数（<5 由 sweep 重试）
 	LastError    string // 最近一次失败原因
 	CreatedAt    string // 创建时间
@@ -40,6 +40,8 @@ type JsTaskArtifactsColumns struct {
 	TenantId     string // 任务归属租户 ID（sweep 恢复与租户观测用，从任务表回填）
 	UserId       string // 任务归属用户 ID（fil_files 落库归属）
 	ChannelId    string // 任务转发渠道 ID（相对 URL 产物按此解析渠道地址与鉴权）
+	SourcePath   string // 产物声明的 taskData 取值路径（声明期写入，不随转存改写；回源代理与 sweep 重建的依据）
+	SourceAuth   string // 产物声明的下载鉴权形态：空=裸下载 / channel-bearer=注入渠道密钥
 }
 
 // jsTaskArtifactsColumns holds the columns for the table js_task_artifacts.
@@ -63,6 +65,8 @@ var jsTaskArtifactsColumns = JsTaskArtifactsColumns{
 	TenantId:     "tenant_id",
 	UserId:       "user_id",
 	ChannelId:    "channel_id",
+	SourcePath:   "source_path",
+	SourceAuth:   "source_auth",
 }
 
 // NewJsTaskArtifactsDao creates and returns a new DAO object for table data access.

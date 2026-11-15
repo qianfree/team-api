@@ -81,7 +81,7 @@ type BilUsageLogsColumns struct {
 	DurationSeconds       string // 按秒计费任务的视频时长（秒），来自任务提交时的 spec.duration；非时长类任务为 NULL
 	UpstreamRequestId     string // 上游请求ID：对话=上游响应头请求ID（X-Oneapi-Request-Id等），任务=上游任务ID；排障反查用
 	ToolUsage             string // 服务端/云端工具调用计数（工具名→次数，如 {"web_search": 3}）；无工具调用为 NULL
-	ToolSurchargeCost     string // 工具调用附加费合计（按次收费，已乘租户/时段乘数，已含在 total_cost 中）
+	ToolSurchargeCost     string // 工具调用附加费合计（按次收费，固定单次计费不乘租户/时段乘数，已含在 total_cost 中）
 }
 
 // bilUsageLogsColumns holds the columns for the table bil_usage_logs.

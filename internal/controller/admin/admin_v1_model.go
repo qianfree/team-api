@@ -49,3 +49,9 @@ func (c *ControllerV1) ModelImport(ctx context.Context, req *v1.ModelImportReq) 
 func (c *ControllerV1) PricingFormulaValidate(ctx context.Context, req *v1.PricingFormulaValidateReq) (res *v1.PricingFormulaValidateRes, err error) {
 	return service.Admin().ValidateModelPricingFormula(ctx, req)
 }
+func (c *ControllerV1) ModelToolPricingGet(ctx context.Context, req *v1.ModelToolPricingGetReq) (res *v1.ModelToolPricingGetRes, err error) {
+	return service.Admin().GetModelToolPricing(ctx, req)
+}
+func (c *ControllerV1) ModelToolPricingUpdate(ctx context.Context, req *v1.ModelToolPricingUpdateReq) (res *v1.ModelToolPricingUpdateRes, err error) {
+	return service.Admin().UpdateModelToolPricing(ctx, req)
+}

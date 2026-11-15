@@ -49,7 +49,6 @@ var Categories = []SettingCategory{
 	{Key: "storage", Label: "存储配置", Icon: "cloud", Order: 10},
 	{Key: "data_governance", Label: "数据治理", Icon: "database", Order: 11},
 	{Key: "agreement", Label: "用户协议", Icon: "document", Order: 12},
-	{Key: "billing", Label: "计费配置", Icon: "record", Order: 13},
 }
 
 // Registry is the central definition of all configuration items.
@@ -84,10 +83,11 @@ var Registry = []SettingDef{
 	{Key: "pricing_time_timezone", Type: SettingTypeString, Default: "Asia/Shanghai", Category: "general",
 		Label: "计费时区", Description: "模型时段定价（峰谷/促销）按此时区解释，IANA 时区名，如 Asia/Shanghai"},
 
-	// ── Billing (计费) ──
-	// 工具调用计费（联网搜索/云端工具按次附加费）：价格表为 sys_options JSON，
+	// ── 工具调用价格表 ──
+	// 配置存 sys_options 但不进 Categories（设置页无此分类页签）：价格 key 含「工具名:模型前缀*」
+	// 维度，属模型计费体系，读写走模型管理页自有的 /models/tool-pricing 端点；
 	// 查找与附加费计算见 internal/logic/billing/tool_pricing.go
-	{Key: "tool_call_prices", Type: SettingTypeJSON, Default: "{}", Category: "billing",
+	{Key: "tool_call_prices", Type: SettingTypeJSON, Default: "{}", Category: "tool_pricing",
 		Label: "工具调用价格表", Description: "云端工具/联网搜索按次计费单价（每次调用，本位币）。key=工具名或 工具名:模型前缀*（最长前缀匹配），如 {\"web_search\":0.01,\"web_search:claude-*\":0.01}；0=关闭该工具计费；未列出的工具不计费（免费）"},
 
 	// ── OAuth (第三方登录) ──

@@ -214,9 +214,17 @@ type (
 		// 不限制渠道状态：禁用中的渠道也允许手动测试，便于管理员在启用放流量前确认已恢复；
 		// 自动探测 cron 只查 active 渠道，禁用渠道不会被自动探测。
 		TestChannel(ctx context.Context, req *v1.ChannelTestReq) (*v1.ChannelTestRes, error)
-		// FetchChannelUpstreamModels 拉取渠道上游可用模型列表（只读探测）。
-		// 用渠道自身的 base_url + 有效 Key 请求上游模型列表接口，供「添加模型能力」弹窗挑选；
-		// 不落库、不影响调度目录，失败时前端降级为手动输入。
+		// FetchChannelUpstreamModels 拉取渠道上游可用模型列表。
+		//
+		// 只读探测：用渠道配置的 base_url 与一个可用 Key 请求上游的模型列表接口，
+		// 结果仅供「添加模型能力」弹窗挑选，不落库、不影响调度目录。
+		//
+		// 各家列表协议不一致，按供应商分支：
+		//   - Gemini：GET /v1beta/models（x-goog-api-key）
+		//   - Claude：GET /v1/models（x-api-key + anthropic-version）
+		//   - 其它：GET /v1/models（Bearer，OpenAI 兼容；覆盖 DeepSeek / Moonshot / 智谱 / 各类中转站）
+		//
+		// 拉不到时返回可读错误，前端降级为手动输入——不阻断添加流程。
 		FetchChannelUpstreamModels(ctx context.Context, req *v1.ChannelUpstreamModelsReq) (*v1.ChannelUpstreamModelsRes, error)
 		// CronJobList returns all registered cron jobs with their last execution status.
 		CronJobList(ctx context.Context, _ *v1.CronJobListReq) (*v1.CronJobListRes, error)
@@ -428,6 +436,13 @@ type (
 		FetchOfficialModelInfo(ctx context.Context, req *v1.ModelFetchOfficialInfoReq) (*v1.ModelFetchOfficialInfoRes, error)
 		// ExportModels exports model list to CSV or Excel.
 		ExportModels(ctx context.Context, req *v1.ModelExportReq) (*v1.ModelExportRes, error)
+		// GetModelToolPricing 读取全局工具调用价格表。
+		// 读侧容错：坏数据不阻断页面（与计费读取侧 buildToolPriceIndex 同口径，整份非法等价于未配置）。
+		GetModelToolPricing(ctx context.Context, _ *v1.ModelToolPricingGetReq) (*v1.ModelToolPricingGetRes, error)
+		// UpdateModelToolPricing 全量覆盖保存工具价格表：先过 billing 包的 JSON 校验
+		// （key 格式 / 价格区间 0~100，保存入口拦截脏数据），再经 SetOption 落库
+		// （自带 registry 校验、缓存失效与 pub/sub 广播，多副本即时生效）。
+		UpdateModelToolPricing(ctx context.Context, req *v1.ModelToolPricingUpdateReq) (*v1.ModelToolPricingUpdateRes, error)
 		// ListModelGroups 模型分组列表
 		ListModelGroups(ctx context.Context, req *v1.ModelGroupListReq) (*v1.ModelGroupListRes, error)
 		// CreateModelGroup 创建模型分组

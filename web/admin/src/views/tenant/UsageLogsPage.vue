@@ -176,6 +176,22 @@ const detailLog = ref<any>(null)
 const router = useRouter()
 
 // 费用格式化：bil 层本位币直显，符号跟随 displayCurrency
+// toolUsageText 工具调用计数 JSON（如 {"web_search": 3}）转展示文本（"web_search×3"），
+// 解析失败或为空返回空串（费用行只展示金额，sub 留空）
+function toolUsageText(raw: unknown): string {
+	if (!raw || typeof raw !== 'string') return ''
+	try {
+		const obj = JSON.parse(raw)
+		if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return ''
+		const parts = Object.entries(obj as Record<string, unknown>)
+			.filter(([, n]) => Number(n) > 0)
+			.map(([tool, n]) => `${tool}×${Number(n)}`)
+		return parts.join('，')
+	} catch {
+		return ''
+	}
+}
+
 function formatCost(n: number): string {
 	if (n == null || isNaN(n)) return formatBilling(0, 6)
 	return formatBilling(n, 6)
@@ -403,6 +419,10 @@ const receiptRows = computed<ReceiptRow[]>(() => {
 	rows.push({ label: '输出费用', value: formatCost(d.output_cost || 0) })
 	if ((d.cache_creation_cost || 0) > 0) rows.push({ label: '缓存创建费用', value: formatCost(d.cache_creation_cost) })
 	if ((d.cache_read_cost || 0) > 0) rows.push({ label: '缓存读取费用', value: formatCost(d.cache_read_cost) })
+	// 工具调用附加费（联网搜索/云端工具按次计费，已含在基础/实际费用中）：sub 展示各工具调用次数
+	if ((d.tool_surcharge_cost || 0) > 0) {
+		rows.push({ label: '工具附加费', value: formatCost(d.tool_surcharge_cost), sub: toolUsageText(d.tool_usage) })
+	}
 	const rm = d.rate_multiplier
 	rows.push({
 		label: '费率倍率',

@@ -239,6 +239,22 @@ function formatCost(n: any): string {
 	return formatBilling(v, 6)
 }
 
+// toolUsageText 工具调用计数 JSON（如 {"web_search": 3}）转展示文本（"web_search×3"），
+// 解析失败或为空返回空串（费用行只展示金额，明细小字留空）
+function toolUsageText(raw: unknown): string {
+	if (!raw || typeof raw !== 'string') return ''
+	try {
+		const obj = JSON.parse(raw)
+		if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return ''
+		return Object.entries(obj as Record<string, unknown>)
+			.filter(([, n]) => Number(n) > 0)
+			.map(([tool, n]) => `${tool}×${Number(n)}`)
+			.join('，')
+	} catch {
+		return ''
+	}
+}
+
 function formatMs(n: any): string {
 	const v = Number(n)
 	if (n == null || isNaN(v) || v <= 0) return '-'
@@ -925,6 +941,14 @@ onMounted(() => {
 						<div v-if="detailLog.cache_read_cost > 0" class="flex items-center justify-between">
 							<span class="text-gray-500">缓存读取费用</span>
 							<span>{{ formatCost(detailLog.cache_read_cost) }}</span>
+						</div>
+						<!-- 工具调用附加费（联网搜索/云端工具按次计费，已含在实际费用中）：小字展示各工具调用次数 -->
+						<div v-if="detailLog.tool_surcharge_cost > 0" class="flex items-center justify-between">
+							<span class="text-gray-500">工具附加费</span>
+							<span>
+								{{ formatCost(detailLog.tool_surcharge_cost) }}
+								<span v-if="toolUsageText(detailLog.tool_usage)" class="text-xs text-gray-400 ml-1">{{ toolUsageText(detailLog.tool_usage) }}</span>
+							</span>
 						</div>
 						<div class="flex items-center justify-between border-t border-gray-200 pt-2 font-semibold">
 							<span class="text-gray-700">实际费用</span>

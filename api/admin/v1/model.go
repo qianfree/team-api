@@ -495,3 +495,27 @@ type ModelImportRes struct {
 	Skipped  int      `json:"skipped"`
 	Errors   []string `json:"errors,omitempty"`
 }
+
+// ── 工具调用价格表（全局价格表，配置入口在模型管理页）──
+
+// ModelToolPricingGetReq 读取工具调用价格表请求
+type ModelToolPricingGetReq struct {
+	g.Meta `path:"/models/tool-pricing" method:"get" mime:"json" tags:"管理后台-模型" summary:"读取工具调用价格表"`
+}
+
+// ModelToolPricingGetRes 工具调用价格表响应
+type ModelToolPricingGetRes struct {
+	// Prices key=工具名 或 工具名:模型前缀*（尾部 * 可省略，最长前缀优先），value=每次调用单价（本位币）
+	// 未列出的工具不计费（免费）；这是唯一价源，程序不内置任何工具价格
+	Prices map[string]float64 `json:"prices"`
+}
+
+// ModelToolPricingUpdateReq 更新工具调用价格表请求（全量覆盖）
+type ModelToolPricingUpdateReq struct {
+	g.Meta `path:"/models/tool-pricing" method:"put" mime:"json" tags:"管理后台-模型" summary:"更新工具调用价格表（全量覆盖）"`
+	// Prices 传空对象=清空价格表（全部免费）；单价范围 0~100
+	Prices map[string]float64 `json:"prices" dc:"key=工具名 或 工具名:模型前缀*；value=每次调用单价（本位币 0~100）"`
+}
+
+// ModelToolPricingUpdateRes 更新工具调用价格表响应
+type ModelToolPricingUpdateRes struct{}
