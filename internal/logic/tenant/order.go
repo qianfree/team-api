@@ -348,7 +348,7 @@ func (s *sTenant) PaymentInfo(ctx context.Context, req *v1.TenantPaymentInfoReq)
 // 出现"充值/代充/代付/钱包/余额/额度/API/套现"等字样时会直接拦截，
 // 网关返回"该商品禁止出售"。因此传给网关的 name 必须使用中性、安全的名称。
 // 数据库 ord_orders.description 仍保留可读文案供租户订单列表展示，
-// 二者解耦：此处只决定网关看到的商品名（参考 new-api 使用 "TUC{id}" 的做法）。
+// 二者解耦：此处只决定网关看到的商品名。
 func gatewayProductName(orderType string) string {
 	switch orderType {
 	case "new_plan", "renew", "upgrade":

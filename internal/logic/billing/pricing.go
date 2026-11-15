@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -13,6 +15,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/billing/formula"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	rcommon "github.com/qianfree/team-api/relay/common"
 )
@@ -84,6 +87,19 @@ type PricingResult struct {
 	Scheme string `json:"scheme,omitempty"`
 	// 方案私有配置（不透明容器，方案自行解析）。旧缓存条目无此字段（nil）
 	SchemeConfig json.RawMessage `json:"scheme_config,omitempty"`
+
+	// 计费公式（billing_mode=formula）：从 usage 归集的变量环境求出
+	// 「每 1M token 口径的价格系数」，金额 = 系数 / 1e6 × 租户乘数 × 时段乘数。
+	// 公式只表达模型基础成本，与折扣/时段乘数正交。旧缓存条目无此字段（空串），
+	// 仅 formula 模式消费，不受影响。变量表与语法见 billing/formula 包。
+	// Formula 为「基础公式 × 请求规则」的组合式（FormulaBase × FormulaRules，
+	// 组合见 EffectiveFormula；无规则时等于基础公式原文）
+	Formula string `json:"formula,omitempty"`
+	// FormulaBase 基础公式原文（不含请求规则，快照留痕/管理端回显用）
+	FormulaBase string `json:"formula_base,omitempty"`
+	// FormulaRules 请求规则表达式（header()/param()/时间函数条件倍率，与基础公式
+	// 正交相乘）。空 = 无请求规则。旧缓存条目无此字段
+	FormulaRules string `json:"formula_rules,omitempty"`
 }
 
 // perSecondWildcard 矩阵兜底价键：规格未命中时使用
@@ -173,6 +189,10 @@ func hasTenantCustomPrice(tm *tenantModelRow, mode string, patch *TenantPricingP
 	switch mode {
 	case "per_second", BillingModeSpecial:
 		return patch != nil && len(patch.Prices) > 0
+	case BillingModeFormula:
+		// 公式是平台运营能力，租户侧无自定义公式入口：custom_input/output 价列
+		// 不构成公式模型的「一口价」（GetModelPriceAt 也不消费），折扣乘数是唯一手段
+		return false
 	case "tiered":
 		if tm.CustomPricingTiers != "" && tm.CustomPricingTiers != "null" && tm.CustomPricingTiers != "[]" {
 			return true
@@ -235,6 +255,12 @@ func levelFallbackApplies(tenantMultiplier float64, customPriced, ratioExplicit 
 // Scheme 不看此值，它用于展示层区分「按秒计费」与「特殊方案组合计费」，
 // 不出现在通用计费模式下拉中（只由方案专属编辑器提交）。
 const BillingModeSpecial = "special"
+
+// BillingModeFormula 表达式计费模式（与 token/per_request/tiered/per_second 平级的通用模式）：
+// 公式从 usage 变量环境取值求出每 1M token 口径系数（变量表见 billing/formula 包），
+// 用于多模态细分/缓存 TTL 差价/长上下文档位等表单模式难以表达的复杂定价。
+// 暂不支持：任务模型（EstimateTaskCost 守卫拒绝）、官方参考价、租户自定义价覆盖
+const BillingModeFormula = "formula"
 
 // maxTaskDurationSeconds per_second 计费的时长上限（秒）。
 // 时长来自用户请求（spec.duration 经 ratios 流入，metadata 路径绕过请求层校验），
@@ -405,6 +431,7 @@ func GetModelPriceAt(ctx context.Context, tenantID int64, modelName string, bill
 	var paramMultipliers []ParamRule
 	var schemeName string
 	var schemeConfig json.RawMessage
+	var formulaSrc, formulaRulesSrc string
 
 	if pricing != nil {
 		if pricing.BillingMode != "" {
@@ -440,6 +467,12 @@ func GetModelPriceAt(ctx context.Context, tenantID int64, modelName string, bill
 				paramMultipliers = blob.ParamMultipliers
 				schemeName = blob.Scheme
 				schemeConfig = blob.SchemeConfig
+				if blob.Formula != nil {
+					formulaSrc = *blob.Formula
+				}
+				if blob.FormulaRules != nil {
+					formulaRulesSrc = *blob.FormulaRules
+				}
 			}
 		}
 	}
@@ -465,7 +498,8 @@ func GetModelPriceAt(ctx context.Context, tenantID int64, modelName string, bill
 		billingSource = "tenant_custom"
 		// 特殊计费方案模型的 billing_mode 由平台方案决定（special），租户级模式覆盖无效：
 		// 方案的输出生成组件消费平台 per_second 矩阵，租户改模式只会造成日志标签与计费口径错位
-		if schemeName == "" && tm.BillingMode != nil && *tm.BillingMode != "" {
+		// formula 模式同理：公式是平台运营能力，租户行改模式会导致公式被弃用而落入零价 token 分支
+		if schemeName == "" && billingMode != BillingModeFormula && tm.BillingMode != nil && *tm.BillingMode != "" {
 			billingMode = *tm.BillingMode
 		}
 
@@ -503,6 +537,14 @@ func GetModelPriceAt(ctx context.Context, tenantID int64, modelName string, bill
 		// 下游计费引擎/快照/时段评估自动生效
 		patch = ParseTenantPricingPatch(tm.CustomPricing)
 		perSecondPrices, timeSegments, paramMultipliers = ApplyTenantPricingPatch(patch, perSecondPrices, timeSegments, paramMultipliers)
+	}
+
+	// formula 模式不叠加时段定价与参数倍率：时段/参数条件只能在公式内用 hour()/param()
+	// 表达。平台写侧已拒绝，此处读侧兜底存量租户补丁、导入数据与模式切换前遗留配置，
+	// 防止乘数与公式叠加错价（任务路径参数倍率经 ratios 连乘，时段乘数两条路径都作用）
+	if billingMode == BillingModeFormula {
+		timeSegments = nil
+		paramMultipliers = nil
 	}
 
 	// 折扣乘数解析（纯函数，见 applyTenantModelDiscount）：一口价行整体跳过、
@@ -563,6 +605,9 @@ func GetModelPriceAt(ctx context.Context, tenantID int64, modelName string, bill
 		ParamMultipliers:     paramMultipliers,
 		Scheme:               schemeName,
 		SchemeConfig:         schemeConfig,
+		Formula:              EffectiveFormula(formulaSrc, formulaRulesSrc),
+		FormulaBase:          formulaSrc,
+		FormulaRules:         formulaRulesSrc,
 	}
 
 	// 时段乘数按定价时刻评估后随缓存存储（缓存命中路径会按 billAt 重评估，存储值仅参考）
@@ -607,6 +652,30 @@ func CalculateCost(ctx context.Context, tenantID int64, modelName string, inputT
 // 提取为独立函数以便单元测试，不依赖数据库或缓存。
 // count 为按次计费放大倍数（图片协议顶层 n），<=1 不放大；token/tiered 计费不受其影响。
 func computeCost(pricing *PricingResult, inputTokens, outputTokens int, usage *rcommon.Usage, count int) *CostBreakdown {
+	return computeCostWithEval(pricing, inputTokens, outputTokens, usage, count, nil, nil)
+}
+
+// ToolPriceResolver 工具单价查找器（tool_pricing.go 的索引按计费模型名闭包封装；
+// nil = 无工具计费——legacy 调用路径与无工具计数的请求直通）
+type ToolPriceResolver func(tool string) float64
+
+// computeCostWithEval 带公式求值上下文的 computeCost。ec 携带请求探测值与时间基准
+// （formula 模式消费；nil → 探针取空值、时间取当前时刻，legacy/无请求路径的兜底口径）。
+// toolPrice 为工具调用单价查找器（联网搜索/云端工具按次附加费，见 tool_pricing.go），
+// 附加费在任何计费模式的 TotalCost 之上叠加，与折扣/时段乘数同链
+func computeCostWithEval(pricing *PricingResult, inputTokens, outputTokens int, usage *rcommon.Usage, count int, ec *formula.EvalContext, toolPrice ToolPriceResolver) *CostBreakdown {
+	bd := computeCostByMode(pricing, inputTokens, outputTokens, usage, count, ec)
+	if bd == nil {
+		return nil
+	}
+	// 工具调用附加费：叠加在任何计费模式之上（含 formula 求值失败的 fail-safe 路径——
+	// 工具计数独立于公式可信，SettleWithUsage 兜底时保留 ToolSurcharge）
+	applyToolSurcharge(bd, pricing, usage, toolPrice)
+	return bd
+}
+
+// computeCostByMode 各计费模式（token/per_request/tiered/formula）的原有费用计算
+func computeCostByMode(pricing *PricingResult, inputTokens, outputTokens int, usage *rcommon.Usage, count int, ec *formula.EvalContext) *CostBreakdown {
 	baseInputTokens, outputTokens, cacheReadTokens, cacheCreation5mTokens, cacheCreation1hTokens := resolveTokenCounts(pricing, inputTokens, outputTokens, usage)
 	if count < 1 {
 		count = 1
@@ -632,6 +701,49 @@ func computeCost(pricing *PricingResult, inputTokens, outputTokens int, usage *r
 		}
 		// per_request 分支同样透出 TTL 分桶 token（观测快照用；按次计价本身不作用）
 		fillCacheCreationBuckets(bd, cacheCreation5mTokens, cacheCreation1hTokens, 0, 0)
+		return bd
+	}
+
+	// 表达式计费：公式从 usage 变量环境求出「每 1M token 口径系数」，
+	// 金额 = 系数 / 1e6 × 租户乘数 × 时段乘数（乘数与公式正交，外挂不变）。
+	// 分项费用不可拆（公式输出是整体系数），InputCost/OutputCost 等明细列置 0，
+	// 完整变量值随快照留痕。求值失败 fail-safe：TotalCost 无效 + FormulaError 非空，
+	// 调用方（SettleWithUsage）按预扣额兜底结算；公式保存时已烟测，运行时失败仅剩
+	// 环境异常一类（防御性兜底）
+	if pricing.BillingMode == BillingModeFormula {
+		bd := &CostBreakdown{
+			InputTokens:         baseInputTokens,
+			OutputTokens:        outputTokens,
+			BillingMode:         pricing.BillingMode,
+			PerRequestCount:     count,
+			DiscountRatio:       pricing.DiscountRatio,
+			TenantMultiplier:    pricing.TenantMultiplier,
+			Currency:            pricing.Currency,
+			CacheCreationTokens: cacheCreation5mTokens + cacheCreation1hTokens,
+			CacheReadTokens:     cacheReadTokens,
+		}
+		fillCacheCreationBuckets(bd, cacheCreation5mTokens, cacheCreation1hTokens, 0, 0)
+		compiled, err := formula.Compile(pricing.Formula)
+		if err != nil {
+			bd.FormulaError = err.Error()
+			return bd
+		}
+		in := formula.FromUsage(baseInputTokens, outputTokens, cacheReadTokens, cacheCreation5mTokens, cacheCreation1hTokens, usage)
+		in.ImageCount = count
+		in.Eval = ec
+		detail, err := formula.RunDetail(compiled, in)
+		if err != nil {
+			bd.FormulaError = err.Error()
+			return bd
+		}
+		factor := detail.Factor
+		bd.FormulaFactor = factor
+		bd.RequestRules = detail.Rules
+		bd.FormulaDetail = detail
+		mul := NewFromFloat(pricing.TenantMultiplier).Mul(NewFromFloat(effectiveTimeMultiplier(pricing)))
+		totalD := NewFromFloat(factor).Div(decimal.NewFromInt(1_000_000)).Mul(mul)
+		bd.BaseCost = InexactFloat64(RoundMoney(NewFromFloat(factor).Div(decimal.NewFromInt(1_000_000))))
+		bd.TotalCost = InexactFloat64(RoundMoney(totalD))
 		return bd
 	}
 
@@ -682,6 +794,60 @@ func computeCost(pricing *PricingResult, inputTokens, outputTokens int, usage *r
 		CacheCreation5mCost:   InexactFloat64(RoundMoney(cacheCreation5mCostD.Mul(mul))),
 		CacheCreation1hCost:   InexactFloat64(RoundMoney(cacheCreation1hCostD.Mul(mul))),
 	}
+}
+
+// applyToolSurcharge 计算工具调用附加费并叠加到费用明细（任何计费模式通用）。
+//
+// 计费规则（全额本位币口径，无积分/QuotaPerUnit 换算）：
+//   - 逐工具取 usage.ToolCalls 次数，按 MaxBillableToolCallCount 钳制（防上游异常值天价账单）
+//   - 单价经 ToolPriceResolver 查全局工具价格表（tool_pricing.go，支持模型前缀覆盖；
+//     管理端配置值与种子折算后均为本位币），
+//     price <= 0 / 非法值跳过（未配价 = 免费放行，非 fail-closed——与模型未配价语义不同）
+//   - 分项费用独立计算：固定单价 × 次数（decimal 精算），任何乘数（租户/时段/参数倍率）
+//     均不作用于工具费——上游对工具调用按次固定计费，平台按固定价原价收取，
+//     倍率（折扣/促销）只作用于模型费用
+//   - TotalCost += 附加费合计；BaseCost += 附加费小计（同额，无倍率差异）
+//   - 明细按工具名排序写入 ToolItems（快照/摘要可复算：次数 × 单价 = 费用）
+func applyToolSurcharge(bd *CostBreakdown, pricing *PricingResult, usage *rcommon.Usage, resolve ToolPriceResolver) {
+	if bd == nil || pricing == nil || resolve == nil || usage == nil || len(usage.ToolCalls) == 0 {
+		return
+	}
+
+	names := make([]string, 0, len(usage.ToolCalls))
+	for name := range usage.ToolCalls {
+		names = append(names, name)
+	}
+	sort.Strings(names) // map 迭代序不确定，排序保证明细与费用跨次一致
+
+	var totalD decimal.Decimal
+	for _, name := range names {
+		count := usage.ToolCalls[name]
+		if count <= 0 {
+			continue
+		}
+		if count > MaxBillableToolCallCount {
+			count = MaxBillableToolCallCount
+		}
+		price := resolve(name)
+		if price <= 0 || math.IsNaN(price) || math.IsInf(price, 0) {
+			continue
+		}
+		itemCostD := RoundMoney(NewFromFloat(price).Mul(NewFromFloat(float64(count))))
+		bd.ToolItems = append(bd.ToolItems, ToolSurchargeItem{
+			Name:      name,
+			Count:     count,
+			UnitPrice: price,
+			Cost:      InexactFloat64(itemCostD),
+		})
+		totalD = totalD.Add(itemCostD)
+	}
+	if len(bd.ToolItems) == 0 {
+		return
+	}
+
+	bd.ToolSurcharge = InexactFloat64(RoundMoney(totalD))
+	bd.BaseCost = InexactFloat64(RoundMoney(NewFromFloat(bd.BaseCost).Add(totalD)))
+	bd.TotalCost = InexactFloat64(RoundMoney(NewFromFloat(bd.TotalCost).Add(NewFromFloat(bd.ToolSurcharge))))
 }
 
 // fillCacheCreationBuckets 填充 CostBreakdown 的缓存创建 TTL 分桶字段（per_request 等
@@ -797,13 +963,43 @@ type CostBreakdown struct {
 	// TaskFacts 任务计费要素明细（仅任务结算路径填充：附加乘数清单、参数倍率命中、
 	// 按秒命中明细），随快照留痕供账单复算；同步对话路径恒为 nil
 	TaskFacts *TaskBillingFacts
+
+	// 公式命中的价格系数（每 1M token 口径；billing_mode=formula 专用，快照展示用）
+	FormulaFactor float64
+	// 公式求值失败原因（非空 = TotalCost 无效，调用方须 fail-safe 按预扣额结算）
+	FormulaError string
+	// 请求规则命中表（formula 模式：header()/param()/时间条件倍率的埋点结果，
+	// 随快照留痕供账单解释「本次请求命中了哪些倍率规则」）
+	RequestRules []formula.RequestRuleTrace
+	// FormulaDetail 公式求值完整结果（命中档位、变量取值、分项明细），与 FormulaFactor
+	// 出自同一次求值——快照直接消费，不再事后重建变量环境
+	FormulaDetail *formula.Result
+
+	// 工具调用附加费（联网搜索/云端工具按次收费，叠加在任何计费模式之上）。
+	// ToolItems 为逐工具明细（次数/单价/费用，随快照留痕），ToolSurcharge 为
+	// 固定单价 × 次数的合计——独立计算，任何乘数（租户/时段/参数倍率）均不作用；
+	// TotalCost 已含该值。渠道采集侧只如实计数（relay Usage.ToolCalls），
+	// 未配价的工具不计费（免费，非 fail-closed）
+	ToolSurcharge float64
+	// ToolItems 工具附加费明细（按工具名排序，快照与摘要的计费解释依据）
+	ToolItems []ToolSurchargeItem
+}
+
+// ToolSurchargeItem 单个工具的按次附加费明细（快照与账单解释的最小单元）
+type ToolSurchargeItem struct {
+	Name      string  `json:"name"`       // 工具计费 key（web_search / google_search / file_search ...）
+	Count     int     `json:"count"`      // 计费次数（已按 MaxBillableToolCallCount 钳制）
+	UnitPrice float64 `json:"unit_price"` // 每次调用单价（本位币，固定价不乘任何倍率）
+	Cost      float64 `json:"cost"`       // 实际费用 = UnitPrice × Count
 }
 
 // EstimatePreDeductAmount 估算预扣金额
 // 输出 token 估算：用户指定 max_tokens 时按其值（截断到模型上限）；未指定时按模型 max_output_tokens 的 80%。
-// 按估算全额冻结（无上限封顶），下限 $0.001；未配置定价的模型 fail-closed 返回错误拒绝请求。
+// 按估算全额冻结（无上限封顶），下限 0.001 本位币；未配置定价的模型 fail-closed 返回错误拒绝请求。
 // count 为按次计费放大倍数（图片协议顶层 n），<=1 不放大；token 计费不受其影响（usage 已随 n 放大）。
-func EstimatePreDeductAmount(ctx context.Context, tenantID int64, modelName string, count, inputTokens, requestedMaxTokens int, isStream bool) (float64, error) {
+// headers/body 为客户端原始请求（formula 模式请求规则探测用；时间函数基准取当前时刻，
+// 与结算的 billAt≈受理时刻几乎重合，跨小时边界以结算为准不漂移）。
+func EstimatePreDeductAmount(ctx context.Context, tenantID int64, modelName string, count, inputTokens, requestedMaxTokens int, isStream bool, headers http.Header, body []byte) (float64, error) {
 	_ = isStream // 预留参数：估算逻辑不再区分流式/非流式，接口签名保持兼容
 	if count < 1 {
 		count = 1
@@ -822,6 +1018,48 @@ func EstimatePreDeductAmount(ctx context.Context, tenantID int64, modelName stri
 	if pricing.BillingMode == "per_request" {
 		mult := NewFromFloat(pricing.TenantMultiplier).Mul(NewFromFloat(effectiveTimeMultiplier(pricing)))
 		return InexactFloat64(NewFromFloat(pricing.PerRequestPrice).Mul(NewFromFloat(float64(count))).Mul(mult)), nil
+	}
+
+	// 表达式计费：p=请求估算输入、c=估算输出上限（口径与 token 模式一致），其余变量按 0。
+	// 求值失败 fail-closed 拒绝请求（公式保存时已烟测，此处失败属环境异常）
+	if pricing.BillingMode == BillingModeFormula {
+		compiled, err := formula.Compile(pricing.Formula)
+		if err != nil {
+			return 0, gerror.Wrapf(err, "estimate pre-deduct: compile formula (model=%s)", modelName)
+		}
+		maxOutput := 4096
+		if pricing.MaxOutputTokens > 0 {
+			maxOutput = pricing.MaxOutputTokens
+		}
+		estimatedOutput := requestedMaxTokens
+		if estimatedOutput <= 0 {
+			estimatedOutput = int(float64(maxOutput) * 0.8)
+			if estimatedOutput <= 0 {
+				estimatedOutput = 4096
+			}
+		} else if estimatedOutput > maxOutput {
+			estimatedOutput = maxOutput
+		}
+		in := formula.FormulaInput{
+			BaseInputTokens: inputTokens,
+			OutputTokens:    estimatedOutput,
+			ImageCount:      count,
+			Eval: &formula.EvalContext{
+				At:       time.Now(),
+				Location: pricingTimeLocation(ctx),
+				Request:  ResolveFormulaRequest(compiled, headers, body),
+			},
+		}
+		factor, _, err := formula.Run(compiled, in)
+		if err != nil {
+			return 0, gerror.Wrapf(rcommon.ErrBillingFormulaEval, "estimate pre-deduct: run formula (model=%s): %v", modelName, err)
+		}
+		mul := NewFromFloat(pricing.TenantMultiplier).Mul(NewFromFloat(effectiveTimeMultiplier(pricing)))
+		total := InexactFloat64(RoundMoney(NewFromFloat(factor).Div(decimal.NewFromInt(1_000_000)).Mul(mul)))
+		if total < 0.001 {
+			return 0.001, nil
+		}
+		return math.Ceil(total*1000000) / 1000000, nil
 	}
 
 	// Token 计费：估算输出上限。
@@ -869,6 +1107,15 @@ func validatePricingConfigured(pricing *PricingResult, modelName string) error {
 		if LookupPerSecondPrice(pricing.PerSecondPrices, perSecondWildcard) <= 0 {
 			return gerror.Wrapf(rcommon.ErrModelPricingNotConfigured, "model=%s (%s prices not set)", modelName, pricing.BillingMode)
 		}
+	case BillingModeFormula:
+		// 公式可编译即视为已配置（合法公式烟测保证至少一组向量产出非负系数；
+		// 免费公式如 "0" 是管理员的显式意图，不视为未配价）
+		if pricing.Formula == "" {
+			return gerror.Wrapf(rcommon.ErrModelPricingNotConfigured, "model=%s (formula not set)", modelName)
+		}
+		if _, err := formula.Compile(pricing.Formula); err != nil {
+			return gerror.Wrapf(rcommon.ErrModelPricingNotConfigured, "model=%s (formula invalid: %v)", modelName, err)
+		}
 	default: // token / tiered
 		if pricing.InputPrice <= 0 && pricing.OutputPrice <= 0 && !tiersHavePrice(pricing.CustomTiers) {
 			return gerror.Wrapf(rcommon.ErrModelPricingNotConfigured, "model=%s", modelName)
@@ -890,6 +1137,8 @@ type PricingItemInput struct {
 	CacheCreationPrice   float64
 	CacheCreation1hPrice float64 // 1h TTL 缓存创建价；0=未配置（计费按基准价 ×1.6 推导）
 	PerSecondPrices      map[string]float64
+	Formula              string // 计费公式原文（仅 formula 模式；保存时强制烟测）
+	FormulaRules         string // 请求规则表达式（仅 formula 模式；与基础公式正交相乘）
 }
 
 // BuildPricingBlob 从全量替换语义的定价项列表构造 pricing JSONB（按 billing_mode 单模式存储）。
@@ -903,6 +1152,39 @@ func BuildPricingBlob(items []PricingItemInput) (*PricingBlob, error) {
 	anchor := items[0]
 
 	switch mode {
+	case BillingModeFormula:
+		// 表达式计费：单锚点行 + 公式烟测（编译 + 预置向量非负有限），
+		// 防错配公式上线后全站该模型计费异常。基础公式与请求规则分别烟测后
+		// 再组合烟测（组合后的乘法结构/三目嵌套是新语法形态，须独立验证）
+		if len(items) > 1 {
+			return nil, gerror.Newf("formula 计费模式只允许一行定价（公式）")
+		}
+		if anchor.MinTokens != 0 {
+			return nil, gerror.Newf("formula 计费模式要求 min_tokens=0 的定价行")
+		}
+		if strings.TrimSpace(anchor.Formula) == "" {
+			return nil, gerror.New("formula 计费模式要求填写计费公式")
+		}
+		if err := formula.SmokeTest(anchor.Formula); err != nil {
+			return nil, gerror.Wrapf(err, "计费公式烟测未通过")
+		}
+		f := strings.TrimSpace(anchor.Formula)
+		r := strings.TrimSpace(anchor.FormulaRules)
+		if r != "" {
+			// 请求规则单独烟测：空请求/任意时刻向量下非负（规则本身是完整可求值表达式）
+			if err := formula.SmokeTest(r); err != nil {
+				return nil, gerror.Wrapf(err, "请求规则烟测未通过")
+			}
+			if err := formula.SmokeTest(EffectiveFormula(f, r)); err != nil {
+				return nil, gerror.Wrapf(err, "公式 × 请求规则组合烟测未通过")
+			}
+		}
+		blob := &PricingBlob{Formula: &f}
+		if r != "" {
+			blob.FormulaRules = &r
+		}
+		return blob, nil
+
 	case BillingModeSpecial, "per_second":
 		if len(items) > 1 {
 			return nil, gerror.Newf("%s 计费模式只允许一行定价（分辨率矩阵）", mode)
@@ -1028,6 +1310,11 @@ type PricingBlob struct {
 	// 方案私有配置（不透明容器）：schema 由方案实现自定义并自行解析校验，
 	// 引擎与通用编辑器不理解其内容，防止主干结构随方案膨胀
 	SchemeConfig json.RawMessage `json:"scheme_config,omitempty"`
+	// formula 模式：计费公式原文（billing/formula 包语法）。保存时强制烟测
+	Formula *string `json:"formula,omitempty"`
+	// formula 模式：请求规则表达式（header()/param()/时间条件倍率，与基础公式
+	// 正交相乘，组合见 EffectiveFormula）。保存时与基础公式分别烟测后再组合烟测
+	FormulaRules *string `json:"formula_rules,omitempty"`
 }
 
 // tiersHavePrice 阶梯数组中是否存在任一档正价（输入或输出）。

@@ -1,7 +1,3 @@
-# Reference projects (read-only, not needed in build)
-new-api/
-sub2api/
-
 # Temporary files
 tmp/
 

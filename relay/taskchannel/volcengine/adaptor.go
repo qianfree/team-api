@@ -108,6 +108,10 @@ func (a *VolcengineVideoAdaptor) ValidateRequest(_ context.Context, _ *common.Re
 	if _, ok := req["model"]; !ok {
 		return &common.TaskError{StatusCode: http.StatusBadRequest, Message: "model is required"}
 	}
+	if refs := common.ReferencesFromTaskBody(req); len(refs) > 0 {
+		model, _ := req["model"].(string)
+		return validateSeedanceReferences(model, refs)
+	}
 	return nil
 }
 
@@ -142,6 +146,11 @@ func (a *VolcengineVideoAdaptor) EstimateBilling(_ context.Context, info *common
 	}
 
 	return ratios
+}
+
+// ExtraProtectedPaths extra 禁止改写的计费规格字段：时长（duration 及其帧数等价写法 frames）与分辨率
+func (a *VolcengineVideoAdaptor) ExtraProtectedPaths() []string {
+	return []string{"duration", "frames", "resolution"}
 }
 
 func (a *VolcengineVideoAdaptor) AdjustBillingOnSubmit(_ *common.RelayInfo, _ []byte) map[string]any {
@@ -189,8 +198,11 @@ func (a *VolcengineVideoAdaptor) BuildRequestBody(_ context.Context, info *commo
 		})
 	}
 
-	// 从 images 数组提取图片
-	if images, ok := req["images"].([]any); ok {
+	// 参考素材：references[] 为唯一权威来源（带 role、保持原序），忽略兼容字段 images[] 防重复；
+	// 无 references 时沿用 images 数组
+	if refs := common.ReferencesFromTaskBody(req); len(refs) > 0 {
+		volcReq.Content = append(volcReq.Content, referenceContentItems(refs)...)
+	} else if images, ok := req["images"].([]any); ok {
 		for _, img := range images {
 			if url, ok := img.(string); ok {
 				volcReq.Content = append(volcReq.Content, contentItem{
@@ -359,6 +371,17 @@ func (a *VolcengineVideoAdaptor) ParseTaskResult(body []byte) (*common.TaskInfo,
 		info.Status = common.TaskStatusSuccess
 		info.Progress = "100%"
 		info.ResultURL = resp.Content.VideoURL
+		// 用量摘要（纯展示）：任务级 duration/resolution + usage tokens。
+		// 官方口径输入 token 恒 0（total = completion），0 亦有对账意义故照常透出
+		info.UsageSummary = &common.TaskUsageSummary{
+			PromptTokens:     common.UsageI(info.PromptTokens),
+			CompletionTokens: common.UsageI(info.CompletionTokens),
+			TotalTokens:      common.UsageI(info.TotalTokens),
+			Resolution:       resp.Resolution,
+		}
+		if resp.Duration > 0 {
+			info.UsageSummary.OutputVideoSeconds = common.UsageF(float64(resp.Duration))
+		}
 	case "failed":
 		info.Status = common.TaskStatusFailure
 		info.FailReason = resp.Error.Message
@@ -380,8 +403,13 @@ func (a *VolcengineVideoAdaptor) GetChannelName() string {
 
 // ==================== 辅助函数 ====================
 
-// hasVideoInput 检测请求是否包含视频输入
+// hasVideoInput 检测请求是否包含视频输入（references 的 reference_video 或 metadata.content 的 video_url）
 func hasVideoInput(req map[string]any) bool {
+	for _, ref := range common.ReferencesFromTaskBody(req) {
+		if ref.Role == common.RefRoleReferenceVideo {
+			return true
+		}
+	}
 	metadata := taskchannel.ExtractMetadata(req)
 	if len(metadata) == 0 {
 		return false

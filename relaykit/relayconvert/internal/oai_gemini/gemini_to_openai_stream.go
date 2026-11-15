@@ -280,6 +280,14 @@ func (c *GeminiToOpenAIStreamConverter) ConvertStreamResponse(
 		return err
 	}
 
+	// grounding 搜索次数随末帧侧信道透出（OpenAI chunk 无承载字段，
+	// 经 StreamEvent.ToolCalls 交宿主桥接层捕获，供按次附加费计费）
+	if calls := shared.GeminiSearchToolCalls(citations); len(calls) > 0 {
+		if err := chunkWriter(&relayconvert.StreamEvent{ToolCalls: calls}); err != nil {
+			return err
+		}
+	}
+
 	if err := scanner.Err(); err != nil && err != io.EOF {
 		return fmt.Errorf("stream scanner error: %w", err)
 	}

@@ -324,6 +324,31 @@ func assertTenantMatrixModeAllowed(ctx context.Context, modelID int64, reqMode, 
 	return nil
 }
 
+// assertTenantPatchFormulaAllowed 表达式计费（formula）模型拒绝租户级时段定价与参数倍率覆盖：
+// 与平台写侧（SetModelPricing）同口径，时段/参数条件只能在公式内用 hour()/param() 表达，
+// 否则乘数会与公式叠加错价。显式关闭（空切片）不算覆盖，允许保存以便清理存量补丁。
+// formula 模式锁定为平台模式（租户行无法改模式），只需看平台定价
+func assertTenantPatchFormulaAllowed(ctx context.Context, modelID int64, merged *billing.TenantPricingPatch) error {
+	if merged == nil {
+		return nil
+	}
+	hasSegments := merged.TimeSegments != nil && len(*merged.TimeSegments) > 0
+	hasParamRules := merged.ParamMultipliers != nil && len(*merged.ParamMultipliers) > 0
+	if !hasSegments && !hasParamRules {
+		return nil
+	}
+	var pricingRow struct {
+		BillingMode string `json:"billing_mode"`
+	}
+	if err := dao.MdlPricing.Ctx(ctx).Where("model_id", modelID).Fields("billing_mode").Scan(&pricingRow); err != nil {
+		return gerror.Wrap(err, "查询模型定价")
+	}
+	if pricingRow.BillingMode == billing.BillingModeFormula {
+		return gerror.New("表达式计费（formula）模型不支持租户级时段定价与参数倍率：时段/请求参数条件请在平台公式的请求规则中表达")
+	}
+	return nil
+}
+
 // displayColValue 展示字段列值：trim 后空串=清除恢复继承（NULL），非空=覆盖。
 // 与平台 writePricingDisplayFieldsForModel 的口径一致
 func displayColValue(s string) any {
@@ -421,6 +446,9 @@ func (s *sAdmin) UpdateTenantModel(ctx context.Context, req *v1.TenantModelUpdat
 			if err := assertTenantMatrixModeAllowed(ctx, req.ModelID, req.BillingMode, oldRow.BillingMode); err != nil {
 				return nil, err
 			}
+		}
+		if err := assertTenantPatchFormulaAllowed(ctx, req.ModelID, merged); err != nil {
+			return nil, err
 		}
 		if patchJSON == "" {
 			cols["custom_pricing"] = gdb.Raw("NULL")

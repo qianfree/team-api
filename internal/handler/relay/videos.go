@@ -5,6 +5,7 @@ import (
 	"github.com/gogf/gf/v2/net/ghttp"
 
 	"github.com/qianfree/team-api/internal/logic/monitor"
+	relaylogic "github.com/qianfree/team-api/internal/logic/relay"
 	"github.com/qianfree/team-api/internal/middleware"
 	relay_constant "github.com/qianfree/team-api/relay/constant"
 	relay_handler "github.com/qianfree/team-api/relay/handler"
@@ -14,6 +15,22 @@ import (
 // 创建请求在此完成 multipart/JSON 解析与通用任务体转换，复用任务提交管线
 // （selectTaskChannel 渠道调度 + relay_handler.HandleTaskSubmit 计费/提交/落库）；
 // 查询/删除/内容下载直连 relay_handler 的 Videos 处理器。
+
+// relayVideosFileResolver 构造参考素材 file_id → 签名 URL 的解析器
+// （/v1/videos 与 /v1/video/generations 两入口共用：按租户查 /v1/files 记录并签发 URL）
+func relayVideosFileResolver(r *ghttp.Request) relay_handler.VideosFileResolver {
+	return func(ids []string) (map[string]relay_handler.ResolvedReferenceFile, error) {
+		files, err := relaylogic.ResolveRelayFilesForTask(r.Context(), middleware.GetTenantID(r.Context()), ids)
+		if err != nil {
+			return nil, err
+		}
+		out := make(map[string]relay_handler.ResolvedReferenceFile, len(files))
+		for id, f := range files {
+			out[id] = relay_handler.ResolvedReferenceFile{URL: f.URL, ContentType: f.MimeType}
+		}
+		return out, nil
+	}
+}
 
 // HandleVideoCreate 处理 POST /v1/videos（创建视频生成任务）
 func HandleVideoCreate(r *ghttp.Request) {
@@ -32,6 +49,11 @@ func HandleVideoCreate(r *ghttp.Request) {
 		return
 	}
 	if taskErr := relay_handler.ValidateVideosCreateRequest(req); taskErr != nil {
+		writeVideosError(r, taskErr.StatusCode, taskErr.Message, taskErr.ErrCode)
+		return
+	}
+	// 参考素材 file_id（/v1/files 上传）→ 签名 URL，并校验文件类别与 role 一致（同租户）
+	if taskErr := relay_handler.ResolveVideosReferenceFiles(req, relayVideosFileResolver(r)); taskErr != nil {
 		writeVideosError(r, taskErr.StatusCode, taskErr.Message, taskErr.ErrCode)
 		return
 	}

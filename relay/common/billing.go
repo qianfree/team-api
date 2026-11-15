@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"net/http"
 	"time"
 )
 
@@ -11,6 +12,11 @@ import (
 // billing 层预扣估价发现零价定价时返回，handler 层用 errors.Is 识别后
 // 返回明确的请求错误，而非误导性的"余额不足"。
 var ErrModelPricingNotConfigured = errors.New("model pricing not configured")
+
+// ErrBillingFormulaEval 表达式计费公式在本次请求上求值失败（预扣阶段哨兵错误）。
+// 公式保存时已烟测，运行期失败几乎都源于客户端请求参数与公式期望不符（如 param()
+// 取到字符串参与算术），handler 层识别后按请求错误（400）拒绝，而非「余额不足」/500
+var ErrBillingFormulaEval = errors.New("request parameters incompatible with model billing formula")
 
 // MaxImageCount 图片协议顶层 n（一次生成张数）上限，与 OpenAI images API 的 1~10 一致。
 // n 直接放大按次计费（单价 × n），超限值在入口直接 400 拒绝，防止异常大值冻结天价预扣。
@@ -38,7 +44,9 @@ type BillingProvider interface {
 	// PreDeduct 预扣费用
 	// 检查余额 → 冻结预扣金额 → 返回是否成功
 	// count 为按次计费的放大倍数（图片协议顶层 n，一次生成 n 张按 n 次计）；<=1 表示不放大
-	PreDeduct(ctx context.Context, tenantID int64, modelName string, count, inputTokens, maxTokens int, isStream bool, requestID string) (preDeductAmount float64, err error)
+	// headers/body 为客户端原始请求（formula 计费请求规则探测：header()/param()。
+	// 无请求上下文的调用方传 nil，公式探针取空值按默认倍率 1 预扣）
+	PreDeduct(ctx context.Context, tenantID int64, modelName string, count, inputTokens, maxTokens int, isStream bool, requestID string, headers http.Header, body []byte) (preDeductAmount float64, err error)
 
 	// Settle 结算费用（成功请求）。billAt 为请求受理时刻（时段定价按该时刻评估）
 	Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID, relayMode string, usage *Usage, preDeductAmount float64, projectID int64, billAt time.Time) (*SettlementResult, error)
@@ -53,8 +61,9 @@ type BillingProvider interface {
 
 	// SettleStreamInterrupted 流式中断结算。billAt 为请求受理时刻（时段定价按该时刻评估）。
 	// imageCount 为按次计费张数（图片协议顶层 n）：中断结算须与预扣同口径放大，
-	// 否则预扣按 n 张冻结、结算按 1 张计费，多退 (n-1) 张差额；非图片/无张数传 0
-	SettleStreamInterrupted(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID, relayMode string, usage *Usage, preDeductAmount float64, projectID int64, imageCount int, billAt time.Time) (*SettlementResult, error)
+	// 否则预扣按 n 张冻结、结算按 1 张计费，多退 (n-1) 张差额；非图片/无张数传 0。
+	// headers/body 与预扣同源（formula 请求规则探测保持口径一致；无上下文传 nil）
+	SettleStreamInterrupted(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID, relayMode string, usage *Usage, preDeductAmount float64, projectID int64, imageCount int, billAt time.Time, headers http.Header, body []byte) (*SettlementResult, error)
 
 	// CheckRateLimit QPS 限流检查
 	CheckRateLimit(ctx context.Context, tenantID, userID, apiKeyID int64, keyQPS int) (allowed bool, limitLevel string, limit int, remaining int, resetAt int64)
@@ -112,6 +121,7 @@ type SettlementResult struct {
 	CacheCreationCost float64
 	CacheReadCost     float64
 	TotalCost         float64
+	ToolSurchargeCost float64 // 工具调用附加费合计（联网搜索/云端工具按次收费，已含在 ActualCost 中）
 	BillingMode       string
 	BillingSource     string
 	RateMultiplier    float64

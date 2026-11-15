@@ -11,6 +11,7 @@ import (
 	"github.com/qianfree/team-api/relaykit/dto"
 	"github.com/qianfree/team-api/relaykit/relayconvert"
 	"github.com/qianfree/team-api/relaykit/relayconvert/convmeta"
+	"github.com/qianfree/team-api/relaykit/relayconvert/internal/shared"
 	"github.com/qianfree/team-api/relaykit/types"
 )
 
@@ -224,6 +225,10 @@ func (c *ClaudeToOpenAIStreamConverter) ConvertStreamResponse(
 				if event.Usage.CacheCreation != nil {
 					usage.CacheCreation = event.Usage.CacheCreation
 				}
+				// 服务端工具调用次数为累计报数：整体替换（最终帧胜出）
+				if event.Usage.ServerToolUse != nil {
+					usage.ServerToolUse = event.Usage.ServerToolUse
+				}
 			}
 
 		case "message_stop":
@@ -268,6 +273,13 @@ func (c *ClaudeToOpenAIStreamConverter) ConvertStreamResponse(
 			}
 			if err := chunkWriter(chunk); err != nil {
 				return err
+			}
+			// 服务端工具调用计数（web_search 等）随末帧侧信道透出：OpenAI chunk 无承载
+			// 字段，经 StreamEvent.ToolCalls 交宿主桥接层捕获（Data 为 nil 的纯侧信道事件）
+			if calls := shared.ServerToolCallsFromClaudeUsage(&usage); len(calls) > 0 {
+				if err := chunkWriter(&relayconvert.StreamEvent{ToolCalls: calls}); err != nil {
+					return err
+				}
 			}
 
 		case "error":

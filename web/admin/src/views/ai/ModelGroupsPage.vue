@@ -363,5 +363,7 @@ onMounted(() => {
 }
 .models-transfer :deep(.arco-transfer-view) {
   height: 420px;
+  /* Arco 默认 200px，模型名较长会被截断，加宽到 300px（750px 弹窗内容区可容纳） */
+  width: 300px;
 }
 </style>

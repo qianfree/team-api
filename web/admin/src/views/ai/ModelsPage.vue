@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, h } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   Tag, Button, Space, Popconfirm, Message, Tooltip,
 } from '@arco-design/web-vue'
@@ -16,6 +17,7 @@ import { modelCategoryOptions, modelCategoryLabelMap as categoryTagLabel, modelC
 
 const loading = ref(false)
 const data = ref<any[]>([])
+const router = useRouter()
 const pagination = reactive({
   current: 1,
   pageSize: 20,
@@ -144,6 +146,7 @@ const pricingModeTagColor: Record<string, string> = {
   tiered: 'purple',
   per_second: 'green',
   special: 'orange',
+  formula: 'cyan',
 }
 
 // ===== 移动端卡片自定义布局用的格式化（仅用于卡片插槽，不改动桌面端列 render）=====
@@ -168,7 +171,7 @@ function perSecondBasePrice(row: any): number {
 }
 
 // 定价主文本：本位币 输入/输出、单价/次、单价/秒、未定价（bil 层定价直显）；
-// special（特殊计费）按输出生成组件的每秒基准价展示
+// special（特殊计费）按输出生成组件的每秒基准价展示；formula（表达式）无单一基准价，显示公式标记
 function pricingMain(row: any): string {
   if (!row.pricing_mode) return '未定价'
   if (row.pricing_mode === 'per_request') {
@@ -177,12 +180,15 @@ function pricingMain(row: any): string {
   if (row.pricing_mode === 'per_second' || row.pricing_mode === 'special') {
     return `${formatBilling(perSecondBasePrice(row), 4)}/秒`
   }
+  if (row.pricing_mode === 'formula') {
+    return '按公式计费'
+  }
   return `${formatBilling(row.input_price ?? 0, 2)}/${formatBilling(row.output_price ?? 0, 2)}`
 }
 
-// 定价模式副文本：按量 / 按次 / 阶梯 / 按秒 / 特殊（未定价返回空串）
+// 定价模式副文本：按量 / 按次 / 阶梯 / 按秒 / 特殊 / 表达式（未定价返回空串）
 function pricingMode(row: any): string {
-  const m: Record<string, string> = { token: '按量', per_request: '按次', tiered: '阶梯', per_second: '按秒', special: '特殊计费' }
+  const m: Record<string, string> = { token: '按量', per_request: '按次', tiered: '阶梯', per_second: '按秒', special: '特殊计费', formula: '表达式' }
   return row.pricing_mode ? (m[row.pricing_mode] || row.pricing_mode) : ''
 }
 
@@ -229,7 +235,7 @@ const columns: TableColumnData[] = [
       if (!record.pricing_mode) {
         return h(Tag, { color: 'orangered', size: 'small' }, () => '未定价')
       }
-      const modeLabel: Record<string, string> = { token: '按量', per_request: '按次', tiered: '阶梯', per_second: '按秒', special: '特殊计费' }
+      const modeLabel: Record<string, string> = { token: '按量', per_request: '按次', tiered: '阶梯', per_second: '按秒', special: '特殊计费', formula: '表达式' }
       const tags = [
         h(Tag, { color: pricingModeTagColor[record.pricing_mode] || 'gray', size: 'small' }, () => modeLabel[record.pricing_mode] || record.pricing_mode),
       ]
@@ -239,6 +245,8 @@ const columns: TableColumnData[] = [
       } else if (record.pricing_mode === 'per_second' || record.pricing_mode === 'special') {
         tags.push(h('span', { style: 'font-size: 12px; color: var(--color-text-3); margin-left: 4px;' },
           `${formatBilling(perSecondBasePrice(record), 4)}/秒`))
+      } else if (record.pricing_mode === 'formula') {
+        tags.push(h('span', { style: 'font-size: 12px; color: var(--color-text-3); margin-left: 4px;' }, '按公式计费'))
       } else {
         tags.push(h('span', { style: 'font-size: 12px; color: var(--color-text-3); margin-left: 4px;' },
           `${formatBilling(record.input_price ?? 0, 2)}/${formatBilling(record.output_price ?? 0, 2)}`))
@@ -676,6 +684,7 @@ function resetImport() {
             <ADoption @click="exportFile('xlsx')">导出 Excel</ADoption>
           </template>
         </ADropdown>
+        <AButton type="outline" @click="router.push({ name: 'AdminModelToolPricing' })">工具价格</AButton>
       </template>
     </PageHeader>
 

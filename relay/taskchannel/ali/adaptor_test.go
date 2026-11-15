@@ -360,3 +360,30 @@ func TestBuildVideoRequest_SizeUnrecognized(t *testing.T) {
 		t.Fatalf("unrecognized size should leave resolution/size empty: %+v", req.Parameters)
 	}
 }
+
+// TestWan3MediaFromReferences wan3.0 的 input.media[].type 与 references role 同词汇：按原序直通，
+// 优先于兼容字段 metadata.image；wan2.x 只承接首帧，其余角色拒绝
+func TestWan3MediaFromReferences(t *testing.T) {
+	req := map[string]any{
+		"model": "wan3.0-r2v",
+		"references": []any{
+			map[string]any{"role": "reference_image", "url": "https://i"},
+			map[string]any{"role": "reference_video", "url": "https://v"},
+			map[string]any{"role": "reference_audio", "url": "https://a"},
+		},
+	}
+	media := buildWan3Media(req, map[string]any{"image": "https://legacy"})
+	if len(media) != 3 || media[0].Type != "reference_image" || media[1].Type != "reference_video" || media[2].URL != "https://a" {
+		t.Fatalf("wan3 media 映射异常: %+v", media)
+	}
+
+	a := &AliAdaptor{}
+	body := []byte(`{"model":"wan3.0-r2v","prompt":"p","references":[{"role":"reference_video","url":"https://v"}]}`)
+	if terr := a.ValidateRequest(context.Background(), nil, body); terr != nil {
+		t.Fatalf("wan3 应承接参考视频: %+v", terr)
+	}
+	body = []byte(`{"model":"wan2.2-i2v-plus","prompt":"p","references":[{"role":"reference_video","url":"https://v"}]}`)
+	if terr := a.ValidateRequest(context.Background(), nil, body); terr == nil || terr.ErrCode != "reference_not_supported" {
+		t.Fatalf("wan2.x 参考视频应拒绝: %+v", terr)
+	}
+}

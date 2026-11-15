@@ -52,14 +52,7 @@ func (a *Adaptor) handleNonStreamToOpenAI(ctx context.Context, resp *http.Respon
 		return &common.Usage{}, nil
 	}
 	if claudeResp.Usage != nil {
-		usage := &common.Usage{
-			PromptTokens:        claudeResp.Usage.InputTokens,
-			CompletionTokens:    claudeResp.Usage.OutputTokens,
-			TotalTokens:         claudeResp.Usage.InputTokens + claudeResp.Usage.OutputTokens,
-			CacheCreationTokens: claudeResp.Usage.CacheCreationInputTokens,
-			PromptTokensDetails: claudeUsageToTokenDetails(claudeResp.Usage),
-		}
-		return usage, nil
+		return buildUsageFromClaude(claudeResp.Usage), nil
 	}
 	// Usage 为 nil，返回空 Usage
 	return &common.Usage{}, nil
@@ -119,13 +112,7 @@ func (a *Adaptor) handleClaudeNativeNonStream(ctx context.Context, resp *http.Re
 		return &common.Usage{}, nil
 	}
 	if claudeResp.Usage != nil {
-		return &common.Usage{
-			PromptTokens:        claudeResp.Usage.InputTokens,
-			CompletionTokens:    claudeResp.Usage.OutputTokens,
-			TotalTokens:         claudeResp.Usage.InputTokens + claudeResp.Usage.OutputTokens,
-			CacheCreationTokens: claudeResp.Usage.CacheCreationInputTokens,
-			PromptTokensDetails: claudeUsageToTokenDetails(claudeResp.Usage),
-		}, nil
+		return buildUsageFromClaude(claudeResp.Usage), nil
 	}
 
 	return &common.Usage{}, nil
@@ -270,6 +257,10 @@ func (a *Adaptor) handleClaudeNativeStream(ctx context.Context, resp *http.Respo
 							if event.Usage.CacheCreation != nil {
 								usage.CacheCreation = event.Usage.CacheCreation
 							}
+							// 服务端工具调用次数为累计报数：整体替换（最终帧胜出）
+							if event.Usage.ServerToolUse != nil {
+								usage.ServerToolUse = event.Usage.ServerToolUse
+							}
 						}
 					case "error":
 						info.StreamStatus.SetEndReason(common.StreamEndReasonError, fmt.Errorf("claude upstream stream error"))
@@ -301,14 +292,32 @@ func (a *Adaptor) handleClaudeNativeStream(ctx context.Context, resp *http.Respo
 	return buildUsageFromClaude(&usage), nil
 }
 
-// buildUsageFromClaude 从已累积的 ClaudeUsage 构建 common.Usage，保留 cache 字段
+// buildUsageFromClaude 从已累积的 ClaudeUsage 构建 common.Usage，保留 cache 字段。
+// 服务端内置工具调用次数（web_search 等）一并透出到 ToolCalls 供结算层按次计费
 func buildUsageFromClaude(u *dto.ClaudeUsage) *common.Usage {
-	return &common.Usage{
+	usage := &common.Usage{
 		PromptTokens:        u.InputTokens,
 		CompletionTokens:    u.OutputTokens,
 		TotalTokens:         u.InputTokens + u.OutputTokens,
 		CacheCreationTokens: u.CacheCreationInputTokens,
 		PromptTokensDetails: claudeUsageToTokenDetails(u),
+	}
+	applyClaudeServerToolUsage(usage, u)
+	return usage
+}
+
+// applyClaudeServerToolUsage 将 Claude usage.server_tool_use（厂商权威累计报数，
+// 出现在非流式响应与流式 message_start/message_delta）映射为工具调用计数。
+// DTO 按「工具名_requests」动态解析全部字段，此处直接透出（计费 key = 字段名剥
+// _requests 后缀）：web_search / web_fetch / code_execution / 上游未来新增工具
+// 自动纳入，无需跟进代码——计数与价格解耦，价格表未配置的工具不计费（免费）
+func applyClaudeServerToolUsage(usage *common.Usage, u *dto.ClaudeUsage) {
+	if usage == nil || u == nil || u.ServerToolUse == nil {
+		return
+	}
+	// 厂商报数为累计值：替换语义（覆盖流式逐帧累计的中间结果）
+	for tool, count := range u.ServerToolUse.Counts {
+		usage.SetToolCount(tool, count)
 	}
 }
 

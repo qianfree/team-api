@@ -204,7 +204,6 @@ func convertClaudeRequestForDeepSeek(requestBody []byte, info *common.RelayInfo)
 
 // convertResponsesRequestForDeepSeek 处理 Responses API 入站请求的 DeepSeek 兼容适配。
 // 功能：模型名映射 + 将 RelayInfo 中的思考后缀参数映射到 Responses API 的 reasoning.effort 字段。
-// 对齐 new-api commit 9724ef1b2 的实现逻辑。
 func convertResponsesRequestForDeepSeek(requestBody []byte, info *common.RelayInfo) (io.Reader, error) {
 	var rawMap map[string]json.RawMessage
 	if err := json.Unmarshal(requestBody, &rawMap); err != nil {

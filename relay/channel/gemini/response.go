@@ -14,6 +14,7 @@ import (
 	"github.com/qianfree/team-api/relay/dto"
 	"github.com/qianfree/team-api/relay/helper"
 	"github.com/qianfree/team-api/relay/relaykit_bridge"
+	"github.com/qianfree/team-api/relaykit/relayconvert"
 )
 
 // codeAssistWrapper Code Assist 响应包装层
@@ -45,6 +46,32 @@ func (a *Adaptor) handleGeminiNativeResponse(ctx context.Context, resp *http.Res
 	return a.handleGeminiNativeNonStream(ctx, resp, info, writer)
 }
 
+// geminiSearchToolKey Gemini grounding（googleSearch 工具）的计费 key，
+// 与工具价格表（billing/tool_pricing.go）的 key 语义对齐
+const geminiSearchToolKey = "google_search"
+
+// geminiSearchRequestCount 统计整条 Gemini 响应的联网搜索次数：
+// 各 candidate 的 grounding 查询数求和（实际请求 candidate_count 恒为 1，求和防御多候选）
+func geminiSearchRequestCount(resp *dto.GeminiChatResponse) int {
+	if resp == nil {
+		return 0
+	}
+	total := 0
+	for _, c := range resp.Candidates {
+		total += relayconvert.GeminiGroundingSearchRequests(c.GroundingMetadata)
+	}
+	return total
+}
+
+// applyGeminiGroundingCount 把 grounding 搜索次数写入计费用量（非流式路径：
+// 响应整包可得，直接统计）。grounding 是搜索的响应侧证据而非厂商 usage 报数，
+// 计数语义与转换器还原口径一致（relayconvert.GeminiGroundingSearchRequests）
+func applyGeminiGroundingCount(usage *common.Usage, resp *dto.GeminiChatResponse) {
+	if n := geminiSearchRequestCount(resp); n > 0 {
+		usage.SetToolCount(geminiSearchToolKey, n)
+	}
+}
+
 // handleGeminiNativeNonStream Gemini 原生非流式透传
 func (a *Adaptor) handleGeminiNativeNonStream(ctx context.Context, resp *http.Response, info *common.RelayInfo, writer http.ResponseWriter) (*common.Usage, error) {
 	defer resp.Body.Close()
@@ -73,10 +100,13 @@ func (a *Adaptor) handleGeminiNativeNonStream(ctx context.Context, resp *http.Re
 		// Usage 解析失败，返回空 Usage（静默处理，非致命错误）
 		return &common.Usage{}, nil
 	}
+	usage := &common.Usage{}
 	if geminiResp.UsageMetadata != nil {
-		return geminiUsageToCommon(geminiResp.UsageMetadata), nil
+		usage = geminiUsageToCommon(geminiResp.UsageMetadata)
 	}
-	return &common.Usage{}, nil
+	// grounding 搜索计数独立于 usageMetadata 存在，无 usage 也可能发生过搜索
+	applyGeminiGroundingCount(usage, &geminiResp)
+	return usage, nil
 }
 
 // handleGeminiNativeStream Gemini 原生流式透传
@@ -104,6 +134,9 @@ func (a *Adaptor) handleGeminiNativeStream(ctx context.Context, resp *http.Respo
 	frame := helper.NewSSEFrameWriter(writer)
 
 	var totalUsage dto.GeminiUsageMetadata
+	// grounding 搜索次数跨 chunk 取最大值：groundingMetadata 随末帧（或靠后的帧）到达，
+	// 取 max 防御同一 grounding 在相邻 chunk 重复下发时重复计数；中断保留已见值
+	var searchCount int
 
 	for {
 		select {
@@ -113,6 +146,7 @@ func (a *Adaptor) handleGeminiNativeStream(ctx context.Context, resp *http.Respo
 			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, ctx.Err())
 			// 流中断：返回已累计的 usage（Gemini 每个 chunk 携带累计值），输入缺失用请求侧估算补齐
 			interruptedUsage := geminiUsageToCommon(&totalUsage)
+			interruptedUsage.SetToolCount(geminiSearchToolKey, searchCount)
 			helper.ApplyInterruptedUsageFallback(info, interruptedUsage, 0)
 			return interruptedUsage, common.ErrStreamInterrupted
 		default:
@@ -156,6 +190,9 @@ func (a *Adaptor) handleGeminiNativeStream(ctx context.Context, resp *http.Respo
 						if geminiResp.UsageMetadata != nil {
 							totalUsage = *geminiResp.UsageMetadata
 						}
+						if n := geminiSearchRequestCount(&geminiResp); n > searchCount {
+							searchCount = n
+						}
 					}
 				}
 			}
@@ -182,7 +219,9 @@ func (a *Adaptor) handleGeminiNativeStream(ctx context.Context, resp *http.Respo
 
 	info.StreamStatus.SetEndReason(common.StreamEndReasonDone, nil)
 
-	return geminiUsageToCommon(&totalUsage), nil
+	usage := geminiUsageToCommon(&totalUsage)
+	usage.SetToolCount(geminiSearchToolKey, searchCount)
+	return usage, nil
 }
 
 // handleNonStreamToOpenAI 将 Gemini 非流式响应转换为 OpenAI 格式
@@ -213,11 +252,15 @@ func (a *Adaptor) handleNonStreamToOpenAI(ctx context.Context, resp *http.Respon
 
 	// relaykit 转换器返回的 Usage 为 nil（ResponseConverterFunc 签名约束），从原始 Gemini 响应提取
 	var geminiResp dto.GeminiChatResponse
-	if err := json.Unmarshal(body, &geminiResp); err == nil && geminiResp.UsageMetadata != nil {
-		return geminiUsageToCommon(geminiResp.UsageMetadata), nil
+	usage := &common.Usage{}
+	if err := json.Unmarshal(body, &geminiResp); err == nil {
+		if geminiResp.UsageMetadata != nil {
+			usage = geminiUsageToCommon(geminiResp.UsageMetadata)
+		}
+		// grounding 搜索计数独立于 usageMetadata 存在
+		applyGeminiGroundingCount(usage, &geminiResp)
 	}
-	// 如果 Usage 解析失败，返回空 Usage（已写响应，不能重试）
-	return &common.Usage{}, nil
+	return usage, nil
 }
 
 // handleStreamToOpenAI 将 Gemini 流式响应转换为 OpenAI SSE 格式

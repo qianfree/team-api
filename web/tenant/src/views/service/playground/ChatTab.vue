@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { ref, reactive, computed, nextTick, watch } from 'vue'
+import { ref, reactive, computed, nextTick, watch, onUnmounted } from 'vue'
 import { NInput, NInputNumber, NSwitch } from 'naive-ui'
-import { calculateCost } from './calculateCost'
 import Icon from '@/components/common/Icon.vue'
 import MarkdownRenderer from '@/components/common/MarkdownRenderer.vue'
 import BaseSelect from '../../../components/common/BaseSelect.vue'
@@ -28,6 +27,10 @@ const props = defineProps<{
 }>()
 
 const sending = ref(false)
+// 进行中请求的中止控制器；停止按钮的显隐由 sending 驱动，无需响应式
+let currentAbort: AbortController | null = null
+// 非流式超时触发的中止标记：与用户手动停止区分开
+let abortByTimeout = false
 const selectedModel = ref('')
 const selectedModelItem = computed(() =>
 	props.models.find(m => m.model_id === selectedModel.value),
@@ -50,7 +53,8 @@ watch(
 )
 
 const params = reactive({
-	temperature: 0.7,
+	// null = 不发送 temperature 参数（Claude 新系列等模型已不支持该参数，传了会被上游拒绝）；默认留空即不发送
+	temperature: null as number | null,
 	maxTokens: 2048,
 	systemPrompt: '',
 	topP: 1.0,
@@ -77,10 +81,14 @@ interface ChatMessage {
 	parts?: ContentPart[]
 	/** 气泡里的附件缩略图 */
 	previews?: AttachmentPreview[]
+	/** 请求失败原因：非空时渲染为错误卡片并提供重试，不再伪装成回复正文 */
+	error?: string
+	/** 用户手动停止：与 error 互斥；无内容时渲染中性「已停止」卡片 */
+	aborted?: boolean
 }
 const messages = ref<ChatMessage[]>([])
 const inputMessage = ref('')
-const tokenUsage = reactive({ prompt: 0, completion: 0, reasoning: 0, total: 0, cost: '' })
+const tokenUsage = reactive({ prompt: 0, completion: 0, reasoning: 0, total: 0 })
 
 // ── 附件 ──
 
@@ -184,12 +192,9 @@ function clearAllAttachments() {
 	clearAttachments()
 }
 
-// Temperature 滑块的已填充比例，用于把轨道左段染成主色
-const rangePercent = computed(() => `${(params.temperature / 2) * 100}%`)
-
 // 恢复参数默认值：只重置生成参数，不动已选模型与对话内容
 function resetParams() {
-	params.temperature = 0.7
+	params.temperature = null
 	params.maxTokens = 2048
 	params.systemPrompt = ''
 	params.thinking = false
@@ -227,9 +232,12 @@ function buildRequestBody(apiMessages: { role: string; content: string | Content
 	const body: Record<string, any> = {
 		model: selectedModel.value,
 		messages: apiMessages,
-		temperature: params.temperature,
 		max_tokens: params.maxTokens,
 		stream: params.stream,
+	}
+	// temperature 允许缺省：Claude 新系列等模型已不支持该参数，选「默认」时不发送
+	if (params.temperature != null) {
+		body.temperature = params.temperature
 	}
 	// 思考控制：通过 thinking 参数开关（{"type": "enabled"} / {"type": "disabled"}），图片模型不参与
 	if (!isImageModel.value) {
@@ -247,7 +255,7 @@ function buildRequestBody(apiMessages: { role: string; content: string | Content
 	return body
 }
 
-async function sendNonStream(requestBody: Record<string, any>, assistantIdx: number) {
+async function sendNonStream(requestBody: Record<string, any>, assistantIdx: number, signal?: AbortSignal) {
 	const response = await fetch('/v1/chat/completions', {
 		method: 'POST',
 		headers: {
@@ -255,6 +263,7 @@ async function sendNonStream(requestBody: Record<string, any>, assistantIdx: num
 			'Authorization': `Bearer ${props.apiKey}`,
 		},
 		body: JSON.stringify(requestBody),
+		signal,
 	})
 
 	if (!response.ok) {
@@ -263,7 +272,7 @@ async function sendNonStream(requestBody: Record<string, any>, assistantIdx: num
 			const errData = await response.json()
 			if (errData?.error?.message) errMsg = errData.error.message
 		} catch {}
-		messages.value[assistantIdx] = { role: 'assistant', content: errMsg }
+		messages.value[assistantIdx].error = errMsg
 		return
 	}
 
@@ -280,14 +289,9 @@ async function sendNonStream(requestBody: Record<string, any>, assistantIdx: num
 	tokenUsage.completion = usage.completion_tokens || 0
 	tokenUsage.reasoning = usage.completion_tokens_details?.reasoning_tokens || 0
 	tokenUsage.total = usage.total_tokens || 0
-
-	const model = selectedModelItem.value
-	if (model) {
-		tokenUsage.cost = calculateCost(model, usage) || ''
-	}
 }
 
-async function sendStream(requestBody: Record<string, any>, assistantIdx: number) {
+async function sendStream(requestBody: Record<string, any>, assistantIdx: number, signal?: AbortSignal) {
 	const response = await fetch('/v1/chat/completions', {
 		method: 'POST',
 		headers: {
@@ -295,6 +299,7 @@ async function sendStream(requestBody: Record<string, any>, assistantIdx: number
 			'Authorization': `Bearer ${props.apiKey}`,
 		},
 		body: JSON.stringify(requestBody),
+		signal,
 	})
 
 	if (!response.ok) {
@@ -303,7 +308,7 @@ async function sendStream(requestBody: Record<string, any>, assistantIdx: number
 			const errData = await response.json()
 			if (errData?.error?.message) errMsg = errData.error.message
 		} catch {}
-		messages.value[assistantIdx] = { role: 'assistant', content: errMsg }
+		messages.value[assistantIdx].error = errMsg
 		return
 	}
 
@@ -353,11 +358,6 @@ async function sendStream(requestBody: Record<string, any>, assistantIdx: number
 						tokenUsage.completion = usage.completion_tokens || 0
 						tokenUsage.reasoning = usage.completion_tokens_details?.reasoning_tokens || 0
 						tokenUsage.total = usage.total_tokens || 0
-
-						const model = selectedModelItem.value
-						if (model) {
-							tokenUsage.cost = calculateCost(model, usage) || ''
-						}
 					}
 				} catch {}
 			}
@@ -399,26 +399,84 @@ async function sendMessage() {
 	sending.value = true
 
 	const assistantIdx = messages.value.length
-	messages.value.push({ role: 'assistant', content: '', reasoningContent: '' })
+	messages.value.push({ role: 'assistant', content: '' })
 	scrollToBottom()
 
+	await dispatchRequest(assistantIdx)
+}
+
+// dispatchRequest 以 assistantIdx 为目标位发起请求，首发、失败重试与重新生成共用同一条链路；
+// 网络层异常统一在此落为错误态，由模板渲染错误卡片而非伪装成回复正文
+async function dispatchRequest(assistantIdx: number) {
 	const apiMessages = messages.value
 		.slice(0, assistantIdx)
 		.map(m => ({ role: m.role, content: (m.parts ?? m.content) as string | ContentPart[] }))
 	const requestBody = buildRequestBody(apiMessages)
 
+	sending.value = true
+	const abort = new AbortController()
+	currentAbort = abort
+	abortByTimeout = false
+	// 非流式挂 60s 超时兜底：上游悬挂时自动中止，避免 sending 永远为 true；
+	// 流式不设超时——推理模型首 token 可能等待数分钟，交给用户手动停止
+	let timeoutTimer: number | null = null
+	if (!params.stream) {
+		timeoutTimer = window.setTimeout(() => {
+			abortByTimeout = true
+			abort.abort()
+		}, 60_000)
+	}
 	try {
 		if (params.stream) {
-			await sendStream(requestBody, assistantIdx)
+			await sendStream(requestBody, assistantIdx, abort.signal)
 		} else {
-			await sendNonStream(requestBody, assistantIdx)
+			await sendNonStream(requestBody, assistantIdx, abort.signal)
 		}
 	} catch (e: any) {
-		const errMsg = e?.message || '请求失败，请重试'
-		messages.value[assistantIdx] = { role: 'assistant', content: errMsg }
+		const failed = messages.value[assistantIdx]
+		if (e?.name === 'AbortError') {
+			if (abortByTimeout) {
+				failed.error = '请求超时（60 秒无响应），已自动停止'
+			} else {
+				// 用户手动停止：保留已流出的内容，模板按中止态渲染
+				failed.aborted = true
+			}
+		} else {
+			failed.error = e?.message || '请求失败，请重试'
+		}
 	} finally {
+		if (timeoutTimer) clearTimeout(timeoutTimer)
+		if (currentAbort === abort) currentAbort = null
 		sending.value = false
 		scrollToBottom()
+	}
+}
+
+// stopGeneration 用户手动停止当前请求：中止 fetch，已流出的内容保留
+function stopGeneration() {
+	currentAbort?.abort()
+}
+
+// regenerate 重新生成一条 assistant 消息：清掉错误/中止态与旧内容后对同一份历史重发
+async function regenerate(idx: number) {
+	if (sending.value) return
+	const msg = messages.value[idx]
+	if (!msg || msg.role !== 'assistant') return
+	msg.error = undefined
+	msg.aborted = undefined
+	msg.content = ''
+	msg.reasoningContent = ''
+	await dispatchRequest(idx)
+}
+
+// copyMessage 复制回复原文（Markdown 源码），便于直接粘贴复用
+async function copyMessage(msg: ChatMessage) {
+	if (!msg.content) return
+	try {
+		await navigator.clipboard.writeText(msg.content)
+		toast.success('已复制到剪贴板')
+	} catch {
+		toast.error('复制失败，请手动选择文本复制')
 	}
 }
 
@@ -429,9 +487,13 @@ function clearChat() {
 	tokenUsage.completion = 0
 	tokenUsage.reasoning = 0
 	tokenUsage.total = 0
-	tokenUsage.cost = ''
 	expandedThinking.value = {}
 }
+
+// 路由离开时兜底中止进行中的请求（KeepAlive 下切 Tab 不卸载，仅路由离开触发）
+onUnmounted(() => {
+	currentAbort?.abort()
+})
 </script>
 
 <template>
@@ -479,22 +541,18 @@ function clearChat() {
 							<div>
 								<div class="mb-2 flex items-center justify-between">
 									<label class="text-xs font-semibold text-gray-500">Temperature</label>
-									<span class="rounded-md bg-primary-50 px-1.5 py-0.5 font-mono text-xs font-semibold text-primary-600">
-										{{ params.temperature.toFixed(1) }}
-									</span>
+									<span class="text-[11px] text-gray-400">留空不发送</span>
 								</div>
-								<input
-									v-model.number="params.temperature"
-									type="range"
-									min="0"
-									max="2"
-									step="0.1"
-									class="range-slider"
-									:style="{ '--pct': rangePercent }"
+								<!-- 允许留空：null = 请求体不带 temperature，使用模型自身默认值（Claude 新系列等模型已不支持该参数） -->
+								<n-input-number
+									v-model:value="params.temperature"
+									:min="0"
+									:max="2"
+									:step="0.1"
+									placeholder="留空则使用模型默认"
+									clearable
+									class="w-full"
 								/>
-								<div class="mt-1.5 flex justify-between text-[11px] text-gray-400">
-									<span>严谨</span><span>均衡</span><span>发散</span>
-								</div>
 							</div>
 
 							<div>
@@ -581,7 +639,7 @@ function clearChat() {
 
 						<!-- 消息列表 -->
 						<div v-else class="space-y-5">
-							<div v-for="(msg, idx) in messages" :key="idx" class="flex gap-3 animate-slide-up" :class="{ 'justify-end': msg.role === 'user' }">
+							<div v-for="(msg, idx) in messages" :key="idx" class="group flex gap-3 animate-slide-up" :class="{ 'justify-end': msg.role === 'user' }">
 								<!-- Assistant message -->
 								<div v-if="msg.role === 'assistant'" class="flex max-w-[85%] gap-3">
 									<div class="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary-400 to-primary-600 text-white shadow-sm shadow-primary-500/25">
@@ -610,9 +668,59 @@ function clearChat() {
 												</div>
 											</div>
 										</div>
-										<!-- Main content -->
-										<div class="rounded-2xl rounded-tl-md border border-gray-200 bg-white px-4 py-3 shadow-sm">
-											<MarkdownRenderer :content="msg.content" />
+										<!-- 内容气泡：正在生成且尚无内容时显示打字占位 -->
+										<div
+											v-if="msg.content || (!msg.error && !msg.aborted && sending && idx === messages.length - 1)"
+											class="rounded-2xl rounded-tl-md border border-gray-200 bg-white px-4 py-3 shadow-sm"
+										>
+											<MarkdownRenderer v-if="msg.content" :content="msg.content" />
+											<div v-else class="flex items-center gap-1 py-1.5">
+												<span class="typing-dot"></span>
+												<span class="typing-dot"></span>
+												<span class="typing-dot"></span>
+											</div>
+										</div>
+										<!-- 错误态：独立红色卡片 + 重试 -->
+										<div v-if="msg.error" class="rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+											<div class="flex items-center gap-2 text-red-700">
+												<Icon name="xCircle" size="sm" />
+												<span class="text-sm font-medium">请求失败</span>
+											</div>
+											<p class="mt-1.5 break-all text-sm text-red-600">{{ msg.error }}</p>
+											<button
+												class="mt-2 inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-2.5 py-1 text-xs font-medium text-red-600 transition-colors duration-150 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+												:disabled="sending"
+												@click="regenerate(idx)"
+											>
+												<Icon name="refresh" size="xs" />
+												重试
+											</button>
+										</div>
+										<!-- 手动停止且无内容：中性提示 + 重新生成 -->
+										<div v-if="msg.aborted && !msg.content" class="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
+											<div class="flex items-center gap-2 text-gray-600">
+												<Icon name="infoCircle" size="sm" />
+												<span class="text-sm">已停止生成</span>
+											</div>
+											<button
+												class="mt-2 inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-600 transition-colors duration-150 hover:border-primary-300 hover:text-primary-600 disabled:cursor-not-allowed disabled:opacity-50"
+												:disabled="sending"
+												@click="regenerate(idx)"
+											>
+												<Icon name="refresh" size="xs" />
+												重新生成
+											</button>
+										</div>
+										<!-- 消息操作：复制 / 重新生成（桌面 hover 浮现，移动端常显） -->
+										<div v-if="msg.content && !msg.error" class="flex items-center gap-2 opacity-60 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
+											<button class="msg-action" @click="copyMessage(msg)">
+												<Icon name="copy" size="xs" />
+												复制
+											</button>
+											<button class="msg-action" :disabled="sending" @click="regenerate(idx)">
+												<Icon name="refresh" size="xs" />
+												重新生成
+											</button>
 										</div>
 									</div>
 								</div>
@@ -642,20 +750,11 @@ function clearChat() {
 									System: {{ msg.content.substring(0, 50) }}{{ msg.content.length > 50 ? '...' : '' }}
 								</div>
 							</div>
-							<!-- Sending indicator -->
-							<div v-if="sending && (params.stream ? (messages.length > 0 && messages[messages.length - 1].role === 'user') : true)" class="flex gap-3">
-								<div class="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-primary-400 to-primary-600">
-									<div class="spinner h-4 w-4 text-white"></div>
-								</div>
-								<div class="rounded-2xl rounded-tl-md border border-gray-200 bg-white px-4 py-3 shadow-sm">
-									<p class="text-sm text-gray-500">请求中...</p>
-								</div>
-							</div>
 						</div>
 					</div>
 
 					<!-- Token usage bar -->
-					<div v-if="tokenUsage.total > 0 || tokenUsage.cost || pendingBytes > 0" class="flex items-center justify-between gap-3 border-t border-gray-100 bg-gray-50/60 px-5 py-2 text-xs text-gray-500 lg:px-6">
+					<div v-if="tokenUsage.total > 0 || pendingBytes > 0" class="flex items-center justify-between gap-3 border-t border-gray-100 bg-gray-50/60 px-5 py-2 text-xs text-gray-500 lg:px-6">
 						<div class="flex items-center gap-4">
 							<span class="flex items-center gap-1.5">Prompt <span class="font-medium text-gray-700">{{ tokenUsage.prompt }}</span></span>
 							<span class="flex items-center gap-1.5">Completion <span class="font-medium text-gray-700">{{ tokenUsage.completion }}</span></span>
@@ -667,7 +766,6 @@ function clearChat() {
 							<span v-if="pendingBytes > 0" :class="overBudget ? 'font-medium text-red-600' : ''">
 								附件 {{ formatBytes(pendingBytes) }} / {{ formatBytes(MAX_TOTAL_BYTES) }}
 							</span>
-							<span v-if="tokenUsage.cost" class="font-medium text-amber-600">{{ tokenUsage.cost }}</span>
 						</div>
 					</div>
 
@@ -736,7 +834,12 @@ function clearChat() {
 										<Icon name="refresh" size="xs" />
 										清空对话
 									</button>
-									<button class="btn btn-primary btn-sm px-4" :disabled="sending || (!inputMessage.trim() && !attachmentList.length)" @click="sendMessage">
+									<!-- 生成中切换为停止按钮：中止当前请求，已流出的内容保留 -->
+									<button v-if="sending" class="btn btn-danger btn-sm px-4" @click="stopGeneration">
+										<Icon name="x" size="xs" />
+										停止
+									</button>
+									<button v-else class="btn btn-primary btn-sm px-4" :disabled="!inputMessage.trim() && !attachmentList.length" @click="sendMessage">
 										<Icon name="edit" size="xs" />
 										发送
 									</button>
@@ -754,51 +857,51 @@ function clearChat() {
 /* 输入容器（.input-shell / .input-tool）已提到 styles/main.css，
    与视频 Tab 共用一份定义 */
 
-/* ── Temperature 滑块：替换浏览器默认的紫色原生样式 ── */
-.range-slider {
-	-webkit-appearance: none;
-	appearance: none;
-	width: 100%;
+/* ── 打字占位：首 token 到达前的三点动画，替代原先永不出现的「请求中」指示条 ── */
+.typing-dot {
+	display: inline-block;
+	width: 6px;
 	height: 6px;
 	border-radius: 9999px;
-	outline: none;
-	cursor: pointer;
-	background: linear-gradient(
-		to right,
-		#14b8a6 0%,
-		#14b8a6 var(--pct, 35%),
-		#e2e8f0 var(--pct, 35%),
-		#e2e8f0 100%
-	);
+	background: #94a3b8;
+	animation: typing-bounce 1.2s infinite ease-in-out;
 }
-.range-slider::-webkit-slider-thumb {
-	-webkit-appearance: none;
-	appearance: none;
-	height: 16px;
-	width: 16px;
-	border: 2px solid #14b8a6;
-	border-radius: 9999px;
-	background: #fff;
-	box-shadow: 0 2px 6px rgba(13, 148, 136, 0.35);
-	transition: transform 150ms ease;
+.typing-dot:nth-child(2) {
+	animation-delay: 0.15s;
 }
-.range-slider::-webkit-slider-thumb:hover {
-	transform: scale(1.15);
+.typing-dot:nth-child(3) {
+	animation-delay: 0.3s;
 }
-.range-slider::-moz-range-thumb {
-	height: 14px;
-	width: 14px;
-	border: 2px solid #14b8a6;
-	border-radius: 9999px;
-	background: #fff;
-	box-shadow: 0 2px 6px rgba(13, 148, 136, 0.35);
+@keyframes typing-bounce {
+	0%,
+	60%,
+	100% {
+		transform: translateY(0);
+		opacity: 0.4;
+	}
+	30% {
+		transform: translateY(-4px);
+		opacity: 1;
+	}
 }
-.range-slider::-moz-range-track {
-	height: 6px;
-	border-radius: 9999px;
-	background: #e2e8f0;
+
+/* ── 消息操作小按钮：复制 / 重新生成 ── */
+.msg-action {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.25rem;
+	padding: 0.25rem 0.5rem;
+	border-radius: 0.5rem;
+	font-size: 11px;
+	color: #6b7280;
+	transition: color 150ms ease, background-color 150ms ease;
 }
-.range-slider:focus-visible {
-	box-shadow: 0 0 0 4px rgba(20, 184, 166, 0.15);
+.msg-action:hover {
+	color: #0d9488;
+	background: #f0fdfa;
+}
+.msg-action:disabled {
+	cursor: not-allowed;
+	opacity: 0.5;
 }
 </style>

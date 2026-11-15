@@ -4,7 +4,7 @@ import { toast } from '@/utils/toast'
 /**
  * Playground 附件管理
  *
- * 附件全部以 base64 data URL 内联进请求体（对话走 content parts，视频走 input_reference），
+ * 附件全部以 base64 data URL 内联进请求体（对话走 content parts，视频走 references[]），
  * 不落对象存储。因此体积是硬约束：后端 GoFrame server 默认 ClientMaxBodySize 为 8MB，
  * base64 还要膨胀 4/3，这里按 6MB 的安全水位做单个与合计两道闸门。
  */

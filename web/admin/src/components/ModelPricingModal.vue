@@ -18,6 +18,7 @@ import PerSecondMatrixEditor, {
 	perSecondPayloadFrom,
 	perSecondBasePriceOf,
 } from './PerSecondMatrixEditor.vue'
+import FormulaPricingEditor from './FormulaPricingEditor.vue'
 import { availableSchemeOptions, resolvePricingSchemeEditor } from './pricingSchemeEditors'
 
 // 本位币符号：定价输入控件后缀跟随本位币，输入值仍为 bil 层存储原值不折算
@@ -65,7 +66,14 @@ const billingModeOptions = [
 	{ label: '按次计费', value: 'per_request' },
 	{ label: '阶梯计费', value: 'tiered' },
 	{ label: '按秒计费 (视频)', value: 'per_second' },
+	{ label: '表达式计费', value: 'formula' },
 ]
+
+// 表达式计费（formula）：公式文本与编辑器引用（保存前调编辑器自治校验）
+const formulaText = ref('')
+// 请求规则表达式（header()/param()/时间条件倍率，与基础公式正交相乘）
+const formulaRulesText = ref('')
+const formulaEditorRef = ref<InstanceType<typeof FormulaPricingEditor>>()
 
 function createEmptyItem(mode: string) {
 	return {
@@ -113,6 +121,8 @@ function resetEditorDefaults() {
 	editorBillingMode.value = 'token'
 	editorItems.length = 0
 	editorItems.push(createEmptyItem('token'))
+	formulaText.value = ''
+	formulaRulesText.value = ''
 	perSecondRows.length = 0
 	paramRules.length = 0
 	editorTimeSegments.length = 0
@@ -251,6 +261,18 @@ const hasOfficialPricing = computed(() => {
 		(Number(first.per_request_price) || 0) > 0 ||
 		officialPerSecondRows.some((r) => (Number(r.price) || 0) > 0)
 	)
+})
+
+// 官方价快捷区提示：表达式计费金额由公式决定，折扣换算不适用（切回其他模式才可用）
+const officialQuickTitle = computed(() => {
+	if (editorBillingMode.value === 'formula') {
+		return hasOfficialPricing.value
+			? '官方价基准已设置（非计费依据）；表达式计费价格由公式决定，不参与折扣换算'
+			: '官方价基准未设置；表达式计费价格由公式决定，官方价仅用于「现价几折」展示'
+	}
+	return hasOfficialPricing.value
+		? `官方价基准已设置（非计费依据）${officialFoldSummary() ? '，' + officialFoldSummary() : ''}；点击标签可修改`
+		: '官方价基准未设置；点击标签设置后可按折扣一键生成我方定价'
 })
 
 function addOfficialPerSecondRow(spec = '') {
@@ -760,8 +782,12 @@ async function loadPricing() {
 					cache_creation_price: item.cache_creation_price ?? 0,
 					cache_creation_1h_price: item.cache_creation_1h_price ?? 0,
 					per_second_prices: item.per_second_prices ?? null,
+					formula: item.formula || '',
 				})
 			}
+			// 表达式计费回显：公式原文与请求规则进编辑器（切其他模式再切回不丢失）
+			formulaText.value = list[0].formula || ''
+			formulaRulesText.value = list[0].formula_rules || ''
 			loadPerSecondPrices(list[0].per_second_prices)
 		} else {
 			resetEditorDefaults()
@@ -783,14 +809,18 @@ const timePricingEnabled = ref(false)
 const editorTimeSegments = reactive<TimeSegmentRow[]>([])
 const timeSegEditorRef = ref<InstanceType<typeof PricingTimeSegmentsEditor>>()
 
-// 组合预览基础价：随计费模式取当前编辑中的价格（tiered 用首档价）
-const previewBase = computed<SegmentPreviewBase>(() => {
+// 组合预览基础价：随计费模式取当前编辑中的价格（tiered 用首档价）；
+// formula 模式无单一基准价（公式输出整体系数），时段组合预览不展示
+const previewBase = computed<SegmentPreviewBase | null>(() => {
 	const first: any = editorItems[0] || {}
 	if (editorBillingMode.value === 'per_second') {
 		return { kind: 'per_second', perSecond: perSecondBasePrice() }
 	}
 	if (editorBillingMode.value === 'per_request') {
 		return { kind: 'per_request', perRequest: Number(first.per_request_price) || 0 }
+	}
+	if (editorBillingMode.value === 'formula') {
+		return null
 	}
 	const kind = editorBillingMode.value === 'tiered' ? 'tiered' : 'token'
 	return { kind, input: Number(first.input_price) || 0, output: Number(first.output_price) || 0 }
@@ -864,15 +894,26 @@ async function savePricing() {
 				return
 			}
 		}
-		// 时段定价：编辑器组件校验并生成载荷（校验失败中止保存）
-		const timeSegments = timeSegEditorRef.value?.buildTimeSegmentsPayload()
-		if (timeSegments === null || timeSegments === undefined) {
+		// 表达式模式：公式编辑器自治校验（编译 + 试算，未通过中止保存；后端保存链路同口径烟测兜底）
+		if (editorBillingMode.value === 'formula') {
+			const formulaOk = await formulaEditorRef.value?.validate()
+			if (!formulaOk) {
+				editorSaving.value = false
+				return
+			}
+		}
+		// 时段定价：编辑器组件校验并生成载荷（校验失败中止保存）。
+		// formula 模式编辑器未挂载且不展示——价格完全由公式决定，传空数组显式清除
+		// （存量时段/参数配置若不清除会与公式叠加错价）
+		const isFormulaMode = editorBillingMode.value === 'formula'
+		const timeSegments = isFormulaMode ? [] : timeSegEditorRef.value?.buildTimeSegmentsPayload()
+		if (!isFormulaMode && (timeSegments === null || timeSegments === undefined)) {
 			editorSaving.value = false
 			return
 		}
-		// 参数倍率：编辑器组件校验并生成载荷（校验失败中止保存）
-		const paramMultipliers = paramEditorRef.value?.buildParamMultipliersPayload()
-		if (paramMultipliers === null || paramMultipliers === undefined) {
+		// 参数倍率：同上（formula 模式显式清除）
+		const paramMultipliers = isFormulaMode ? [] : paramEditorRef.value?.buildParamMultipliersPayload()
+		if (!isFormulaMode && (paramMultipliers === null || paramMultipliers === undefined)) {
 			editorSaving.value = false
 			return
 		}
@@ -900,14 +941,17 @@ async function savePricing() {
 			billing_mode: editorBillingMode.value,
 			min_tokens: editorBillingMode.value === 'tiered' ? item.min_tokens : 0,
 			max_tokens: editorBillingMode.value === 'tiered' ? (index < editorItems.length - 1 ? item.max_tokens : null) : null,
-			input_price: item.input_price,
-			output_price: item.output_price,
+			input_price: editorBillingMode.value === 'formula' ? 0 : item.input_price,
+			output_price: editorBillingMode.value === 'formula' ? 0 : item.output_price,
 			per_request_price: editorBillingMode.value === 'per_request' ? (item.per_request_price ?? null) : null,
-			cache_read_price: item.cache_read_price,
-			cache_creation_price: item.cache_creation_price,
+			cache_read_price: editorBillingMode.value === 'formula' ? 0 : item.cache_read_price,
+			cache_creation_price: editorBillingMode.value === 'formula' ? 0 : item.cache_creation_price,
 			// 1h TTL 价：0=未配置（后端按 5m 基准 ×1.6 推导）；tiered 仅首档生效（后端取锚点）
-			cache_creation_1h_price: item.cache_creation_1h_price ?? 0,
+			cache_creation_1h_price: editorBillingMode.value === 'formula' ? 0 : (item.cache_creation_1h_price ?? 0),
 			per_second_prices: editorBillingMode.value === 'per_second' ? perSecondPrices : null,
+			// 表达式计费：公式原文与请求规则（仅 formula 模式提交，其余模式置空清除）
+			formula: editorBillingMode.value === 'formula' ? formulaText.value.trim() : '',
+			formula_rules: editorBillingMode.value === 'formula' ? formulaRulesText.value.trim() : '',
 		}))
 		await request.put(`/admin/models/${props.modelId}/pricing`, {
 			items,
@@ -1023,25 +1067,18 @@ watch(() => props.visible, (val) => {
 		/>
 		<AForm v-else :model="{}" layout="vertical">
 			<div class="pricing-editor">
-				<!-- Billing Mode -->
+				<!-- Billing Mode：标题行右挂官方价工具，模式单选独占一行（5 个选项 + 工具挤一行会顶到换行） -->
 				<div class="editor-section">
 					<div class="editor-section-header">
 						<h3>计费模式</h3>
-					</div>
-					<div class="billing-mode-row">
-						<ARadioGroup v-model="editorBillingMode" type="button">
-							<ARadio v-for="opt in billingModeOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</ARadio>
-						</ARadioGroup>
 						<div class="billing-mode-tools">
 							<!-- 官方价状态：颜色区分是否配置；点击标签进二层弹窗设置。已配置时右侧直接给快速折扣录入 -->
-							<div
-								class="official-quick"
-								:title="hasOfficialPricing ? `官方价基准已设置（非计费依据）${officialFoldSummary() ? '，' + officialFoldSummary() : ''}；点击标签可修改` : '官方价基准未设置；点击标签设置后可按折扣一键生成我方定价'"
-							>
+							<div class="official-quick" :title="officialQuickTitle">
 								<ATag :color="hasOfficialPricing ? 'green' : 'gray'" class="official-quick-tag" @click="openOfficialModal">
 									{{ hasOfficialPricing ? '官方价已设置' : '官方价未设置' }}
 								</ATag>
-								<template v-if="hasOfficialPricing">
+								<!-- 表达式计费的价格由公式决定，折扣换算无意义：只留状态标签，避免按官方价填入把模式改走 -->
+								<template v-if="hasOfficialPricing && editorBillingMode !== 'formula'">
 									<AInputNumber
 										v-model="officialDiscountPercent"
 										:min="1"
@@ -1056,9 +1093,13 @@ watch(() => props.visible, (val) => {
 									</AInputNumber>
 									<AButton size="small" type="primary" @click="applyOfficialToPricing">按官方价填入</AButton>
 								</template>
+								<span v-else-if="hasOfficialPricing" class="official-quick-note">仅作折数基准</span>
 							</div>
 						</div>
 					</div>
+					<ARadioGroup v-model="editorBillingMode" type="button" class="billing-mode-group">
+						<ARadio v-for="opt in billingModeOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</ARadio>
+					</ARadioGroup>
 				</div>
 
 				<!-- Per-request Mode -->
@@ -1091,6 +1132,13 @@ watch(() => props.visible, (val) => {
 							<span class="section-hint">按视频时长（秒）计费，费用 = 命中规格单价 × 秒数；<code>*</code> 为兜底价（请求规格未命中时使用）</span>
 						</div>
 						<PerSecondMatrixEditor :rows="perSecondRows" />
+					</div>
+				</template>
+
+				<!-- Formula Mode（表达式计费：公式从 usage 变量取值，适配表单模式难以表达的复杂定价） -->
+				<template v-else-if="editorBillingMode === 'formula'">
+					<div class="editor-section">
+						<FormulaPricingEditor ref="formulaEditorRef" v-model="formulaText" v-model:model-value-rules="formulaRulesText" />
 					</div>
 				</template>
 
@@ -1263,16 +1311,19 @@ watch(() => props.visible, (val) => {
 				</div>
 			</template>
 
-				<!-- Time Segment Pricing（时段定价：峰谷/工作时段/促销）——编辑器组件与官方弹窗共用 -->
+				<!-- Time Segment Pricing（时段定价）——formula 模式不展示：价格完全由公式
+				     （含请求规则）决定，时段/参数条件改用 hour()/param() 表达，防正交叠加错价；
+				     保存时对二者显式传空数组清除（见 savePricing 的 isFormula 分支） -->
 				<PricingTimeSegmentsEditor
+					v-if="editorBillingMode !== 'formula'"
 					ref="timeSegEditorRef"
 					v-model:enabled="timePricingEnabled"
 					:segments="editorTimeSegments"
 					:preview-base="previewBase"
 				/>
 
-				<!-- Param Multipliers（参数倍率：按请求参数匹配加/折扣）——编辑器组件与官方弹窗共用 -->
-				<PricingParamRulesEditor ref="paramEditorRef" :rules="paramRules" />
+				<!-- Param Multipliers（参数倍率）——同上，formula 模式不展示 -->
+				<PricingParamRulesEditor v-if="editorBillingMode !== 'formula'" ref="paramEditorRef" :rules="paramRules" />
 
 				<!-- 展示信息（折扣标签 / 价格调整说明对外展示，价格说明仅内部可见） -->
 				<div class="editor-section">
@@ -1599,12 +1650,10 @@ watch(() => props.visible, (val) => {
 	color: var(--ta-text-tertiary);
 }
 
-.billing-mode-row {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: 12px;
+/* 计费模式单选：独占一行；选项多时整体换行，不与右侧官方价工具抢空间 */
+.billing-mode-group {
 	flex-wrap: wrap;
+	row-gap: 4px;
 }
 
 .tier-card {
@@ -1652,12 +1701,20 @@ watch(() => props.visible, (val) => {
 	color: var(--ta-text-secondary);
 }
 
-/* 计费模式行右上角工具组：官方价状态 + 快速折扣录入 + 折扣重算 */
+/* 计费模式行右上角工具组：官方价状态 + 快速折扣录入 + 折扣重算（靠右对齐，标题行内换行不塌） */
 .billing-mode-tools {
 	display: flex;
 	align-items: center;
 	gap: 16px;
 	flex-wrap: wrap;
+	margin-left: auto;
+}
+
+/* 表达式计费下的官方价说明：折扣换算不可用，仅保留折数基准语义 */
+.official-quick-note {
+	font-size: 12px;
+	color: var(--ta-text-tertiary);
+	white-space: nowrap;
 }
 
 /* 官方价状态标签：颜色区分是否配置；可点击进二层弹窗设置 */

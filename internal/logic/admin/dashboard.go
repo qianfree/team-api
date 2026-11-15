@@ -505,7 +505,8 @@ const usageLogDetailFields = usageLogListFields + `,
 		u.channel_type, u.requested_model, u.relay_mode, u.currency, u.billing_source,
 		u.error_message, u.client_ip, u.user_agent, u.service_tier, u.reasoning_effort, u.stream_end_reason,
 		u.image_count, u.image_size, u.pre_deduct_amount, u.refund_amount, u.supplement_amount,
-		u.billing_summary, u.billing_snapshot, u.inbound_endpoint, u.request_id, u.task_id, u.upstream_request_id`
+		u.billing_summary, u.billing_snapshot, u.inbound_endpoint, u.request_id, u.task_id, u.upstream_request_id,
+		u.tool_usage, u.tool_surcharge_cost`
 
 // GetAllUsageLogs 获取所有租户的用量日志（管理后台）
 func (s *sAdmin) GetAllUsageLogs(ctx context.Context, req *v1.AdminUsageLogListReq) (*v1.AdminUsageLogListRes, error) {
@@ -1407,6 +1408,7 @@ func (s *sAdmin) ExportUsageLogs(ctx context.Context, req *v1.AdminUsageLogExpor
 		{Field: "request_type", Header: "请求类型"},
 		{Field: "input_tokens", Header: "输入Token"},
 		{Field: "output_tokens", Header: "输出Token"},
+		{Field: "tool_surcharge_cost", Header: "工具附加费"},
 		{Field: "total_cost", Header: "费用"},
 		{Field: "status", Header: "状态"},
 		{Field: "request_id", Header: "请求ID"},
@@ -1423,7 +1425,7 @@ func (s *sAdmin) ExportUsageLogs(ctx context.Context, req *v1.AdminUsageLogExpor
 	where, filterArgs := buildUsageLogFilter(req.AdminUsageLogFilter)
 
 	fromClause := "bil_usage_logs u LEFT JOIN tnt_users t ON u.user_id = t.id AND u.tenant_id = t.tenant_id LEFT JOIN tnt_tenants tn ON u.tenant_id = tn.id"
-	selectFields := "u.id, COALESCE(tn.name, '') AS tenant_name, COALESCE(t.username, '') AS username, u.model_name, u.request_type, u.input_tokens, u.output_tokens, COALESCE(NULLIF(u.actual_cost, 0), u.total_cost) AS total_cost, u.status, u.request_id, u.upstream_request_id, u.created_at"
+	selectFields := "u.id, COALESCE(tn.name, '') AS tenant_name, COALESCE(t.username, '') AS username, u.model_name, u.request_type, u.input_tokens, u.output_tokens, u.tool_surcharge_cost, COALESCE(NULLIF(u.actual_cost, 0), u.total_cost) AS total_cost, u.status, u.request_id, u.upstream_request_id, u.created_at"
 
 	return nil, export.GenericExport(ctx, config, func(yield func(map[string]any) bool) {
 		// keyset（游标）翻页替代 OFFSET：OFFSET 每翻一批都要重新扫过并丢弃前面的
@@ -1464,6 +1466,7 @@ func (s *sAdmin) ExportUsageLogs(ctx context.Context, req *v1.AdminUsageLogExpor
 					"request_type":        row["request_type"].Val(),
 					"input_tokens":        row["input_tokens"].Val(),
 					"output_tokens":       row["output_tokens"].Val(),
+					"tool_surcharge_cost": row["tool_surcharge_cost"].Val(),
 					"total_cost":          row["total_cost"].Val(),
 					"status":              row["status"].Val(),
 					"request_id":          row["request_id"].Val(),

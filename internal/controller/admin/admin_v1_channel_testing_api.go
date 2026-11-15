@@ -10,3 +10,7 @@ import (
 func (c *ControllerV1) ChannelTest(ctx context.Context, req *v1.ChannelTestReq) (res *v1.ChannelTestRes, err error) {
 	return service.Admin().TestChannel(ctx, req)
 }
+
+func (c *ControllerV1) ChannelUpstreamModels(ctx context.Context, req *v1.ChannelUpstreamModelsReq) (res *v1.ChannelUpstreamModelsRes, err error) {
+	return service.Admin().FetchChannelUpstreamModels(ctx, req)
+}

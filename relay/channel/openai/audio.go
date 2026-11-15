@@ -54,6 +54,8 @@ func handleAudioSpeechResponse(ctx context.Context, resp *http.Response, info *c
 	return &common.Usage{
 		CompletionTokens: estimatedTokens,
 		TotalTokens:      estimatedTokens,
+		// 公式计费旁路事实：响应实测字节数（u("audio_bytes")，TTS 按流量计费场景）
+		Facts: map[string]float64{"audio_bytes": float64(len(body))},
 	}, nil
 }
 
@@ -99,6 +101,9 @@ func extractAudioUsage(body []byte) *common.Usage {
 		return &common.Usage{
 			PromptTokens: estimatedTokens,
 			TotalTokens:  estimatedTokens,
+			// 公式计费旁路事实：官方上报的真实音频秒数（u("audio_seconds")，按秒计费场景
+			// 取代 150 tokens/min 粗估）；token 估算保留给未配公式的 token 模式模型
+			Facts: map[string]float64{"audio_seconds": verboseResp.Duration},
 		}
 	}
 

@@ -11,6 +11,7 @@ import (
 	"github.com/qianfree/team-api/relaykit/dto"
 	"github.com/qianfree/team-api/relaykit/relayconvert"
 	"github.com/qianfree/team-api/relaykit/relayconvert/convmeta"
+	"github.com/qianfree/team-api/relaykit/relayconvert/internal/shared"
 	"github.com/qianfree/team-api/relaykit/types"
 )
 
@@ -212,6 +213,10 @@ func (c *ClaudeToGeminiStreamConverter) ConvertStreamResponse(
 				if event.Usage.CacheCreation != nil {
 					usage.CacheCreation = event.Usage.CacheCreation
 				}
+				// 服务端工具调用次数为累计报数：整体替换（最终帧胜出）
+				if event.Usage.ServerToolUse != nil {
+					usage.ServerToolUse = event.Usage.ServerToolUse
+				}
 			}
 
 		case "error":
@@ -234,7 +239,8 @@ func (c *ClaudeToGeminiStreamConverter) ConvertStreamResponse(
 	}
 
 	// 收尾 chunk：finishReason + usageMetadata（与 Gemini 出站的既有形态一致），
-	// 同时携带 Claude 计费口径的用量供宿主捕获（input 不含缓存、cache_creation 独立计价）
+	// 同时携带 Claude 计费口径的用量供宿主捕获（input 不含缓存、cache_creation 独立计价）；
+	// 服务端工具调用计数（web_search 等）经 ToolCalls 侧信道随收尾帧一并透出
 	finalChunk := &dto.GeminiChatResponse{
 		ModelName: modelName,
 		Candidates: []dto.GeminiCandidate{{
@@ -246,7 +252,8 @@ func (c *ClaudeToGeminiStreamConverter) ConvertStreamResponse(
 		finalChunk.UsageMetadata = um
 	}
 	return chunkWriter(&relayconvert.StreamEvent{
-		Data:  finalChunk,
-		Usage: claudeBillingUsage(&usage),
+		Data:      finalChunk,
+		Usage:     claudeBillingUsage(&usage),
+		ToolCalls: shared.ServerToolCallsFromClaudeUsage(&usage),
 	})
 }

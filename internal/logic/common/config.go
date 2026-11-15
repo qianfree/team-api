@@ -215,6 +215,13 @@ func (s *ConfigService) SetOption(ctx context.Context, key, value string) error 
 		if err := validateSettingValue(def, value); err != nil {
 			return err
 		}
+		// 加密设置项：校验按明文做，落库前加密（幂等，已是密文原样保留）
+		if def.Encrypted {
+			var encErr error
+			if value, encErr = encryptOptionValue(ctx, value); encErr != nil {
+				return encErr
+			}
+		}
 	}
 
 	count, err := dao.SysOptions.Ctx(ctx).Where("key", key).Count()

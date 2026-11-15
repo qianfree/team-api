@@ -259,10 +259,10 @@ func TestParseAccessToken_RejectsNoneAlgorithm(t *testing.T) {
 func TestParseAccessToken_RejectsMissingSessionBinding(t *testing.T) {
 	now := time.Now()
 	base := JWTClaims{
-		UserID:    1,
-		UserType:  "admin",
-		Role:      "admin",
-		TenantID:  0,
+		UserID:   1,
+		UserType: "admin",
+		Role:     "admin",
+		TenantID: 0,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    "team-api-test",
 			ExpiresAt: jwt.NewNumericDate(now.Add(30 * time.Minute)),

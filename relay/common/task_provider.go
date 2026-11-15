@@ -3,6 +3,7 @@ package common
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -40,6 +41,36 @@ type TaskDataProvider interface {
 
 	// GetChannelByID 获取渠道基本信息
 	GetChannelByID(ctx context.Context, channelID int64) (*ChannelBasicInfo, error)
+}
+
+// StoredArtifact 任务产物内容读取句柄（调用方负责 Close）。
+type StoredArtifact struct {
+	Body        io.ReadCloser
+	ContentType string
+	Size        int64 // 0 = 未知
+}
+
+// TaskContentOpener TaskDataProvider 的可选能力：打开任务产物内容（key 为空 = 主产物）。
+// 已转存的从平台对象存储读取，未转存的按产物声明回源代理；/v1/videos/{id}/content
+// 与统一内容链接 /v1/tasks/{id}/content 共用。found=false 表示任务无登记产物
+// （调用方回落 ResultURL）。
+type TaskContentOpener interface {
+	OpenTaskContent(ctx context.Context, task *AsyncTask, key string) (artifact *StoredArtifact, found bool, err error)
+}
+
+// TaskUsageRecoverer TaskDataProvider 的可选能力：从任务终态快照（Data 内的上游原始
+// 查询响应）恢复用量摘要，供查询端点按需展示——不落库、不参与计费，历史已完成任务
+// 也能回放。nil = 该任务无可用用量（非终态/渠道未上报/快照不可解析）
+type TaskUsageRecoverer interface {
+	RecoverTaskUsage(ctx context.Context, task *AsyncTask) *TaskUsageSummary
+}
+
+// TaskDelivery 成功任务的对外交付视图。
+// Pending=true：上游已完成但产物仍在转存平台对象存储途中——对外须呈现进行中、不给链接
+// （客户端拿到完成态时链接必然可用）。ContentURL：就绪时的主产物统一内容链接（可空）。
+type TaskDelivery struct {
+	Pending    bool
+	ContentURL string
 }
 
 // AsyncTask 异步任务数据结构

@@ -112,6 +112,7 @@ type dashScopeTaskResponse struct {
 	Usage struct {
 		Duration            float64 `json:"duration"`
 		VideoCount          int     `json:"video_count"`
+		InputVideoDuration  float64 `json:"input_video_duration"`
 		OutputVideoDuration float64 `json:"output_video_duration"`
 		SR                  int     `json:"SR"`
 		Ratio               string  `json:"ratio"`
@@ -154,7 +155,14 @@ func (a *AliAdaptor) ValidateRequest(_ context.Context, _ *common.RelayInfo, bod
 	if _, ok := req["model"]; !ok {
 		return &common.TaskError{StatusCode: http.StatusBadRequest, Message: "model is required"}
 	}
-	return nil
+	// 标准端点参考素材：wan3.0 的 input.media[].type 与 references role 同词汇，五种角色直通；
+	// wan2.x 等只承接首帧（metadata.image 兼容字段），其余角色明确拒绝
+	model, _ := req["model"].(string)
+	refs := common.ReferencesFromTaskBody(req)
+	if strings.HasPrefix(strings.ToLower(model), "wan3.") {
+		return nil
+	}
+	return common.RejectUnsupportedReferences(refs, model, common.RefRoleFirstFrame)
 }
 
 // EstimateBilling 估算任务费用（提交前）。
@@ -211,6 +219,12 @@ func (a *AliAdaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, bod
 	}
 
 	return ratios
+}
+
+// ExtraProtectedPaths extra 禁止改写的计费规格字段：视频时长/分辨率（size 为 wan2.x 分辨率
+// 的原生写法），图片张数 n（同适配器承接异步图片任务）
+func (a *AliAdaptor) ExtraProtectedPaths() []string {
+	return []string{"parameters.duration", "parameters.resolution", "parameters.size", "parameters.n"}
 }
 
 func (a *AliAdaptor) AdjustBillingOnSubmit(_ *common.RelayInfo, _ []byte) map[string]any {
@@ -328,8 +342,9 @@ func (a *AliAdaptor) buildVideoRequest(info *common.RelayInfo, req map[string]an
 }
 
 // buildWan3Media 构建 wan3.0 input.media 数组（全能参考模式）。
-// 优先级：顶层 media（阿里原生入站原样透传）> metadata.image（OpenAI input_reference，
-// 首帧语义对齐 Sora）> 顶层 images[]（通用多图词汇 → 参考图）。均无则返回 nil（纯文生视频）
+// 优先级：顶层 media（阿里原生入站原样透传）> references[]（OpenAI Videos 扩展，role 与
+// media.type 同词汇，保持原序）> metadata.image（OpenAI input_reference，首帧语义对齐 Sora）
+// > 顶层 images[]（通用多图词汇 → 参考图）。均无则返回 nil（纯文生视频）
 func buildWan3Media(req map[string]any, metadata map[string]any) []dashScopeMedia {
 	if raw, ok := req["media"].([]any); ok && len(raw) > 0 {
 		media := make([]dashScopeMedia, 0, len(raw))
@@ -348,6 +363,13 @@ func buildWan3Media(req map[string]any, metadata map[string]any) []dashScopeMedi
 		if len(media) > 0 {
 			return media
 		}
+	}
+	if refs := common.ReferencesFromTaskBody(req); len(refs) > 0 {
+		media := make([]dashScopeMedia, 0, len(refs))
+		for _, ref := range refs {
+			media = append(media, dashScopeMedia{Type: ref.Role, URL: ref.URL})
+		}
+		return media
 	}
 	if img, ok := metadata["image"].(string); ok && img != "" {
 		return []dashScopeMedia{{Type: "first_frame", URL: img}}
@@ -571,6 +593,24 @@ func (a *AliAdaptor) ParseTaskResult(body []byte) (*common.TaskInfo, error) {
 				OutputSeconds: resp.Usage.OutputVideoDuration,
 				Resolution:    resolutionFromSR(resp.Usage.SR),
 			}
+		}
+		// 用量摘要（纯展示，不参与计费）：wan3.0 官方 usage 全量归一（duration 为官方口径总时长）
+		usage := resp.Usage
+		if usage.Duration > 0 || usage.InputVideoDuration > 0 || usage.OutputVideoDuration > 0 || usage.ImageCount > 0 {
+			summary := &common.TaskUsageSummary{Resolution: resolutionFromSR(usage.SR)}
+			if usage.InputVideoDuration > 0 {
+				summary.InputVideoSeconds = common.UsageF(usage.InputVideoDuration)
+			}
+			if usage.OutputVideoDuration > 0 {
+				summary.OutputVideoSeconds = common.UsageF(usage.OutputVideoDuration)
+			}
+			if usage.Duration > 0 {
+				summary.TotalSeconds = common.UsageF(usage.Duration)
+			}
+			if usage.ImageCount > 0 {
+				summary.InputImageCount = common.UsageI(usage.ImageCount)
+			}
+			info.UsageSummary = summary
 		}
 		// 图片结果
 		if len(resp.Output.Results) > 0 {

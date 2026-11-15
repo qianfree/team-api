@@ -30,6 +30,7 @@ type ChannelItem struct {
 	Type            int      `json:"type"`
 	TypeName        string   `json:"type_name"`
 	BaseURL         string   `json:"base_url"`
+	BaseURLType     string   `json:"base_url_type"` // base_url 填写形态：空=自动 root=站点根 versioned=已含版本前缀
 	Status          string   `json:"status"`
 	Priority        int      `json:"priority"`
 	Weight          int      `json:"weight"`
@@ -39,6 +40,7 @@ type ChannelItem struct {
 	TestModel       string   `json:"test_model"`
 	Remark          string   `json:"remark"`
 	UseProxy        bool     `json:"use_proxy"`
+	PluginKey       string   `json:"plugin_key,omitempty"` // 绑定的 JS 插件标识（仅 type=43 渠道）
 	CreatedAt       string   `json:"created_at"`
 	HealthScore     *float64 `json:"health_score"`
 	BreakerState    int      `json:"breaker_state"`  // 调度熔断状态：0=正常 1=熔断中 2=半开探活
@@ -71,6 +73,7 @@ type ChannelCreateReq struct {
 	Name                    string `json:"name" v:"required|length:1,100#请输入渠道名|渠道名长度1-100" dc:"渠道名称"`
 	Type                    int    `json:"type" v:"required|min:1#请选择供应商类型" dc:"供应商类型"`
 	BaseURL                 string `json:"base_url" dc:"API 基础地址（留空使用供应商默认地址）"`
+	BaseURLType             string `json:"base_url_type" v:"in:,root,versioned" dc:"base_url 填写形态：留空=自动（以供应商已知版本段结尾时自动剥离）、root=域名站点根、versioned=已含版本前缀（如 /v1、/v1beta）"`
 	ApiKey                  string `json:"api_key" v:"required#请输入 API Key" dc:"API Key"`
 	Priority                int    `json:"priority" d:"0" dc:"优先级"`
 	Weight                  int    `json:"weight" d:"100" v:"between:0,100" dc:"权重"`
@@ -81,6 +84,7 @@ type ChannelCreateReq struct {
 	Remark                  string `json:"remark" dc:"备注"`
 	UseProxy                bool   `json:"use_proxy" d:"false" dc:"启用代理"`
 	WebSearchToGoogleSearch bool   `json:"web_search_to_google_search" d:"false" dc:"web_search→googleSearch 映射（Gemini 渠道，搜索按次另行计价）"`
+	PluginKey               string `json:"plugin_key" dc:"绑定的 JS 插件标识（type=43 JS 任务插件渠道必填，其余类型忽略）"`
 }
 
 // ChannelCreateRes 创建渠道响应
@@ -95,6 +99,7 @@ type ChannelUpdateReq struct {
 	Name                    string  `json:"name" dc:"渠道名称"`
 	Type                    *int    `json:"type" v:"min:1#请选择供应商类型" dc:"供应商类型（留空不修改）"`
 	BaseURL                 string  `json:"base_url" dc:"API 基础地址（留空不更新；切换类型且旧地址为该类型默认值时自动跟随新类型默认地址）"`
+	BaseURLType             *string `json:"base_url_type" v:"in:,root,versioned" dc:"base_url 填写形态：留空不更新，传空串=恢复自动；root=域名站点根、versioned=已含版本前缀（如 /v1、/v1beta）"`
 	ApiKey                  *string `json:"api_key" dc:"更新 API Key（留空不更新）"`
 	Priority                *int    `json:"priority" dc:"优先级（留空不更新）"`
 	Weight                  *int    `json:"weight" dc:"权重（留空不更新）"`
@@ -110,6 +115,7 @@ type ChannelUpdateReq struct {
 	DebugLogTenantID        *int64  `json:"debug_log_tenant_id" dc:"调试目标租户ID过滤（0=不限）"`
 	DebugLogUserID          *int64  `json:"debug_log_user_id" dc:"调试目标成员ID过滤（0=不限）"`
 	DebugLogApiKeyID        *int64  `json:"debug_log_api_key_id" dc:"调试目标密钥ID过滤（0=不限）"`
+	PluginKey               *string `json:"plugin_key" dc:"绑定的 JS 插件标识（仅 type=43 渠道有效；传空串=清除绑定，留空不更新；JS 渠道不允许清空，需随类型切换一起改）"`
 }
 
 // ChannelDeleteReq 删除渠道请求
@@ -131,6 +137,7 @@ type ChannelDetailRes struct {
 	Type                    int      `json:"type"`
 	TypeName                string   `json:"type_name"`
 	BaseURL                 string   `json:"base_url"`
+	BaseURLType             string   `json:"base_url_type"` // base_url 填写形态：空=自动 root=站点根 versioned=已含版本前缀
 	Status                  string   `json:"status"`
 	Priority                int      `json:"priority"`
 	Weight                  int      `json:"weight"`
@@ -140,6 +147,7 @@ type ChannelDetailRes struct {
 	TestModel               string   `json:"test_model"`
 	Remark                  string   `json:"remark"`
 	UseProxy                bool     `json:"use_proxy"`
+	PluginKey               string   `json:"plugin_key,omitempty"` // 绑定的 JS 插件标识（仅 type=43 渠道）
 	WebSearchToGoogleSearch bool     `json:"web_search_to_google_search"`
 	DebugLogEnabled         bool     `json:"debug_log_enabled"`
 	DebugLogTenantID        int64    `json:"debug_log_tenant_id"`

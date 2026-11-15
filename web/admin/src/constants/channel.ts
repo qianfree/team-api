@@ -22,11 +22,43 @@ export const providerTypeOptions: { label: string; value: number }[] = [
   { label: 'Jimeng (即梦)', value: 34 },
   { label: 'Codex', value: 35 },
   { label: 'New API', value: 41 }, { label: 'Sub2API', value: 42 },
+  { label: 'JS 任务插件', value: 43 },
 ]
 
 // value -> label 映射，便于表格/详情按数值取展示名
 export const providerTypeName: Record<number, string> = {}
 providerTypeOptions.forEach(o => { providerTypeName[o.value] = o.label })
+
+// 供应商分类（创建渠道表单顶部的模式切换胶囊），三类划分：
+// 三大协议 = OpenAI / Claude / Gemini 三家基础协议；插件 = JS 任务插件；
+// 模型厂商 = 其余全部内置厂商，由「全量 - 三大协议 - 插件」自动推导，新增供应商无需登记归类。
+const basicProviderTypes = [1, 2, 3]
+const pluginProviderTypes = [43]
+export const providerCategoryMap: Record<string, { label: string; types: number[] }> = {
+  basic: { label: '三大协议', types: basicProviderTypes },
+  builtin: {
+    label: '模型厂商',
+    types: providerTypeOptions.map(o => o.value).filter(v => !basicProviderTypes.includes(v) && !pluginProviderTypes.includes(v)),
+  },
+  plugin: { label: '插件', types: pluginProviderTypes },
+}
+
+// 按分类过滤供应商类型选项（未知分类返回全量）
+export function filterTypeOptionsByCategory(category: string) {
+  const cat = providerCategoryMap[category]
+  if (!cat) return providerTypeOptions
+  const allow = new Set(cat.types)
+  return providerTypeOptions.filter(o => allow.has(o.value))
+}
+
+// base_url 填写形态：后端转发前会把地址归一化成「站点根」（adaptor 自拼 /v1/... 等版本段+端点）。
+// ''(自动)=按供应商已知版本段自动剥离（推荐，覆盖粘贴官方文档地址的场景）；
+// root=填的是域名/站点根；versioned=填的地址已含版本前缀（如 /v1、/v1beta、/api/paas/v4）
+export const baseURLTypeOptions: { label: string; value: string }[] = [
+  { label: '自动', value: '' },
+  { label: '域名', value: 'root' },
+  { label: '带版本前缀', value: 'versioned' },
+]
 
 // Arco Select 的 allow-search 自定义过滤：小写包含匹配
 export function filterProviderOption(inputValue: string, option: { label: string; value: number }) {

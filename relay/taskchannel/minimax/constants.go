@@ -5,6 +5,8 @@ package minimax
 var ModelList = []string{
 	"MiniMax-H3",
 	"MiniMax-H3-Max",
+	"MiniMax-H3-Lite",
+	"MiniMax-H3-Highspeed",
 	"MiniMax-Hailuo-2.3",
 	"MiniMax-Hailuo-2.3-Fast",
 	"MiniMax-Hailuo-02",

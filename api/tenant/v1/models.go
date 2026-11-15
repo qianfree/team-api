@@ -65,6 +65,11 @@ type TenantAvailableModelItem struct {
 	// PerSecondPrices 按秒计费矩阵（billing_mode=per_second）：分辨率规格 → 每秒单价（本位币），
 	// "*" 为兜底价。租户倍率/折扣在计费时作用，展示为平台原价。
 	PerSecondPrices map[string]float64 `json:"per_second_prices,omitempty"`
+	// Formula 计费公式原文（billing_mode=formula，价格透明展示）：系数单位 = 每 1M token 本位币，
+	// 金额 = 系数 / 1e6 × 租户乘数 × 时段乘数。空 = 非 formula 模式
+	Formula *string `json:"formula,omitempty"`
+	// FormulaRules 请求规则表达式（header()/param()/时间条件倍率，与基础公式正交相乘）。空 = 无请求规则
+	FormulaRules *string `json:"formula_rules,omitempty"`
 	// TimePrices 时段价目（平台配置了时段定价的模型才有；价格为换算后的展示价）
 	TimePrices []TimePriceItem `json:"time_prices"`
 	// DiscountLabel 折扣标签（平台定价锚点行配置的营销展示文案，如"7折起"；NULL=不展示）

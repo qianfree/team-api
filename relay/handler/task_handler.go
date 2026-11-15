@@ -5,14 +5,18 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
+	"github.com/qianfree/team-api/internal/jsplugin"
+	"github.com/qianfree/team-api/internal/jsplugin/contract"
 	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
@@ -21,6 +25,7 @@ import (
 	"github.com/qianfree/team-api/relay/taskchannel"
 	_ "github.com/qianfree/team-api/relay/taskchannel/ali"
 	_ "github.com/qianfree/team-api/relay/taskchannel/gemini"
+	_ "github.com/qianfree/team-api/relay/taskchannel/jsbridge"
 	_ "github.com/qianfree/team-api/relay/taskchannel/kling"
 	"github.com/qianfree/team-api/relay/taskchannel/midjourney"
 	_ "github.com/qianfree/team-api/relay/taskchannel/minimax"
@@ -173,11 +178,62 @@ func HandleTaskSubmit(
 
 	// 2. 确定任务平台
 	providerType := constant.ProviderType(channelMeta.ChannelType)
-	platform, ok := constant.ProviderTypeToTaskPlatform(providerType)
-	if !ok {
-		g.Log().Warningf(ctx, "HandleTaskSubmit: unsupported task platform, channelType=%d, modelName=%s", channelMeta.ChannelType, modelName)
-		writeTaskError(rc.Writer, http.StatusBadRequest, "unsupported task platform", "")
-		return
+	var platform constant.TaskPlatform
+	if providerType == constant.ProviderJSTask {
+		// JS 任务插件：平台标识 = js:{plugin_key}，轮询侧据此路由到具体插件池。
+		// plugin_key 优先取渠道显式配置（覆盖语义），缺省按模型解析——v1 冲突预检
+		// 保证模型对插件独占，渠道只需配模型路由（chn_abilities），零额外配置
+		pluginKey := channelMeta.Settings.PluginKey
+		if pluginKey == "" {
+			if resolved, ok := jsplugin.ResolvePluginKeyForModel(modelName); ok {
+				pluginKey = resolved
+			}
+		}
+		if pluginKey != "" {
+			// JS 插件模型双入口：/pjs 原生路由（分发器已注入解码计划）或标准任务端点
+			// （/v1/videos、/v1/video/generations——插件声明 standardVideos 时在此合成
+			// 解码计划，等价分发器的 decodeRequest 环节，jsbridge 全链无感复用）。
+			// 未声明或非支持端点保持明确拒绝（预扣尚未发生，无资金副作用）。
+			if jsplugin.SubmitPlanFromContext(ctx) == nil {
+				surface := standardEntrySurface(path)
+				if surface == "" {
+					writeTaskError(rc.Writer, http.StatusBadRequest,
+						fmt.Sprintf("model %q is served by JS plugin %q; submit via its native routes /pjs/%s/... (this endpoint is not supported for plugin models)", modelName, pluginKey, pluginKey), "")
+					return
+				}
+				plan, err := jsplugin.SynthesizeStandardPlan(ctx, pluginKey, surface, path, body, modelName)
+				var roleErr *jsplugin.ReferenceRoleError
+				if errors.As(err, &roleErr) {
+					writeTaskError(rc.Writer, http.StatusBadRequest,
+						fmt.Sprintf("reference role %q is not supported by model %q", roleErr.Role, modelName), common.ErrCodeReferenceNotSupported)
+					return
+				}
+				if err != nil {
+					// 解码失败对客户端即请求不可接受；消息可能内嵌密钥/签名片段，同 /pjs 口径净化
+					writeTaskError(rc.Writer, http.StatusBadRequest, jsplugin.SanitizeHookMessage(err.Error()), "")
+					return
+				}
+				if plan == nil {
+					writeTaskError(rc.Writer, http.StatusBadRequest,
+						fmt.Sprintf("model %q is served by JS plugin %q without standard endpoint support (plugin should declare meta.standardVideos); submit via its native routes /pjs/%s/...", modelName, pluginKey, pluginKey), "")
+					return
+				}
+				ctx = jsplugin.WithSubmitPlan(ctx, plan)
+			}
+			platform = constant.TaskPlatform("js:" + pluginKey)
+		} else {
+			g.Log().Warningf(ctx, "HandleTaskSubmit: js task channel cannot resolve plugin (model=%s, channelID=%d)", modelName, channelMeta.ChannelID)
+			writeTaskError(rc.Writer, http.StatusBadRequest, "js task channel cannot resolve plugin by model", "")
+			return
+		}
+	} else {
+		var ok bool
+		platform, ok = constant.ProviderTypeToTaskPlatform(providerType)
+		if !ok {
+			g.Log().Warningf(ctx, "HandleTaskSubmit: unsupported task platform, channelType=%d, modelName=%s", channelMeta.ChannelType, modelName)
+			writeTaskError(rc.Writer, http.StatusBadRequest, "unsupported task platform", "")
+			return
+		}
 	}
 
 	// 3. 获取 TaskAdaptor
@@ -233,11 +289,38 @@ func HandleTaskSubmit(
 		return
 	}
 
+	// 5.5 扩展字段 extra：预扣前校验（形态 + 保护键），构建上游请求体后平铺深合并。
+	// JS 插件自行构建上游请求，extra 留在任务体内由插件解码钩子按需读取，网关不合并
+	var extra map[string]any
+	if providerType != constant.ProviderJSTask {
+		var taskErr *common.TaskError
+		if extra, taskErr = common.ParseTaskExtra(req[common.ExtraFieldName]); taskErr == nil {
+			var protected []string
+			if p, ok := adaptor.(common.ExtraProtectedPathsProvider); ok {
+				protected = p.ExtraProtectedPaths()
+			}
+			taskErr = common.ValidateTaskExtra(extra, protected)
+		}
+		if taskErr != nil {
+			writeTaskError(rc.Writer, taskErr.StatusCode, taskErr.Message, taskErr.ErrCode)
+			return
+		}
+	}
+
 	// 6. 估算计费 + 预扣（ratios 为计费上下文：float64 乘数 + spec.* 规格事实值；
 	// body 同传给 EstimateTaskCost 供参数倍率按归一化任务体匹配，命中注入 ratios）
 	ratios := adaptor.EstimateBilling(ctx, info, body)
-	estimatedCost, err := billingProvider.EstimateTaskCost(ctx, rc.TenantID, modelName, ratios, body)
+	if ratios == nil {
+		// 计费层会向 ratios 注入冻结值（参数倍率命中、公式求值上下文），nil 时注入丢失
+		ratios = map[string]any{}
+	}
+	estimatedCost, err := billingProvider.EstimateTaskCost(ctx, rc.TenantID, modelName, ratios, body, headers)
 	if err != nil {
+		if errors.Is(err, common.ErrBillingFormulaEval) {
+			g.Log().Warningf(ctx, "HandleTaskSubmit: billing formula rejected request, model=%s, err=%v", modelName, err)
+			writeTaskError(rc.Writer, http.StatusBadRequest, common.ErrBillingFormulaEval.Error(), "")
+			return
+		}
 		g.Log().Errorf(ctx, "HandleTaskSubmit: estimate cost failed, model=%s, err=%v", modelName, err)
 		writeTaskError(rc.Writer, http.StatusInternalServerError, "estimate cost failed: "+err.Error(), "")
 		return
@@ -266,6 +349,19 @@ func HandleTaskSubmit(
 		dbgAttempt.MarkFinal(err)
 		writeTaskError(rc.Writer, http.StatusInternalServerError, "build request failed: "+err.Error(), "")
 		return
+	}
+	if len(extra) > 0 {
+		merged, mergeErr := common.MergeTaskExtra(requestBody, extra)
+		if mergeErr != nil {
+			if err := billingProvider.SettleTaskFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount); err != nil {
+				g.Log().Errorf(ctx, "HandleTaskSubmit: SettleTaskFailed error, requestID=%s, amount=%.6f, err=%v", rc.RequestID, preDeductAmount.InexactFloat64(), err)
+			}
+			g.Log().Warningf(ctx, "HandleTaskSubmit: merge extra failed, model=%s, err=%v", modelName, mergeErr)
+			dbgAttempt.MarkFinal(mergeErr)
+			writeTaskError(rc.Writer, http.StatusBadRequest, "extra is not supported by this channel: "+mergeErr.Error(), common.ErrCodeInvalidExtra)
+			return
+		}
+		requestBody = merged
 	}
 
 	resp, err := adaptor.DoRequest(attemptCtx, info, requestBody)
@@ -299,8 +395,14 @@ func HandleTaskSubmit(
 	// 9. 调整计费
 	adjustedRatios := adaptor.AdjustBillingOnSubmit(info, taskData)
 	if adjustedRatios != nil {
-		newCost, _ := billingProvider.EstimateTaskCost(ctx, rc.TenantID, modelName, adjustedRatios, body)
-		preDeductAmount, _ = billingProvider.AdjustTaskBilling(ctx, rc.TenantID, rc.RequestID, preDeductAmount, newCost)
+		// 重估失败（如表达式计费公式在调整后的 ratios 上求值出错）时保留原预扣，
+		// 不得以零值调整——那会把预扣全额退回、任务变成免费
+		if newCost, estErr := billingProvider.EstimateTaskCost(ctx, rc.TenantID, modelName, adjustedRatios, body, headers); estErr != nil {
+			g.Log().Warningf(ctx, "HandleTaskSubmit: re-estimate after submit failed, keep pre-deduct %.6f, model=%s, err=%v",
+				preDeductAmount.InexactFloat64(), modelName, estErr)
+		} else {
+			preDeductAmount, _ = billingProvider.AdjustTaskBilling(ctx, rc.TenantID, rc.RequestID, preDeductAmount, newCost)
+		}
 	}
 
 	// 9.5 合并最终 ratios 用于结算时还原
@@ -422,6 +524,20 @@ func HandleTaskSubmit(
 	writeJSON(rc.Writer, http.StatusOK, respBody)
 }
 
+// standardEntrySurface 标准任务端点路径 → 入口标识（JS 插件 standardVideos 解码用）。
+// 空串 = 非支持端点：厂商原生协议端点（MiniMax/阿里等）的 body 不是通用任务体，
+// 不参与标准入口合成，对 JS 插件模型保持明确拒绝。
+func standardEntrySurface(path string) string {
+	switch path {
+	case "/v1/videos":
+		return contract.SurfaceOpenAIVideos
+	case "/v1/video/generations":
+		return contract.SurfaceVideoGenerations
+	default:
+		return ""
+	}
+}
+
 // HandleTaskFetch 异步任务查询管线
 func HandleTaskFetch(
 	ctx context.Context,
@@ -452,6 +568,21 @@ func HandleTaskFetch(
 	if task.ResultURL != "" {
 		respBody["url"] = task.ResultURL
 	}
+	// JS 插件任务对外只给统一内容链接（不透出上游直链；产物转存与否链接形态一致）。
+	// 上游已完成但产物仍在转存 OSS：保持进行中、不给链接，转存完成后才给完成态
+	deliveryPending := false
+	if strings.HasPrefix(task.Platform, "js:") {
+		delivery := resolveTaskDelivery(ctx, task)
+		delete(respBody, "url")
+		switch {
+		case delivery.Pending:
+			deliveryPending = true
+			respBody["status"] = "IN_PROGRESS"
+			respBody["progress"] = strconv.Itoa(deliveryPendingProgress) + "%"
+		case delivery.ContentURL != "":
+			respBody["url"] = delivery.ContentURL
+		}
+	}
 	// sync_image「同步图片异步化」任务支持多图：把归一化的全部图片作为 data 数组吐出，
 	// url 仍保留首图（向后兼容）。仅对 sync_image 任务开启——其 Data 为标准 OpenAI
 	// ImageResponse；视频 / suno / mj 等平台的 Data 结构不同，不能误吐。
@@ -464,8 +595,18 @@ func HandleTaskFetch(
 	if task.FailReason != "" {
 		respBody["error"] = task.FailReason
 	}
-	if task.FinishTime != nil {
+	if task.FinishTime != nil && !deliveryPending {
 		respBody["completed_at"] = task.FinishTime.Unix()
+	}
+	// 终态成功任务附带用量摘要（usage 对象，渠道上报了哪些字段才出现哪些；
+	// 按需从终态快照恢复，交付未就绪的 JS 转存窗口不展示）。provider 未实现
+	// 恢复能力（测试桩等）时静默省略
+	if task.Status == string(common.TaskStatusSuccess) && !deliveryPending {
+		if rec, ok := dataProvider.(common.TaskUsageRecoverer); ok {
+			if usage := rec.RecoverTaskUsage(ctx, task); usage != nil {
+				respBody["usage"] = usage
+			}
+		}
 	}
 
 	writeJSON(rc.Writer, http.StatusOK, respBody)

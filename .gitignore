@@ -20,6 +20,8 @@ build/
 .claude
 .codegraph
 .workbuddy
+.zcode
+
 
 # Environment files with sensitive data
 .env
@@ -38,10 +40,6 @@ logs/
 *.tmp
 *.temp
 
-# 外部文件
-new-api/
-sub2api/
-
 # 配置文件（含敏感信息，使用 .example 模板代替）
 hack/config.yaml
 manifest/config/config.yaml
@@ -53,3 +51,12 @@ relaykit/relayconvert/register/golden/real_inputs/
 relaykit/relayconvert/register/golden/real_stream_inputs/
 relaykit/relayconvert/register/golden/real_responses/
 relaykit/relayconvert/register/golden/corpus_manifest.json
+
+# 文档文件
+docs/business/
+docs/promo/
+
+
+# AI生成文档
+docs/prototype/
+docs/prototypes/

@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/net/ghttp"
@@ -70,11 +71,17 @@ func captureStackTrace(skip int) string {
 }
 
 // truncateString truncates a string to maxLen bytes.
+// 截断点须回退到合法 UTF-8 边界：中文请求体按字节切会落在多字节字符中间，
+// 产生非法序列被 PostgreSQL（UTF8 库）拒绝，整条错误日志落库失败。
 func truncateString(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "..."
+	cut := s[:maxLen]
+	for len(cut) > 0 && !utf8.ValidString(cut) {
+		cut = cut[:len(cut)-1]
+	}
+	return cut + "..."
 }
 
 // sensitiveBodyKeys 命中这些子串（大小写不敏感）的 JSON 字段值会被脱敏，

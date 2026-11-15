@@ -64,6 +64,11 @@ func redisClientOrNil() *gredis.Redis {
 	return redisClient
 }
 
+// RedisClientOrNil 跨包导出的可选 Redis 探测（内部直用 redisClientOrNil）。
+// 供其他子系统的可选 Redis 路径复用（如 internal/jsplugin 的跨实例失效广播）；
+// 核心资金链路（钱包/预扣）fail-closed 依赖 Redis，不适用此封装。
+func RedisClientOrNil() *gredis.Redis { return redisClientOrNil() }
+
 func (s *redisResponseRouteStore) Record(ctx context.Context, tenantID int64, responseID string, route ResponseRoute) {
 	r := redisClientOrNil()
 	if r == nil || responseID == "" {

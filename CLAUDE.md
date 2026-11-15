@@ -179,19 +179,6 @@ cmd（路由注册）
       ← controller 格式化响应（Res 结构体）
 ```
 
-## 参考项目（本地可选，当前未放置）
-
-`new-api/` 和 `sub2api/` 是大模型网关领域的成熟实现，曾作为只读参考放在项目根目录（gitignore 未跟踪，不随仓库分发），**当前本地已移除**；需要参考时自行克隆回来即可。三项目渠道调度的横向对比结论沉淀在 `docs/reference/多项目渠道调度对比.md`（注意：其 team-api 侧描述为调度重写前的旧实现，现行调度以 `relaykit/dispatch` 为准）。
-
-### 参考要点
-
-- **new-api**：Relay 代理层架构（适配器模式、请求转发、响应解析）、40+ 供应商适配器、协议转换、渠道调度（优先级/权重选择、自动重试、Key 轮询）、计费模型（预扣/结算/退款、梯度定价、Token 计量）
-- **sub2api**：渠道亲和性（用户+模型→渠道映射缓存策略）、运维监控（仪表盘设计、健康监控页面）、用户体系（前端布局和组件设计）
-
-### 参考原则
-
-参考不等于照搬。new-api 使用 Gin + GORM，需适配到 GoFrame 框架，代码重新组织以符合 GoFrame 标准结构（`api → controller → service → logic → dao` 分层）和项目的多租户架构。注意 GoFrame 的 `model/do/`、`model/entity/`、`dao/`、`service/`、`controller/` 均由脚手架自动生成，业务代码只写在 `api/`、`logic/`、`cmd/`、`handler/`、`middleware/`、`response/`、`utility/`、`consts/`、顶级 `relay/` 和独立模块 `relaykit/` 中；协议转换与渠道调度已沉淀为自有实现，优先复用 `relaykit/`。
-
 ## 核心架构决策
 
 ### 多租户隔离
@@ -329,10 +316,11 @@ cmd（路由注册）
 | `ord_` | 订单支付 + 优惠券 | 二 | `ord_orders` `ord_refunds` `ord_payment_channels` `ord_promo_codes` `ord_promo_code_usages` `ord_redemptions` `ord_redemption_usages` |
 | `pln_` | 套餐订阅 | 二 | `pln_plans` `pln_tenant_plans` `pln_feature_flags` |
 | `ntf_` | 通知消息 | 三 | `ntf_templates` `ntf_send_log` `ntf_messages` `ntf_read_status` `ntf_preferences` `ntf_announcements` |
-| `aud_` | 审计日志 | 三 | `aud_request_logs` `aud_operation_logs` `aud_sensitive_access_logs` `aud_login_history` |
+| `aud_` | 审计日志 | 三 | `aud_request_logs` `aud_operation_logs` `aud_sensitive_access_logs` `aud_login_history` `aud_ai_analysis_reports` `aud_ai_analysis_findings` `aud_ai_analysis_jobs` |
 | `spt_` | 客户支持（工单+帮助+反馈） | 三/六 | `spt_tickets` `spt_replies` `spt_attachments` `spt_categories` `spt_articles` `spt_feedbacks` |
 | `ops_` | 运维监控 | 四 | `ops_alert_rules` `ops_alert_events` `ops_system_metrics` |
 | `tsk_` | 异步任务 | 四 | `tsk_tasks` `tsk_task_logs` `tsk_model_tasks` |
+| `js_` | JS 任务插件（异步任务的插件化扩展，v0.3 新增功能模型） | 四 | `js_plugin_versions` `js_task_artifacts` |
 | `fil_` | 文件存储 | 四 | `fil_files` |
 | `opn_` | 开放平台 + Webhook | 五 | `opn_apps` `opn_webhook_configs` `opn_webhook_events` `opn_webhook_delivery_logs` |
 | `clg_` | 更新日志 | 六 | `clg_changelogs` |
@@ -441,8 +429,6 @@ cmd（路由注册）
 
 | 文档 | 路径 | 用途 |
 |------|------|------|
-| relaykit 迁移状态 | `docs/relaykit迁移工作状态.md` | relay/ → relaykit 协议转换迁移进度、覆盖矩阵与守卫说明 |
-| 渠道调度对比 | `docs/reference/多项目渠道调度对比.md` | new-api/sub2api/team-api 调度方案对比（team-api 侧描述已过时，以 relaykit/dispatch 为准） |
 | Docker 部署 | `docs/deployment-docker.md` | Docker 部署指引 |
 | 协议文档 | `docs/协议文档/` | 各供应商官方协议参考（OpenAI/Claude/Gemini/智谱/豆包/阿里等系列） |
 | API 格式参考 | `docs/reference/api-format-reference.md` | JSON 示例、SSE 格式、错误映射、中间件差异 |

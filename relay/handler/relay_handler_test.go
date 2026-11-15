@@ -99,7 +99,7 @@ func TestEstimateInputTokens(t *testing.T) {
 			// 否则 2MB 音频按 len/4 会被估成 ~52 万 token
 			"input_audio 裸 base64 不按字节折算",
 			`{"content":[{"type":"input_audio","input_audio":{"data":"` + payload + `","format":"mp3"}}]}`,
-			(len(`{"content":[{"type":"input_audio","input_audio":{"data":"` + `","format":"mp3"}}]}`))/4 + inlineMediaTokenCost,
+			(len(`{"content":[{"type":"input_audio","input_audio":{"data":"`+`","format":"mp3"}}]}`))/4 + inlineMediaTokenCost,
 		},
 		{
 			// 畸形 data URL（无 base64 标记）退化为纯文本路径

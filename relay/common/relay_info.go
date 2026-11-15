@@ -131,6 +131,12 @@ type ChannelSettings struct {
 	DisableStore          bool `json:"disable_store,omitempty"`           // 禁用 store 字段（隐私保护）
 	AllowSafetyIdentifier bool `json:"allow_safety_identifier,omitempty"` // 允许 safety_identifier 字段（默认移除）
 
+	// BaseURLType base_url 填写形态：""（默认）=自动，以供应商已知版本段结尾时自动剥离；
+	// "root"=站点根（域名），原样使用由 adaptor 拼完整路径；
+	// "versioned"=已含版本前缀（如 /v1、/v1beta、/api/paas/v4），转发前按供应商剥离。
+	// 归一化见 relay/helper.NormalizeBaseURL
+	BaseURLType string `json:"base_url_type,omitempty"`
+
 	// UseProxy 启用代理，使用系统配置的代理地址转发请求
 	UseProxy bool `json:"use_proxy,omitempty"`
 
@@ -141,6 +147,10 @@ type ChannelSettings struct {
 	// DebugLogEnabled 启用渠道调试日志：记录经该渠道每次请求尝试的四段完整报文
 	//（客户端↔系统↔上游，body 不截断、凭证脱敏）。数据量大，仅排查问题时开启
 	DebugLogEnabled bool `json:"debug_log_enabled,omitempty"`
+
+	// PluginKey JS 任务插件绑定（仅 ProviderJSTask 渠道有效）：
+	// 指向已激活的 js_plugin_versions.plugin_key，adaptor 据此路由到具体插件实例。
+	PluginKey string `json:"plugin_key,omitempty"`
 
 	// 调试目标过滤（AND 组合，0 = 不限）：只捕捉匹配租户/成员/密钥的请求，
 	// 避免调试期间把全部租户的报文都录下来
@@ -181,7 +191,11 @@ type RelayInfo struct {
 	OriginModelName string // 用户请求的模型名
 	RequestURLPath  string
 	RequestHeaders  http.Header
-	StartTime       time.Time
+	// RequestBody 客户端原始请求体（转发改写前的入站 JSON）。formula 计费的
+	// param() 请求规则探测用：预扣与结算共用同一份（RelayHandler 作用域常驻，
+	// GoFrame 请求体已缓存，无重复读取问题）；任务路径不使用（探测值提交时冻结进 ratios）
+	RequestBody []byte
+	StartTime   time.Time
 
 	// ImageCount 图片协议顶层 n（一次生成 n 张，入口已校验为 1~10 的整数，非法值 400 拒绝）。
 	// 按次计费（per_request）按张数放大（预扣与结算同口径）；token 计费不乘——usage 已随 n 放大。

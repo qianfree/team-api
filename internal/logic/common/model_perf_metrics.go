@@ -10,7 +10,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 )
 
-// 模型当日性能热桶（参考 new-api perf_metrics 的「Redis 小时桶」设计）。
+// 模型当日性能热桶（「Redis 小时桶」设计）。
 //
 // 背景：bil_usage_daily 日聚合任务固定 01:00 运行且当天数据不聚合（usage_daily_aggregate，
 // end 取今天 00:00 开区间），导致「模型性能」页只能看到前一天的数据。本模块在用量记录入口

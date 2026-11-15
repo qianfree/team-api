@@ -15,7 +15,6 @@ const tokenHubBaseURL = "https://tokenhub.tencentmaas.com"
 //
 // 匿名嵌入 common.Adaptor 接口字段，Init 选定子适配器后其余接口方法自动转发，
 // 对 registry / 调度器 / 计费层完全透明。
-// 参考 new-api PR #6232。
 type DispatchAdaptor struct {
 	common.Adaptor
 }

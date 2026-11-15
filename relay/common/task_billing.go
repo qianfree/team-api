@@ -2,6 +2,7 @@ package common
 
 import (
 	"context"
+	"net/http"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -15,7 +16,8 @@ type TaskBillingProvider interface {
 	// taskBody 为归一化后的任务体（转换后通用格式）：定价配置了参数倍率（param_multipliers）时，
 	// 实现方在函数内求值并把命中倍率就地注入 ratios（param_multiplier / param_matched 键，
 	// 随任务持久化保证预扣/结算/重算三口径同源）；nil body = 不求值。
-	EstimateTaskCost(ctx context.Context, tenantID int64, modelName string, ratios map[string]any, taskBody []byte) (decimal.Decimal, error)
+	// headers 为提交请求头（formula 计费请求规则的 header() 探测值随 ratios 冻结持久化）
+	EstimateTaskCost(ctx context.Context, tenantID int64, modelName string, ratios map[string]any, taskBody []byte, headers http.Header) (decimal.Decimal, error)
 
 	// PreDeductTask 预扣任务费用
 	PreDeductTask(ctx context.Context, tenantID int64, requestID string, estimatedCost decimal.Decimal, modelName string) (decimal.Decimal, error)

@@ -973,6 +973,6 @@ func TestCapabilityInvariants_GroundingSearchCountForBilling(t *testing.T) {
 	require.True(t, ok, "期望 *dto.ClaudeResponse, got %T", converted)
 	require.NotNil(t, claudeResp.Usage, "usage 缺失")
 	require.NotNil(t, claudeResp.Usage.ServerToolUse, "usage.server_tool_use 缺失（按次计费无据可依）")
-	require.Equal(t, 1, claudeResp.Usage.ServerToolUse.WebSearchRequests,
+	require.Equal(t, 1, claudeResp.Usage.ServerToolUse.Count("web_search"),
 		"web_search_requests 应等于 webSearchQueries 条数")
 }

@@ -50,6 +50,36 @@ type (
 		ListAdminPendingAgreements(ctx context.Context, req *v1.AdminAgreementPendingReq) (*v1.AdminAgreementPendingRes, error)
 		// AcceptAdminAgreements 管理员接受协议
 		AcceptAdminAgreements(ctx context.Context, req *v1.AdminAgreementAcceptReq) (*v1.AdminAgreementAcceptRes, error)
+		// AiAnalysisCreate 发起按需分析：目标租户/用户校验 → 配置预检 → 建任务入队。
+		AiAnalysisCreate(ctx context.Context, req *v1.AiAnalysisCreateReq) (*v1.AiAnalysisCreateRes, error)
+		// AiAnalysisReportList 报告列表（联查租户/用户名）。
+		AiAnalysisReportList(ctx context.Context, req *v1.AiAnalysisReportListReq) (*v1.AiAnalysisReportListRes, error)
+		// AiAnalysisReportDetail 报告详情 + 发现明细。
+		// 报告证据含用户对话内容，访问即写敏感访问日志。
+		AiAnalysisReportDetail(ctx context.Context, req *v1.AiAnalysisReportDetailReq) (*v1.AiAnalysisReportDetailRes, error)
+		// AiAnalysisReportConversation 按报告内发现还原完整会话：
+		// finding_id 定位发现的锚点日志，调核心会话重组（平台侧副本）。
+		AiAnalysisReportConversation(ctx context.Context, req *v1.AiAnalysisReportConversationReq) (*v1.AiAnalysisReportConversationRes, error)
+		// AiAnalysisReportDelete 删除报告，连同发现明细。
+		AiAnalysisReportDelete(ctx context.Context, req *v1.AiAnalysisReportDeleteReq) (*v1.AiAnalysisReportDeleteRes, error)
+		// AiAnalysisJobList 任务列表与进度。
+		AiAnalysisJobList(ctx context.Context, req *v1.AiAnalysisJobListReq) (*v1.AiAnalysisJobListRes, error)
+		// AiAnalysisConfigGet 读取分析配置（与设置页读取同构，敏感字段掩码显示）。
+		AiAnalysisConfigGet(ctx context.Context, _ *v1.AiAnalysisConfigGetReq) (*v1.AiAnalysisConfigGetRes, error)
+		// AiAnalysisConfigUpdate 更新分析配置。敏感字段为掩码/空值时保持现值
+		// （UpdateCategory 内统一处理）；巡查计划变更经设置监听即时重排 cron。
+		AiAnalysisConfigUpdate(ctx context.Context, req *v1.AiAnalysisConfigUpdateReq) (*v1.AiAnalysisConfigUpdateRes, error)
+		// AiAnalysisTest 用已保存配置发起一次最小补全做连通性测试，
+		// 失败原因原样返回给管理员定位问题（测试失败本身是有效结果，不返回 error）。
+		AiAnalysisTest(ctx context.Context, _ *v1.AiAnalysisTestReq) (*v1.AiAnalysisTestRes, error)
+		// AiAssistantConfigGet 读取助手配置（与设置页读取同构，敏感字段掩码显示）。
+		AiAssistantConfigGet(ctx context.Context, _ *v1.AiAssistantConfigGetReq) (*v1.AiAssistantConfigGetRes, error)
+		// AiAssistantConfigUpdate 更新助手配置。敏感字段为掩码/空值时保持现值
+		// （UpdateCategory 内统一处理）。
+		AiAssistantConfigUpdate(ctx context.Context, req *v1.AiAssistantConfigUpdateReq) (*v1.AiAssistantConfigUpdateRes, error)
+		// AiAssistantTest 用已保存配置发起一次最小补全做连通性测试，
+		// 失败原因原样返回给管理员定位问题（测试失败本身是有效结果，不返回 error）。
+		AiAssistantTest(ctx context.Context, _ *v1.AiAssistantTestReq) (*v1.AiAssistantTestRes, error)
 		// GetAuditConfig retrieves the global audit level from sys_options.
 		GetAuditConfig(ctx context.Context, _ *v1.AuditConfigGetReq) (*v1.AuditConfigGetRes, error)
 		// UpdateAuditConfig updates the global audit level.
@@ -184,6 +214,18 @@ type (
 		// 不限制渠道状态：禁用中的渠道也允许手动测试，便于管理员在启用放流量前确认已恢复；
 		// 自动探测 cron 只查 active 渠道，禁用渠道不会被自动探测。
 		TestChannel(ctx context.Context, req *v1.ChannelTestReq) (*v1.ChannelTestRes, error)
+		// FetchChannelUpstreamModels 拉取渠道上游可用模型列表。
+		//
+		// 只读探测：用渠道配置的 base_url 与一个可用 Key 请求上游的模型列表接口，
+		// 结果仅供「添加模型能力」弹窗挑选，不落库、不影响调度目录。
+		//
+		// 各家列表协议不一致，按供应商分支：
+		//   - Gemini：GET /v1beta/models（x-goog-api-key）
+		//   - Claude：GET /v1/models（x-api-key + anthropic-version）
+		//   - 其它：GET /v1/models（Bearer，OpenAI 兼容；覆盖 DeepSeek / Moonshot / 智谱 / 各类中转站）
+		//
+		// 拉不到时返回可读错误，前端降级为手动输入——不阻断添加流程。
+		FetchChannelUpstreamModels(ctx context.Context, req *v1.ChannelUpstreamModelsReq) (*v1.ChannelUpstreamModelsRes, error)
 		// CronJobList returns all registered cron jobs with their last execution status.
 		CronJobList(ctx context.Context, _ *v1.CronJobListReq) (*v1.CronJobListRes, error)
 		// CronJobTrigger manually triggers a cron job.
@@ -325,6 +367,34 @@ type (
 		ListHelpArticles(ctx context.Context, req *v1.HelpArticleListReq) (*v1.HelpArticleListRes, error)
 		// GetHelpArticle 帮助文章详情（管理后台）
 		GetHelpArticle(ctx context.Context, req *v1.HelpArticleGetReq) (*v1.HelpArticleGetRes, error)
+		JSPluginList(ctx context.Context, _ *v1.JSPluginListReq) (*v1.JSPluginListRes, error)
+		JSPluginUpload(ctx context.Context, req *v1.JSPluginUploadReq) (*v1.JSPluginUploadRes, error)
+		// JSPluginDryRun 上传前试运行：编译 / 钩子齐备性 / 跨插件冲突预检 / 样例执行 /
+		// 静态 lint（见 jsplugin.DryRun）。不落库、不发布 generation、不发真实 HTTP，
+		// 所有失败都体现在检查项里，接口本身始终成功返回。
+		JSPluginDryRun(_ context.Context, req *v1.JSPluginDryRunReq) (*v1.JSPluginDryRunRes, error)
+		// JSPluginTemplate 模板下载：内置 golden 参考实现源码（作者抄它起步，删掉不需要的钩子）。
+		JSPluginTemplate(_ context.Context, _ *v1.JSPluginTemplateReq) (*v1.JSPluginTemplateRes, error)
+		JSPluginActivate(ctx context.Context, req *v1.JSPluginActivateReq) (*v1.JSPluginActivateRes, error)
+		JSPluginEnable(ctx context.Context, req *v1.JSPluginEnableReq) (*v1.JSPluginEnableRes, error)
+		JSPluginDelete(ctx context.Context, req *v1.JSPluginDeleteReq) (*v1.JSPluginDeleteRes, error)
+		// JSPluginSource 查看指定版本源码（只读，内置/上传版本均可）。
+		JSPluginSource(ctx context.Context, req *v1.JSPluginSourceReq) (*v1.JSPluginSourceRes, error)
+		// JSPluginRoutes 路由预览取激活版本 manifest（上传/内置 seed 时从 plugin.js 解析落库），
+		// 不依赖当前 generation——禁用状态下也要能看见端点信息（启用后按同一路径挂载）。
+		JSPluginRoutes(ctx context.Context, req *v1.JSPluginRoutesReq) (*v1.JSPluginRoutesRes, error)
+		// JSPluginMetrics 运行指标合流：内存钩子指标（自进程启动）+ DB 业务统计
+		// （任务量按 platform=js:{key}、产物转存按 js_task_artifacts.plugin_key）。
+		JSPluginMetrics(ctx context.Context, _ *v1.JSPluginMetricsReq) (*v1.JSPluginMetricsRes, error)
+		// JSPluginConfig 配置读取：manifest.config schema + 当前值（加密字段掩码），
+		// 形状与 Go 插件 PluginConfigModal 兼容（list/encrypted/group/half_width）。
+		JSPluginConfig(ctx context.Context, req *v1.JSPluginConfigReq) (*v1.JSPluginConfigRes, error)
+		// JSPluginConfigUpdate 更新配置并重建 generation（在服务中的插件即刻装载新值）。
+		JSPluginConfigUpdate(ctx context.Context, req *v1.JSPluginConfigUpdateReq) (*v1.JSPluginConfigUpdateRes, error)
+		// JSPluginOpsStats JS 插件运营统计（GET /api/admin/js-plugins/ops-stats?days=30）。
+		// 任务侧与营收侧两条独立聚合查询后在内存组装（组装逻辑见 buildJsOpsStatsItems，
+		// 保证「无任务插件」与「manifest 已不存在的孤儿 platform」都出现在结果里）。
+		JSPluginOpsStats(ctx context.Context, req *v1.JSPluginOpsStatsReq) (*v1.JSPluginOpsStatsRes, error)
 		// CreateMember adds a new member to a specified tenant.
 		CreateMember(ctx context.Context, req *v1.AdminMemberCreateReq) (*v1.AdminMemberCreateRes, error)
 		// ListAllMembers returns a paginated list of all tenant members across all tenants.
@@ -353,6 +423,12 @@ type (
 		GetModelPricing(ctx context.Context, req *v1.PricingGetReq) (*v1.PricingGetRes, error)
 		// SetModelPricing 设置模型定价（全量替换）
 		SetModelPricing(ctx context.Context, req *v1.PricingSetReq) (*v1.PricingSetRes, error)
+		// ValidateModelPricingFormula 校验计费公式并试算（dry-run，不落库不触发缓存失效）。
+		// 管理端「表达式计费」编辑器的「校验并试算」按钮与保存前置校验共用；
+		// 与保存链路的强制烟测（BuildPricingBlob formula 分支）同口径。
+		// 基础公式与请求规则分别接收，按 EffectiveFormula 组合后求值（与线上计费同口径）；
+		// 样例可携带 headers/body/eval_at 模拟请求上下文（header()/param()/时间函数探测）
+		ValidateModelPricingFormula(ctx context.Context, req *v1.PricingFormulaValidateReq) (*v1.PricingFormulaValidateRes, error)
 		// FetchOfficialPricing 拉取模型官方定价（来自 LiteLLM + models.dev 双数据源）
 		FetchOfficialPricing(ctx context.Context, req *v1.PricingFetchOfficialReq) (*v1.PricingFetchOfficialRes, error)
 		// FetchOfficialModelInfo 按模型名称拉取官方模型信息（上下文长度+能力特性）
@@ -360,6 +436,13 @@ type (
 		FetchOfficialModelInfo(ctx context.Context, req *v1.ModelFetchOfficialInfoReq) (*v1.ModelFetchOfficialInfoRes, error)
 		// ExportModels exports model list to CSV or Excel.
 		ExportModels(ctx context.Context, req *v1.ModelExportReq) (*v1.ModelExportRes, error)
+		// GetModelToolPricing 读取全局工具调用价格表。
+		// 读侧容错：坏数据不阻断页面（与计费读取侧 buildToolPriceIndex 同口径，整份非法等价于未配置）。
+		GetModelToolPricing(ctx context.Context, _ *v1.ModelToolPricingGetReq) (*v1.ModelToolPricingGetRes, error)
+		// UpdateModelToolPricing 全量覆盖保存工具价格表：先过 billing 包的 JSON 校验
+		// （key 格式 / 价格区间 0~100，保存入口拦截脏数据），再经 SetOption 落库
+		// （自带 registry 校验、缓存失效与 pub/sub 广播，多副本即时生效）。
+		UpdateModelToolPricing(ctx context.Context, req *v1.ModelToolPricingUpdateReq) (*v1.ModelToolPricingUpdateRes, error)
 		// ListModelGroups 模型分组列表
 		ListModelGroups(ctx context.Context, req *v1.ModelGroupListReq) (*v1.ModelGroupListRes, error)
 		// CreateModelGroup 创建模型分组
@@ -441,6 +524,10 @@ type (
 		//
 		// 同时返回权限点分组（高级模式用）与「模块 × 档位」元数据（默认配置界面用）：
 		// 二者是同一份数据的两个视图，由后端统一给出，避免前端复刻一份档位定义造成漂移。
+		//
+		// 已启用插件声明的分组与模块档位（PermissionProvider）一并合并下发：
+		// 前端零改动即可在角色配置界面看到插件模块。只合并「已启用」的插件——
+		// 未启用插件的路由被默认拒绝，把它的模块摆上授权界面只会造成「授了权却不生效」的困惑。
 		GetAllPermissions(ctx context.Context, _ *v1.AdminAllPermissionsReq) (*v1.AdminAllPermissionsRes, error)
 		// ListPlans 获取套餐列表
 		ListPlans(ctx context.Context, req *v1.PlanListReq) (*v1.PlanListRes, error)

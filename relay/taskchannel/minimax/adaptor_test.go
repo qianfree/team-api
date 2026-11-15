@@ -557,6 +557,29 @@ func TestBuildRequestBody_V1Native(t *testing.T) {
 	}
 }
 
+// TestBuildRequestBody_V2MetadataWatermark 通用收敛词汇 metadata.watermark 映射 aigc_watermark；
+// 原生顶层 aigc_watermark 优先
+func TestBuildRequestBody_V2MetadataWatermark(t *testing.T) {
+	a := &Adaptor{}
+	out := buildBody(t, a, testInfo("", "", false), `{"model":"MiniMax-H3","prompt":"p","metadata":{"watermark":true}}`)
+	if wm, _ := out["aigc_watermark"].(bool); !wm {
+		t.Fatalf("metadata.watermark 应映射 aigc_watermark: %v", out["aigc_watermark"])
+	}
+	out = buildBody(t, a, testInfo("", "", false), `{"model":"MiniMax-H3","prompt":"p","aigc_watermark":false,"metadata":{"watermark":true}}`)
+	if wm, _ := out["aigc_watermark"].(bool); wm {
+		t.Fatalf("原生 aigc_watermark 应优先于 metadata.watermark: %v", out["aigc_watermark"])
+	}
+}
+
+// TestBuildRequestBody_V1MetadataWatermark v1（Hailuo）同样消费 metadata.watermark → aigc_watermark
+func TestBuildRequestBody_V1MetadataWatermark(t *testing.T) {
+	a := &Adaptor{}
+	out := buildBody(t, a, testInfo("", "", false), `{"model":"MiniMax-Hailuo-02","prompt":"p","metadata":{"watermark":true}}`)
+	if wm, _ := out["aigc_watermark"].(bool); !wm {
+		t.Fatalf("metadata.watermark 应映射 aigc_watermark: %v", out["aigc_watermark"])
+	}
+}
+
 // TestBuildRequestBody_V1DefaultResolution 分辨率缺省按模型默认档：Hailuo 2.x → 768P，旧型号 → 720P
 func TestBuildRequestBody_V1DefaultResolution(t *testing.T) {
 	a := &Adaptor{}

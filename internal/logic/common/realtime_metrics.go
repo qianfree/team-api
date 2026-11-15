@@ -9,15 +9,15 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 )
 
-// 实时 RPM/TPM 统计（参考 new-api 的"最近 60 秒"口径，但不查日志表）：
+// 实时 RPM/TPM 统计（"最近 60 秒"口径，不查日志表）：
 // 写入侧在每条用量记录落地时向 Redis 的 10 秒桶原子累加请求数与 token 数（全局 + 租户两个维度），
 // 读取侧对最近 60 秒做滑动窗口聚合（6 个整桶 + 最旧桶按窗口覆盖比例加权）。
-// 相比 new-api 每次实时 COUNT 日志表，写入 O(1)、读取 O(桶数)，与 bil_usage_logs 的规模解耦。
+// 相比每次实时 COUNT 日志表的实现，写入 O(1)、读取 O(桶数)，与 bil_usage_logs 的规模解耦。
 // 指标为 best-effort：Redis 不可用时计数丢弃、查询返回 0，不影响请求主链路。
 const (
 	rtMetricsKeyPrefix     = "rt_metrics:" // rt_metrics:{scope}:{bucketStartUnix}
 	rtMetricsBucketSeconds = 10            // 桶粒度（秒）
-	rtMetricsWindowSeconds = 60            // 统计窗口（秒），与 new-api 的 RPM/TPM 口径一致
+	rtMetricsWindowSeconds = 60            // 统计窗口（秒），RPM/TPM 标准口径
 	rtMetricsKeyTTL        = 180           // 桶 TTL（秒），覆盖读取窗口即可
 )
 

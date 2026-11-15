@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { ref, reactive, computed, watch, onUnmounted } from 'vue'
-import { NInput } from 'naive-ui'
+import { ref, computed, watch, onUnmounted, nextTick } from 'vue'
+import { NInput, NInputNumber } from 'naive-ui'
 import { createPlaygroundApi } from '@/utils/playgroundApi'
 import { createPoller } from '@/composables/usePolling'
-import { calculateCost } from './calculateCost'
 import ParamRefModal from './ParamRefModal.vue'
 import GenerationProgressCard from './GenerationProgressCard.vue'
 import AttachmentBar from './AttachmentBar.vue'
+import PromptInput from './PromptInput.vue'
 import Icon from '@/components/common/Icon.vue'
 import BaseSelect from '../../../components/common/BaseSelect.vue'
 import { useAttachments, formatBytes } from './useAttachments'
@@ -30,7 +30,6 @@ interface ModelItem {
 const props = defineProps<{ models: ModelItem[]; apiKey: string }>()
 
 const sending = ref(false)
-const errorMessage = ref('')
 const selectedModel = ref(props.models[0]?.model_id || '')
 // models 由父组件异步加载，setup 阶段可能为空；列表变化时若当前选中模型不在列表内
 //（如切换 API Key 后模型范围变化）则自动重置为第一个
@@ -46,6 +45,57 @@ const selectedModelItem = computed(() =>
 	props.models.find(m => m.model_id === selectedModel.value),
 )
 const prompt = ref('')
+// ── 标准 OpenAI 字段：留空（''）/ null = 不发送，请求体按条件写入 ──
+const size = ref('')
+const quality = ref('')
+const outputFormat = ref('')
+// complexity：gpt-image-2.6 新增的规划深度（low/medium/high，API 侧默认 high），所有格式可用
+const complexity = ref('')
+// GIF 专属参数：仅在 output_format=gif 时发送（切走格式后残留值不应进入请求体）
+const gifFrameCount = ref<number | null>(null)
+const gifFrameDurationMs = ref<number | null>(null)
+
+// 尺寸预设：覆盖 gpt-image 系列与 dall-e 系列的常用档位，非预设值走自定义参数透传
+const sizeOptions = [
+	{ value: '', label: '不设置（不发送）' },
+	{ value: 'auto', label: 'auto（模型自动）' },
+	{ value: '1024x1024', label: '1024x1024 方形' },
+	{ value: '1536x1024', label: '1536x1024 横版' },
+	{ value: '1024x1536', label: '1024x1536 竖版' },
+	{ value: '1792x1024', label: '1792x1024 宽横（dall-e-3）' },
+	{ value: '1024x1792', label: '1024x1792 长竖（dall-e-3）' },
+	{ value: '512x512', label: '512x512 小图（dall-e-2）' },
+]
+
+// 质量预设：gpt-image 系列用 low/medium/high/auto，dall-e-3 用 standard/hd
+const qualityOptions = [
+	{ value: '', label: '不设置（不发送）' },
+	{ value: 'auto', label: 'auto（模型自动）' },
+	{ value: 'low', label: 'low 低' },
+	{ value: 'medium', label: 'medium 中' },
+	{ value: 'high', label: 'high 高' },
+	{ value: 'standard', label: 'standard 标准（dall-e-3）' },
+	{ value: 'hd', label: 'hd 高清（dall-e-3）' },
+]
+
+// 输出格式：svg 矢量 / gif 动图为 gpt-image-2.6 起新增能力，png/jpeg/webp 为通用档
+const outputFormatOptions = [
+	{ value: '', label: '不设置（不发送）' },
+	{ value: 'png', label: 'png（默认）' },
+	{ value: 'jpeg', label: 'jpeg' },
+	{ value: 'webp', label: 'webp' },
+	{ value: 'svg', label: 'svg 矢量（gpt-image-2.6+）' },
+	{ value: 'gif', label: 'gif 动图（gpt-image-2.6+）' },
+]
+
+// 规划深度：gpt-image-2.6 新增，控制渲染前的规划量；留空 = 不发送（上游默认 high）
+const complexityOptions = [
+	{ value: '', label: '不设置（不发送，默认 high）' },
+	{ value: 'low', label: 'low 快（局部修改）' },
+	{ value: 'medium', label: 'medium 中' },
+	{ value: 'high', label: 'high 精细（复杂排版）' },
+]
+
 const modelOptions = computed(() => props.models.map(m => ({ value: m.model_id, label: m.model_name || m.model_id })))
 
 // 空态里展示的模型名（列表由父组件异步加载，可能暂时查不到）
@@ -64,7 +114,34 @@ const {
 	max: attachmentMax,
 	addFiles: addAttachments,
 	remove: removeAttachment,
+	clear: clearAttachments,
 } = useAttachments({ kinds: ['image'], max: 4 })
+
+// ── 输入区（右侧，对话式）：拖放高亮 / 文件选择器触发 ──
+const promptInput = ref<InstanceType<typeof PromptInput> | null>(null)
+const attachmentBar = ref<InstanceType<typeof AttachmentBar> | null>(null)
+const dragging = ref(false)
+
+function openFilePicker() {
+	attachmentBar.value?.pick()
+}
+
+function clearAllAttachments() {
+	clearAttachments()
+}
+
+// 输入容器承接拖放：与粘贴共用同一条上传链路
+function onDropFiles(e: DragEvent) {
+	dragging.value = false
+	if (e.dataTransfer?.files?.length) addAttachments(Array.from(e.dataTransfer.files))
+}
+
+// 空态快捷提示词：点一下直接填进输入框
+const quickPrompts = [
+	'赛博朋克风格的城市夜景，霓虹灯与雨夜反射',
+	'水彩风格的猫咪插画，柔和光线',
+	'极简主义的产品海报，纯色背景',
+]
 
 // ── 自定义参数系统 ──
 
@@ -78,23 +155,46 @@ const customParams = ref<CustomParam[]>([])
 let nextParamId = 1
 const showParamRef = ref(false)
 
-// 模型预设模板
-const MODEL_PRESETS: Record<string, Record<string, string>> = {
+// 模型预设模板：standard 三字段写入标准下拉，custom 仍走自定义参数行。
+// gpt-image 系列不支持 response_format（总返回 b64_json），预设里不带。
+interface ModelPreset {
+	size?: string
+	quality?: string
+	outputFormat?: string
+	custom: Record<string, string>
+}
+
+const MODEL_PRESETS: Record<string, ModelPreset> = {
+	// gpt-image-2.6：svg 矢量 / gif 动图为该代起新增能力，预设直接选中 svg 便于快速体验。
+	// 键必须排在 gpt-image-2 之前：预设按子串匹配，更长的键先命中，
+	// 避免 gpt-image-2.6 的变体名（如 gpt-image-2.6-mini）误中 gpt-image-2 的预设
+	'gpt-image-2.6': {
+		size: '1024x1024',
+		quality: 'auto',
+		outputFormat: 'svg',
+		custom: {},
+	},
+	// gpt-image-2：预设常用档位，零配置即可快速体验
+	'gpt-image-2': {
+		size: '1024x1024',
+		quality: 'auto',
+		outputFormat: 'png',
+		custom: {},
+	},
 	'gpt-image-1': {
 		size: '1024x1024',
 		quality: 'auto',
-		response_format: 'b64_json',
-		output_format: 'png',
+		outputFormat: 'png',
+		custom: {},
 	},
 	'dall-e-3': {
 		size: '1024x1024',
 		quality: 'standard',
-		style: 'vivid',
-		response_format: 'url',
+		custom: { style: 'vivid', response_format: 'url' },
 	},
 	'dall-e-2': {
 		size: '1024x1024',
-		response_format: 'url',
+		custom: { response_format: 'url' },
 	},
 }
 
@@ -106,18 +206,6 @@ const currentPreset = computed(() => {
 		if (id.includes(key)) return MODEL_PRESETS[key]
 	}
 	return null
-})
-
-// 预设标签名（用于按钮显示）
-const currentPresetLabel = computed(() => {
-	const id = selectedModel.value
-	for (const key of Object.keys(MODEL_PRESETS)) {
-		if (id === key || id.includes(key)) {
-			// 美化显示：gpt-image-1 → GPT Image 1
-			return key.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
-		}
-	}
-	return ''
 })
 
 // 有效参数数量
@@ -137,8 +225,11 @@ function removeParam(id: number) {
 function applyPreset() {
 	const preset = currentPreset.value
 	if (!preset) return
+	size.value = preset.size || ''
+	quality.value = preset.quality || ''
+	outputFormat.value = preset.outputFormat || ''
 	customParams.value = []
-	for (const [key, value] of Object.entries(preset)) {
+	for (const [key, value] of Object.entries(preset.custom)) {
 		addParam(key, value)
 	}
 }
@@ -154,28 +245,24 @@ function parseValue(raw: string): string | number | boolean {
 	return raw
 }
 
-// 默认参数项（无预设时显示，用户自行填写值）
-const DEFAULT_PARAMS = [
-	{ key: 'size', value: '' },
-	{ key: 'quality', value: '' },
-]
-
+// 无预设模型的兜底：标准字段留空（不发送），自定义参数区留给用户自行添加
 function applyDefaults() {
+	size.value = ''
+	quality.value = ''
+	outputFormat.value = ''
 	customParams.value = []
-	for (const { key, value } of DEFAULT_PARAMS) {
-		addParam(key, value)
-	}
 }
 
 // 参数值输入框的引导占位：无预设时默认给的是空值，直接显示「值」用户不知道填什么，
 // 按参数名给出常见取值示例
 const PARAM_HINTS: Record<string, string> = {
-	size: '如 1024x1024',
-	quality: '如 high / medium / low',
 	style: '如 vivid / natural',
 	response_format: '如 url / b64_json',
-	output_format: '如 png / jpeg / webp',
 	background: '如 transparent / opaque',
+	n: '生成张数，如 1',
+	frame_count: 'GIF 帧数 2-16',
+	frame_duration_ms: 'GIF 每帧毫秒 20-2000',
+	complexity: '如 low / medium / high',
 }
 
 function paramPlaceholder(key: string) {
@@ -192,11 +279,40 @@ watch(selectedModel, () => {
 	}
 }, { immediate: true })
 
-// ── 图片生成 ──
+// ── 图片生成（对话式记录）──
 
 interface ImageResult { b64_json?: string; url?: string; revised_prompt?: string }
-const images = ref<ImageResult[]>([])
-const tokenUsage = reactive({ promptTokens: 0, totalTokens: 0, cost: '' })
+
+// 生成记录：user = 提示词与参考图，assistant = 生成过程与结果，与对话 Tab 同构
+interface GalleryMsg {
+	id: number
+	role: 'user' | 'assistant'
+	/** user：提示词文本 */
+	text?: string
+	/** user：随请求发出的参考图（data URL，供气泡缩略与重新生成复用） */
+	refPreviews?: { url: string; name: string }[]
+	/** assistant：生成状态机 */
+	status?: 'generating' | 'polling' | 'success' | 'failed' | 'timeout'
+	/** 本次使用的调用模式 */
+	mode?: 'sync' | 'async'
+	/** 异步降级为同步时的提示 */
+	fallbackNotice?: string
+	/** 异步任务 ID 与原始状态 */
+	taskId?: string
+	taskStatus?: string
+	progress?: string
+	/** 结果 */
+	images?: ImageResult[]
+	error?: string
+	/** 同步返回的用量 */
+	promptTokens?: number
+	totalTokens?: number
+	/** 本条记录起点（ms），进度卡计时用 */
+	startAt?: number
+}
+
+const messages = ref<GalleryMsg[]>([])
+let nextMsgId = 1
 
 // 模型能力：异步端点是否可用 / 同步端点是否可用（同步缺省视为可用，兼容旧后端）。
 // 由 /tenant/models 的 async_image、image_sync_supported 决定，与后端端点 gate 同源。
@@ -213,24 +329,13 @@ const effectiveMode = computed<'sync' | 'async'>(() => {
 	if (!syncSupported.value) return 'async'
 	return imageMode.value
 })
-// 优雅降级提示：异步被后台临时关闭时自动改走同步，给用户一条轻提示。
-const fallbackNotice = ref('')
 
-// 异步任务状态（仅异步模型使用）
-interface AsyncTask {
-	id: string
-	status: string
-	progress: string
-	error?: string
-	createdAt: number
-}
-const asyncTask = ref<AsyncTask | null>(null)
+// 轮询中的消息 ID：同一时刻至多一个异步任务在轮询
+const pollingMsgId = ref<number | null>(null)
 const polling = ref(false)
-// 本次生成起点（ms）：结果占位卡右上角计时用；跨「提交中 → 轮询中」两个占位阶段连续计时
-const genStartAt = ref<number | null>(null)
 // 任务状态轮询：页面隐藏时暂停（任务在服务端继续执行），恢复可见时立即补拉
 const taskPoller = createPoller(pollLoop, 3000, { immediate: true })
-// 轮询上限：100 次实际轮询 ≈ 5 分钟（页面隐藏期间不计数），超过判定超时，防止无限轮询。
+// 轮询上限：100 次实际轮询 ≈ 5 分钟（页面隐藏期间不计数），超过转 TIMEOUT 态，防止无限轮询。
 const MAX_POLL_ATTEMPTS = 100
 let pollAttempts = 0
 
@@ -243,27 +348,24 @@ const statusLabel: Record<string, string> = {
 	FAILURE: '失败',
 }
 
-// 结果卡右上角的状态徽标（无任务且无错误时不渲染）
+// 头部状态徽标：取最近一条生成记录的状态（无记录时不渲染）
 const resultStatus = computed<{ label: string; cls: string } | null>(() => {
-	if (errorMessage.value) return { label: '失败', cls: 'badge-danger' }
-	if (sending.value) {
-		return { label: effectiveMode.value === 'async' ? '提交中' : '生成中', cls: 'badge-primary' }
-	}
-	if (asyncTask.value) {
-		if (asyncTask.value.status === 'SUCCESS') return { label: '已完成', cls: 'badge-success' }
-		if (asyncTask.value.status === 'FAILURE') return { label: '失败', cls: 'badge-danger' }
-		return { label: statusLabel[asyncTask.value.status] || asyncTask.value.status, cls: 'badge-warning' }
+	const last = messages.value[messages.value.length - 1]
+	if (!last || last.role !== 'assistant' || !last.status) return null
+	switch (last.status) {
+		case 'success': return { label: '已完成', cls: 'badge-success' }
+		case 'failed': return { label: '失败', cls: 'badge-danger' }
+		case 'timeout': return { label: '查询超时', cls: 'badge-warning' }
+		case 'generating': return { label: last.mode === 'async' ? '提交中' : '生成中', cls: 'badge-primary' }
+		case 'polling': return { label: statusLabel[last.taskStatus || ''] || last.taskStatus || '生成中', cls: 'badge-warning' }
 	}
 	return null
 })
 
-// 切换模型时停止上一模型的轮询并清空结果，重置模式为默认（异步）
+// 切换模型时停止进行中的轮询并重置调用模式；生成记录保留（对话式历史）
 watch(selectedModel, () => {
 	stopPolling()
-	asyncTask.value = null
-	images.value = []
-	errorMessage.value = ''
-	fallbackNotice.value = ''
+	pollingMsgId.value = null
 	imageMode.value = 'async'
 })
 
@@ -272,17 +374,26 @@ onUnmounted(() => {
 	window.removeEventListener('keydown', onZoomKeydown)
 })
 
-// 组装请求体：固定字段 + 参考图 + 自定义参数（同步/异步共用）
-function buildBody(): Record<string, any> {
+// 组装请求体：提示词 + 参考图（data URL 列表）+ 标准字段 + 自定义参数（同步/异步共用）
+function buildBody(promptText: string, refImages: string[]): Record<string, any> {
 	const body: Record<string, any> = {
 		model: selectedModel.value,
-		prompt: prompt.value,
+		prompt: promptText,
 	}
-	const refs = compileImageReferences(attachmentList.value)
-	if (refs.images.length === 1) {
-		body.image = refs.images[0]
-	} else if (refs.images.length > 1) {
-		body.image = refs.images
+	if (refImages.length === 1) {
+		body.image = refImages[0]
+	} else if (refImages.length > 1) {
+		body.image = refImages
+	}
+	// 标准字段：留空不发送；自定义参数后写、可覆盖标准字段（透传语义）
+	if (size.value) body.size = size.value
+	if (quality.value) body.quality = quality.value
+	if (outputFormat.value) body.output_format = outputFormat.value
+	if (complexity.value) body.complexity = complexity.value
+	// GIF 专属参数：仅在 gif 输出时携带，其它格式下的残留值不进请求体
+	if (outputFormat.value === 'gif') {
+		if (gifFrameCount.value != null) body.frame_count = gifFrameCount.value
+		if (gifFrameDurationMs.value != null) body.frame_duration_ms = gifFrameDurationMs.value
 	}
 	for (const param of customParams.value) {
 		const key = param.key.trim()
@@ -294,75 +405,139 @@ function buildBody(): Record<string, any> {
 	return body
 }
 
-async function generate() {
-	if (!prompt.value.trim() || !selectedModel.value) return
+// scrollToBottom / isNearBottom：与对话 Tab 同一套滚动策略（40px 容差）
+const messagesRef = ref<HTMLElement | null>(null)
+
+function isNearBottom(): boolean {
+	const el = messagesRef.value
+	if (!el) return true
+	return el.scrollHeight - el.scrollTop - el.clientHeight < 40
+}
+
+function scrollToBottom(force = false) {
+	nextTick(() => {
+		if (messagesRef.value && (force || isNearBottom())) {
+			messagesRef.value.scrollTop = messagesRef.value.scrollHeight
+		}
+	})
+}
+
+// runGenerate 一次生成的执行段（首次发送与重新生成共用）：结果写回 msg
+async function runGenerate(promptText: string, refImages: string[], msg: GalleryMsg) {
 	sending.value = true
-	genStartAt.value = Date.now()
-	errorMessage.value = ''
-	fallbackNotice.value = ''
-	images.value = []
-	asyncTask.value = null
-	stopPolling()
+	msg.startAt = Date.now()
+	scrollToBottom(true)
 
 	try {
 		const api = createPlaygroundApi(props.apiKey)
-		const body = buildBody()
+		const body = buildBody(promptText, refImages)
 
 		if (effectiveMode.value === 'async') {
 			try {
-				await submitAsync(api, body)
+				await submitAsync(api, body, msg)
 			} catch (e) {
 				// 优雅降级：后台此刻恰好关闭了「同步图片异步化」（翻转开关的时序窗口），异步端点
 				// 返回 image_async_disabled。若该模型同步端点可用，自动改走同步，用户无感。
 				const code = (e as any)?.relayError?.code
 				if (code === 'image_async_disabled' && syncSupported.value) {
-					fallbackNotice.value = '异步暂不可用，已自动切换为同步模式'
-					await generateSync(api, body)
+					msg.fallbackNotice = '异步暂不可用，已自动切换为同步模式'
+					msg.mode = 'sync'
+					await generateSync(api, body, msg)
 				} else {
 					throw e
 				}
 			}
 		} else {
-			await generateSync(api, body)
+			await generateSync(api, body, msg)
 		}
 	} catch (e) {
 		console.error(e)
-		errorMessage.value = (e as any)?.message || '请求失败，请重试'
+		msg.status = 'failed'
+		msg.error = (e as any)?.message || '请求失败，请重试'
 	} finally {
 		sending.value = false
+		scrollToBottom()
 	}
 }
 
+// generate 从输入区发起一次生成：提示词与参考图入列成 user 消息，结果以 assistant 消息呈现
+async function generate() {
+	const raw = prompt.value.trim()
+	if (!raw || !selectedModel.value || sending.value || polling.value) return
+
+	const refs = compileImageReferences(attachmentList.value)
+	const refPreviews = attachmentList.value.map(a => ({ url: a.dataUrl, name: a.name }))
+
+	messages.value.push({ id: nextMsgId++, role: 'user', text: raw, refPreviews })
+	prompt.value = ''
+	clearAttachments()
+
+	const msg: GalleryMsg = {
+		id: nextMsgId++,
+		role: 'assistant',
+		status: 'generating',
+		mode: effectiveMode.value,
+		images: [],
+	}
+	messages.value.push(msg)
+	await runGenerate(raw, refs.images, msg)
+}
+
+// regenerate 从一条历史记录重发：复用其提示词与参考图，追加新的生成记录
+async function regenerate(msg: GalleryMsg) {
+	if (sending.value || polling.value) return
+	const idx = messages.value.indexOf(msg)
+	const userMsg = idx > 0 ? messages.value[idx - 1] : null
+	if (!userMsg || userMsg.role !== 'user' || !userMsg.text) return
+
+	const refs = (userMsg.refPreviews || []).map(p => p.url)
+	messages.value.push({
+		id: nextMsgId++,
+		role: 'user',
+		text: userMsg.text,
+		refPreviews: userMsg.refPreviews,
+	})
+	const newMsg: GalleryMsg = {
+		id: nextMsgId++,
+		role: 'assistant',
+		status: 'generating',
+		mode: effectiveMode.value,
+		images: [],
+	}
+	messages.value.push(newMsg)
+	await runGenerate(userMsg.text, refs, newMsg)
+}
+
 // submitAsync 走异步端点：提交拿 task_id，非终态则启动轮询取图。
-async function submitAsync(api: ReturnType<typeof createPlaygroundApi>, body: Record<string, any>) {
+async function submitAsync(api: ReturnType<typeof createPlaygroundApi>, body: Record<string, any>, msg: GalleryMsg) {
 	const res = await api.post('/v1/images/generations/async', body, { timeout: 60_000 })
 	const data = res.data
-	asyncTask.value = {
-		id: data.id,
-		status: data.status || 'SUBMITTED',
-		progress: data.progress || '',
-		createdAt: data.created_at || Math.floor(Date.now() / 1000),
-	}
+	msg.taskId = data.id
+	msg.taskStatus = data.status || 'SUBMITTED'
 	if (data.status === 'SUCCESS') {
-		if (data.url) images.value = [{ url: data.url }]
-	} else if (data.status !== 'FAILURE') {
-		startPolling()
+		msg.status = 'success'
+		if (data.url) msg.images = [{ url: data.url }]
+	} else if (data.status === 'FAILURE') {
+		msg.status = 'failed'
+		msg.error = data.error || '生成失败'
 	} else {
-		asyncTask.value.error = data.error || '生成失败'
+		msg.status = 'polling'
+		pollingMsgId.value = msg.id
+		startPolling()
 	}
 }
 
 // generateSync 走同步端点：阻塞一次性返回图片与用量。
 // 超时 600s 与后端图片模式强制下限（relay ImagesGenerationTimeoutSecs）对齐：
 // b64_json 响应体达 MB 级，慢网络下载耗时会远超生成耗时，前端超时须不早于后端放弃。
-async function generateSync(api: ReturnType<typeof createPlaygroundApi>, body: Record<string, any>) {
+async function generateSync(api: ReturnType<typeof createPlaygroundApi>, body: Record<string, any>, msg: GalleryMsg) {
 	const res = await api.post('/v1/images/generations', body, { timeout: 600_000 })
 	const data = res.data
-	images.value = data.data || []
+	msg.status = 'success'
+	msg.images = data.data || []
 	const usage = data.usage || {}
-	tokenUsage.promptTokens = usage.prompt_tokens || 0
-	tokenUsage.totalTokens = usage.total_tokens || 0
-	tokenUsage.cost = calculateCost(selectedModelItem.value, usage) || ''
+	msg.promptTokens = usage.prompt_tokens || 0
+	msg.totalTokens = usage.total_tokens || 0
 }
 
 function startPolling() {
@@ -376,48 +551,62 @@ function stopPolling() {
 	taskPoller.stop()
 }
 
-async function pollLoop() {
-	if (!polling.value || !asyncTask.value?.id) return
+// resumePolling 从查询超时态恢复轮询：startPolling 会重置计数并立即补拉一次任务状态
+function resumePolling(msg: GalleryMsg) {
+	if (!msg.taskId || sending.value || polling.value) return
+	msg.status = 'polling'
+	pollingMsgId.value = msg.id
+	startPolling()
+}
 
-	// 轮询次数上限保护：超过上限（约 5 分钟）判定为超时，停止轮询并提示，
-	// 避免上游卡死 / 后端漏推终态时前端无限轮询。
+async function pollLoop() {
+	const msgId = pollingMsgId.value
+	if (!polling.value || !msgId) return
+	const msg = messages.value.find(m => m.id === msgId)
+	if (!msg?.taskId) {
+		stopPolling()
+		pollingMsgId.value = null
+		return
+	}
+
+	// 轮询次数上限保护：超过上限（约 5 分钟）停止轮询，转 TIMEOUT 态——
+	// 超时≠失败，任务在服务端可能仍在跑且终将成功，保留 task_id 供「继续查询」。
 	if (pollAttempts >= MAX_POLL_ATTEMPTS) {
 		stopPolling()
-		asyncTask.value = {
-			...asyncTask.value,
-			status: 'FAILURE',
-			error: '生成超时，请稍后重试',
-		}
+		pollingMsgId.value = null
+		msg.status = 'timeout'
 		return
 	}
 	pollAttempts++
 
 	try {
 		const api = createPlaygroundApi(props.apiKey)
-		const res = await api.get(`/v1/images/generations/async/${asyncTask.value.id}`)
+		const res = await api.get(`/v1/images/generations/async/${msg.taskId}`)
 		const data = res.data
 
-		asyncTask.value = {
-			...asyncTask.value,
-			status: data.status,
-			progress: data.progress || '',
-			error: data.error || undefined,
-		}
+		msg.taskStatus = data.status
+		msg.progress = data.progress || ''
+		msg.error = data.error || undefined
 
 		if (data.status === 'SUCCESS') {
 			stopPolling()
+			pollingMsgId.value = null
+			msg.status = 'success'
 			// 多图：优先用 data 数组渲染全部图片；回退到单 url（向后兼容旧后端）。
 			if (Array.isArray(data.data) && data.data.length > 0) {
-				images.value = data.data
+				msg.images = data.data
 					.filter((d: any) => d && d.url)
 					.map((d: any) => ({ url: d.url }))
 			} else if (data.url) {
-				images.value = [{ url: data.url }]
+				msg.images = [{ url: data.url }]
 			}
+			scrollToBottom()
 			return
 		}
 		if (data.status === 'FAILURE') {
 			stopPolling()
+			pollingMsgId.value = null
+			msg.status = 'failed'
 			return
 		}
 	} catch {
@@ -425,8 +614,27 @@ async function pollLoop() {
 	}
 }
 
+// b64_json 不携带 MIME 信息，output_format 参数也未必与实际编码一致，直接嗅探 base64 头部魔法数
+function sniffImageMime(b64: string): string {
+	if (b64.startsWith('iVBORw0KGgo')) return 'image/png'
+	if (b64.startsWith('/9j/')) return 'image/jpeg'
+	if (b64.startsWith('UklGR')) return 'image/webp'
+	if (b64.startsWith('R0lGOD')) return 'image/gif'
+	// svg：'<svg' 或 '<?xml' 开头（flare 系列矢量输出）
+	if (b64.startsWith('PHN2Zy') || b64.startsWith('PD94bWw')) return 'image/svg+xml'
+	return 'image/png'
+}
+
+const MIME_EXT: Record<string, string> = {
+	'image/png': 'png',
+	'image/jpeg': 'jpg',
+	'image/webp': 'webp',
+	'image/gif': 'gif',
+	'image/svg+xml': 'svg',
+}
+
 function imageSrc(img: ImageResult): string {
-	if (img.b64_json) return 'data:image/png;base64,' + img.b64_json
+	if (img.b64_json) return 'data:' + sniffImageMime(img.b64_json) + ';base64,' + img.b64_json
 	if (img.url) return img.url
 	return ''
 }
@@ -436,11 +644,19 @@ function downloadImage(img: ImageResult, idx: number) {
 	if (!src) return
 	const a = document.createElement('a')
 	a.href = src
+	// 扩展名按实际格式推断：b64 走魔法数嗅探，URL 从路径后缀取，都取不到再兜底 png
+	let ext = 'png'
+	if (img.b64_json) {
+		ext = MIME_EXT[sniffImageMime(img.b64_json)] || 'png'
+	} else {
+		const m = src.match(/\.(png|jpe?g|webp)(?:\?|#|$)/i)
+		if (m) ext = m[1].toLowerCase() === 'jpeg' ? 'jpg' : m[1].toLowerCase()
+	}
 	// 文件名带时间戳，避免不同批次的生成结果重名（序号保留，防止同秒内多张图冲突）
 	const now = new Date()
 	const pad = (n: number) => String(n).padStart(2, '0')
 	const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
-	a.download = `image_${stamp}_${idx + 1}.png`
+	a.download = `image_${stamp}_${idx + 1}.${ext}`
 	document.body.appendChild(a)
 	a.click()
 	document.body.removeChild(a)
@@ -527,30 +743,63 @@ function closeZoom() {
 							</div>
 						</div>
 
-						<!-- 提示词 -->
+						<!-- 标准 OpenAI 字段：尺寸 / 质量 / 输出格式，留空不发送 -->
 						<div class="border-t border-gray-100 pt-4">
-							<label class="mb-2 block text-xs font-semibold text-gray-500">提示词</label>
-							<n-input v-model:value="prompt" type="textarea" :rows="4" placeholder="描述你想生成的图片..." />
-						</div>
-
-						<!-- 参考图（图生图/编辑） -->
-						<div class="border-t border-gray-100 pt-4">
-							<div class="mb-2 flex items-center justify-between gap-2">
-								<label class="text-xs font-semibold text-gray-500">参考图</label>
-								<span v-if="attachmentList.length" class="text-[11px] text-gray-400">{{ formatBytes(attachmentBytes) }}</span>
+							<div class="mb-2 flex items-center justify-between">
+								<label class="text-xs font-semibold text-gray-500">标准参数</label>
+								<span class="text-[11px] text-gray-400">留空不发送</span>
 							</div>
-							<AttachmentBar
-								:attachments="attachmentList"
-								:accept="acceptTypes"
-								:max="attachmentMax"
-								click-hint="点击放大预览 {name}"
-								@add="addAttachments"
-								@remove="removeAttachment"
-								@insert="previewAttachment"
-							/>
-							<p class="mt-1.5 text-[11px] leading-relaxed text-gray-400">
-								可选。随请求以 base64 发送（image 字段）用于图生图 / 图像编辑，需模型支持，不支持时将被上游忽略或报错
-							</p>
+							<div class="space-y-3">
+								<div>
+									<label class="mb-1.5 block text-xs font-medium text-gray-500">尺寸 size</label>
+									<BaseSelect v-model="size" :options="sizeOptions" />
+								</div>
+								<div>
+									<label class="mb-1.5 block text-xs font-medium text-gray-500">质量 quality</label>
+									<BaseSelect v-model="quality" :options="qualityOptions" />
+								</div>
+								<div>
+									<label class="mb-1.5 block text-xs font-medium text-gray-500">输出格式 output_format</label>
+									<BaseSelect v-model="outputFormat" :options="outputFormatOptions" />
+									<p class="mt-1 text-[11px] leading-relaxed text-gray-400">svg 矢量 / gif 动图为 gpt-image-2.6 起新增能力</p>
+								</div>
+								<div>
+									<label class="mb-1.5 block text-xs font-medium text-gray-500">规划深度 complexity</label>
+									<BaseSelect v-model="complexity" :options="complexityOptions" />
+									<p class="mt-1 text-[11px] leading-relaxed text-gray-400">gpt-image-2.6 新增：渲染前规划量，low 更快，high 适合复杂排版</p>
+								</div>
+							</div>
+
+							<!-- 格式联动配置：选 gif / svg 时展开对应配置项 -->
+							<div v-if="outputFormat === 'gif'" class="mt-3 rounded-xl border border-primary-100 bg-primary-50/40 p-3">
+								<div class="mb-2 flex items-center gap-1.5">
+									<Icon name="film" size="xs" class="text-primary-600" />
+									<span class="text-xs font-semibold text-gray-600">GIF 动图配置</span>
+									<span class="text-[11px] text-gray-400">仅 gif 输出生效</span>
+								</div>
+								<div class="space-y-2">
+									<div>
+										<label class="mb-1 block text-[11px] text-gray-500">帧数 frame_count</label>
+										<n-input-number v-model:value="gifFrameCount" :min="2" :max="16" :step="1" placeholder="默认 9" size="small" clearable class="w-full" />
+									</div>
+									<div>
+										<label class="mb-1 block text-[11px] text-gray-500">帧时长(ms) frame_duration_ms</label>
+										<n-input-number v-model:value="gifFrameDurationMs" :min="20" :max="2000" :step="10" placeholder="默认 200" size="small" clearable class="w-full" />
+									</div>
+								</div>
+								<p class="mt-2 text-[11px] leading-relaxed text-gray-400">
+									2–16 帧，每帧 20–2000ms（10ms 步进）；循环总时长 = 帧数 × 帧时长。提示词写明「末帧平滑回到首帧」可生成无缝循环
+								</p>
+							</div>
+							<div v-else-if="outputFormat === 'svg'" class="mt-3 rounded-xl border border-primary-100 bg-primary-50/40 p-3">
+								<div class="mb-1.5 flex items-center gap-1.5">
+									<Icon name="infoCircle" size="xs" class="text-primary-600" />
+									<span class="text-xs font-semibold text-gray-600">SVG 矢量输出</span>
+								</div>
+								<p class="text-[11px] leading-relaxed text-gray-500">
+									输出可二次编辑的矢量图形（路径 / 形状 / 颜色），适合图标、logo 与印刷；仅支持单图（n=1），不支持流式返回
+								</p>
+							</div>
 						</div>
 
 						<!-- 自定义参数 -->
@@ -562,7 +811,7 @@ function closeZoom() {
 								</div>
 								<div class="flex items-center gap-1">
 									<button
-										v-if="currentPreset && customParams.length > 0"
+										v-if="currentPreset"
 										class="rounded-md px-2 py-1 text-[11px] text-primary-600 transition-colors duration-150 hover:bg-primary-50"
 										@click="applyPreset"
 									>
@@ -578,15 +827,15 @@ function closeZoom() {
 								</div>
 							</div>
 
-							<!-- 空状态 -->
+						<!-- 空状态：点击直接添加一行空参数（预设由切模型/重置预设按钮负责，不再在这里触发） -->
 							<div
 								v-if="customParams.length === 0"
 								class="cursor-pointer rounded-xl border-2 border-dashed border-gray-200 py-6 text-center transition-colors duration-200 hover:border-primary-300 hover:bg-primary-50/30"
-								@click="currentPreset ? applyPreset() : applyDefaults()"
+								@click="addParam()"
 							>
 								<Icon name="plus" size="sm" class="mx-auto mb-2 text-gray-300" />
 								<p class="text-xs text-gray-400">
-									{{ currentPreset ? '点击应用 ' + currentPresetLabel + ' 预设' : '点击添加自定义参数' }}
+									点击添加自定义参数，透传给上游
 								</p>
 							</div>
 
@@ -636,124 +885,249 @@ function closeZoom() {
 				</div>
 			</div>
 
-			<!-- Right: 结果 -->
-			<div class="lg:min-h-0">
-				<div class="card flex min-h-[420px] flex-col overflow-hidden lg:h-full">
+			<!-- Right: 生成记录 + 输入区（对话式：提示词在下方输入，发送后入列并展示生成结果） -->
+			<div class="h-[62vh] lg:h-auto lg:min-h-0">
+				<div class="card flex h-full flex-col overflow-hidden">
 					<div class="flex shrink-0 items-center justify-between gap-3 border-b border-gray-100 px-5 py-3">
 						<div class="flex items-center gap-2">
 							<Icon name="photo" size="sm" class="text-primary-500" />
-							<h3 class="text-sm font-semibold text-gray-900">生成结果</h3>
+							<h3 class="text-sm font-semibold text-gray-900">生成记录</h3>
 						</div>
 						<span v-if="resultStatus" class="badge" :class="resultStatus.cls">{{ resultStatus.label }}</span>
 					</div>
 
-					<div class="min-h-0 flex-1 overflow-y-auto p-5">
-						<!-- 异步端点说明：轻量单行，不再用整块彩底卡片占高度 -->
-						<div v-if="effectiveMode === 'async'" class="mb-4 flex items-start gap-2 rounded-lg bg-gray-50 px-3 py-2">
-							<Icon name="infoCircle" size="xs" class="mt-0.5 shrink-0 text-gray-400" />
-							<p class="text-[11px] leading-relaxed text-gray-500">
-								异步任务模型：提交至 <code class="code text-[10px]">POST /v1/images/generations/async</code>
-								拿到 task_id 后轮询 <code class="code text-[10px]">GET /v1/images/generations/async/{task_id}</code> 取图
-							</p>
-						</div>
-
-						<!-- 优雅降级提示 -->
-						<div v-if="fallbackNotice" class="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3">
-							<div class="flex items-center gap-2 text-amber-700">
-								<Icon name="infoCircle" size="sm" class="flex-shrink-0" />
-								<span class="text-xs">{{ fallbackNotice }}</span>
-							</div>
-						</div>
-
-						<!-- 错误提示 -->
-						<div
-							v-if="errorMessage"
-							class="mb-4 rounded-xl border border-red-200 bg-red-50 p-4"
-						>
-							<div class="flex items-center gap-2 text-red-700">
-								<Icon name="xCircle" size="sm" />
-								<span class="text-sm font-medium">生成失败</span>
-							</div>
-							<p class="mt-2 text-sm text-red-600">{{ errorMessage }}</p>
-						</div>
-
+					<!-- 消息区 -->
+					<div ref="messagesRef" class="min-h-0 flex-1 overflow-y-auto px-5 py-5 lg:px-6">
 						<!-- 空态：图标磁贴 + 说明，给首屏一个视觉锚点 -->
-						<div v-if="images.length === 0 && !sending && !errorMessage && !asyncTask" class="flex h-full min-h-[320px] flex-col items-center justify-center px-4 text-center">
+						<div v-if="messages.length === 0" class="flex min-h-full flex-col items-center justify-center px-4 text-center">
 							<div class="mb-5 flex h-16 w-16 items-center justify-center rounded-3xl bg-gradient-to-br from-cyan-400 via-primary-500 to-emerald-500 text-white shadow-glow">
 								<Icon name="photo" size="lg" />
 							</div>
-							<h3 class="text-lg font-semibold text-gray-900">等待生成</h3>
+							<h3 class="text-lg font-semibold text-gray-900">开始创作</h3>
 							<p class="mt-1.5 max-w-sm text-sm text-gray-500">
 								<template v-if="selectedModel">
-									当前模型 <span class="font-medium text-gray-700">{{ selectedModelName }}</span>，填写提示词后点击「生成图片」
+									当前模型 <span class="font-medium text-gray-700">{{ selectedModelName }}</span>，在下方描述想生成的图片
 								</template>
 								<template v-else>请先在左侧选择一个图片模型</template>
 							</p>
-							<p class="mt-6 inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] text-amber-700">
+
+							<!-- 快捷提示词：点一下即填入输入框 -->
+							<div v-if="selectedModel" class="mt-6 flex max-w-lg flex-wrap justify-center gap-2">
+								<button
+									v-for="p in quickPrompts"
+									:key="p"
+									class="rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-600 transition-all duration-150 hover:-translate-y-0.5 hover:border-primary-300 hover:text-primary-600 hover:shadow-sm"
+									@click="prompt = p; promptInput?.focus()"
+								>
+									{{ p }}
+								</button>
+							</div>
+
+							<p class="mt-7 inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] text-amber-700">
 								<Icon name="exclamationTriangle" size="xs" />
 								生成将真实调用模型并产生费用
 							</p>
 						</div>
 
-						<!-- 提交中 / 同步生成中：卡片式加载占位 -->
-						<GenerationProgressCard
-							v-if="sending"
-							kind="image"
-							:label="effectiveMode === 'async' ? '正在提交生成任务...' : '图片生成中...'"
-							:since="genStartAt"
-						/>
+						<!-- 消息列表 -->
+						<div v-else class="space-y-5">
+							<template v-for="msg in messages" :key="msg.id">
+								<!-- 提示词（右对齐，附参考图缩略） -->
+								<div v-if="msg.role === 'user'" class="flex justify-end">
+									<div class="max-w-[80%] space-y-1.5">
+										<div v-if="msg.refPreviews?.length" class="flex flex-wrap justify-end gap-1.5">
+											<img
+												v-for="(p, i) in msg.refPreviews"
+												:key="i"
+												:src="p.url"
+												class="h-20 w-20 cursor-zoom-in overflow-hidden rounded-xl border border-primary-200 object-cover"
+												:title="p.name"
+												alt=""
+												@click="zoomIn(p.url)"
+											/>
+										</div>
+										<div class="rounded-2xl rounded-tr-md bg-gradient-to-br from-primary-500 to-primary-600 px-4 py-3 text-white shadow-sm shadow-primary-500/20">
+											<p class="text-sm whitespace-pre-wrap">{{ msg.text }}</p>
+										</div>
+									</div>
+								</div>
 
-						<!-- 异步任务进行中：卡片式进度占位（成功由下方图片区接管） -->
-						<GenerationProgressCard
-							v-else-if="asyncTask && asyncTask.status !== 'SUCCESS' && asyncTask.status !== 'FAILURE'"
-							kind="image"
-							:progress="asyncTask.progress"
-							:label="statusLabel[asyncTask.status] || asyncTask.status"
-							:sublabel="asyncTask.id ? 'task_id: ' + asyncTask.id : ''"
-							:since="genStartAt"
-						/>
+								<!-- 生成结果（左对齐） -->
+								<div v-else class="flex max-w-[85%] gap-3">
+									<div class="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary-400 to-primary-600 text-white shadow-sm shadow-primary-500/25">
+										<Icon name="photo" size="sm" />
+									</div>
+									<div class="min-w-0 flex-1 space-y-2">
+										<!-- 异步降级为同步的轻提示 -->
+										<div v-if="msg.fallbackNotice" class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+											{{ msg.fallbackNotice }}
+										</div>
 
-						<!-- 任务失败 -->
-						<div v-if="asyncTask && asyncTask.status === 'FAILURE'" class="rounded-xl border border-red-200 bg-red-50 p-4">
-							<div class="flex items-center gap-2 text-red-700">
-								<Icon name="xCircle" size="sm" />
-								<span class="text-sm font-medium">生成失败</span>
-							</div>
-							<p v-if="asyncTask.error" class="mt-2 text-sm text-red-600">{{ asyncTask.error }}</p>
+										<!-- 进行中：提交中 / 轮询中 -->
+										<GenerationProgressCard
+											v-if="msg.status === 'generating' || msg.status === 'polling'"
+											kind="image"
+											:progress="msg.progress"
+											:label="msg.status === 'generating'
+												? (msg.mode === 'async' ? '正在提交生成任务...' : '图片生成中...')
+												: (statusLabel[msg.taskStatus || ''] || msg.taskStatus || '生成中')"
+											:sublabel="msg.taskId ? 'task_id: ' + msg.taskId : ''"
+											:since="msg.startAt"
+										/>
+
+										<!-- 失败：错误卡 + 重新生成 -->
+										<div v-else-if="msg.status === 'failed'" class="rounded-xl border border-red-200 bg-red-50 p-4">
+											<div class="flex items-center gap-2 text-red-700">
+												<Icon name="xCircle" size="sm" />
+												<span class="text-sm font-medium">生成失败</span>
+											</div>
+											<p v-if="msg.error" class="mt-2 break-all text-sm text-red-600">{{ msg.error }}</p>
+											<button
+												class="mt-3 inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-2.5 py-1 text-xs font-medium text-red-600 transition-colors duration-150 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+												:disabled="sending || polling"
+												@click="regenerate(msg)"
+											>
+												<Icon name="refresh" size="xs" />
+												重新生成
+											</button>
+										</div>
+
+										<!-- 查询超时：任务可能仍在服务端执行 -->
+										<div v-else-if="msg.status === 'timeout'" class="rounded-xl border border-amber-200 bg-amber-50 p-4">
+											<div class="flex items-center gap-2 text-amber-700">
+												<Icon name="exclamationTriangle" size="sm" />
+												<span class="text-sm font-medium">查询超时</span>
+											</div>
+											<p class="mt-2 text-sm text-amber-600">已达轮询上限（约 5 分钟）自动停止，任务可能仍在服务端执行</p>
+											<div class="mt-3 flex items-center gap-2">
+												<button
+													class="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-white px-2.5 py-1 text-xs font-medium text-amber-700 transition-colors duration-150 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+													:disabled="sending || polling"
+													@click="resumePolling(msg)"
+												>
+													<Icon name="refresh" size="xs" />
+													继续查询
+												</button>
+												<button
+													class="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-600 transition-colors duration-150 hover:border-primary-300 hover:text-primary-600 disabled:cursor-not-allowed disabled:opacity-50"
+													:disabled="sending || polling"
+													@click="regenerate(msg)"
+												>
+													<Icon name="photo" size="xs" />
+													重新生成
+												</button>
+											</div>
+										</div>
+
+										<!-- 成功：图片网格 -->
+										<template v-else-if="msg.status === 'success'">
+											<div v-if="msg.images?.length" class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+												<div v-for="(img, idx) in msg.images" :key="idx" class="group relative overflow-hidden rounded-xl border border-gray-200 bg-gray-50">
+													<img :src="imageSrc(img)" class="w-full cursor-zoom-in" alt="Generated image" @click="openZoom(img)" />
+													<div class="absolute right-2 top-2 flex items-center gap-2 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+														<button
+															class="btn btn-sm border border-gray-200 bg-white/90 shadow-sm backdrop-blur-sm"
+															title="放大查看"
+															@click="openZoom(img)"
+														>
+															<Icon name="expand" size="sm" />
+															放大
+														</button>
+														<button
+															class="btn btn-sm border border-gray-200 bg-white/90 shadow-sm backdrop-blur-sm"
+															title="下载图片"
+															@click="downloadImage(img, idx)"
+														>
+															<Icon name="arrowDown" size="sm" />
+															下载
+														</button>
+													</div>
+													<p v-if="img.revised_prompt" class="border-t border-gray-100 bg-white p-3 text-xs text-gray-500">{{ img.revised_prompt }}</p>
+												</div>
+											</div>
+											<p v-else class="text-sm text-gray-400">(无图片返回)</p>
+											<!-- 用量 + 重新生成 -->
+											<div class="flex items-center justify-between gap-3">
+												<div v-if="msg.totalTokens" class="flex items-center gap-4 text-xs text-gray-500">
+													<span class="flex items-center gap-1.5">Prompt <span class="font-medium text-gray-700">{{ msg.promptTokens }}</span></span>
+													<span class="flex items-center gap-1.5">Total <span class="font-medium text-gray-700">{{ msg.totalTokens }}</span></span>
+												</div>
+												<button class="msg-action" :disabled="sending || polling" @click="regenerate(msg)">
+													<Icon name="refresh" size="xs" />
+													重新生成
+												</button>
+											</div>
+										</template>
+									</div>
+								</div>
+							</template>
 						</div>
+					</div>
 
-						<div v-if="images.length > 0" class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-							<div v-for="(img, idx) in images" :key="idx" class="group relative overflow-hidden rounded-xl border border-gray-200 bg-gray-50">
-								<img :src="imageSrc(img)" class="w-full cursor-zoom-in" alt="Generated image" @click="openZoom(img)" />
-								<div class="absolute right-2 top-2 flex items-center gap-2 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+					<!-- 输入区：参考图 + 提示词 + 操作行（与对话 Tab 同构） -->
+					<div class="shrink-0 border-t border-gray-100 p-3 lg:p-4">
+						<div
+							class="input-shell"
+							:class="{ 'input-shell-dragging': dragging }"
+							@dragover.prevent="dragging = true"
+							@dragleave="dragging = false"
+							@drop.prevent="onDropFiles"
+						>
+							<AttachmentBar
+								ref="attachmentBar"
+								variant="bare"
+								:class="attachmentList.length ? 'mb-2' : ''"
+								:attachments="attachmentList"
+								:accept="acceptTypes"
+								:max="attachmentMax"
+								click-hint="点击放大预览 {name}"
+								@add="addAttachments"
+								@remove="removeAttachment"
+								@insert="previewAttachment"
+							/>
+
+							<PromptInput
+								ref="promptInput"
+								v-model="prompt"
+								bare
+								:mentions="false"
+								:attachments="attachmentList"
+								placeholder="描述你想生成的图片，可上传参考图用于图生图 / 编辑..."
+								@submit="generate"
+								@paste="addAttachments"
+							/>
+
+							<!-- 操作行 -->
+							<div class="mt-1.5 flex items-center justify-between gap-3">
+								<div class="flex min-w-0 items-center gap-1">
 									<button
-										class="btn btn-sm border border-gray-200 bg-white/90 shadow-sm backdrop-blur-sm"
-										title="放大查看"
-										@click="openZoom(img)"
+										class="input-tool"
+										title="添加参考图（图生图 / 图像编辑，也可拖拽到此处或直接粘贴）"
+										@click="openFilePicker"
 									>
-										<Icon name="expand" size="sm" />
-										放大
+										<Icon name="paperclip" size="xs" />
+										参考图
 									</button>
 									<button
-										class="btn btn-sm border border-gray-200 bg-white/90 shadow-sm backdrop-blur-sm"
-										title="下载图片"
-										@click="downloadImage(img, idx)"
+										v-if="attachmentList.length"
+										class="input-tool"
+										title="清空已选参考图"
+										@click="clearAllAttachments"
 									>
-										<Icon name="arrowDown" size="sm" />
-										下载
+										<Icon name="x" size="xs" />
+										清空
+									</button>
+									<span class="ml-1 hidden truncate text-[11px] text-gray-400 sm:inline">
+										Enter 生成 · Shift + Enter 换行<template v-if="attachmentList.length"> · 参考图 {{ formatBytes(attachmentBytes) }}</template>
+									</span>
+								</div>
+								<div class="flex shrink-0 items-center gap-2">
+									<button class="btn btn-primary btn-sm px-4" :disabled="sending || polling || !prompt.trim()" @click="generate">
+										<Icon name="photo" size="xs" />
+										{{ sending ? (effectiveMode === 'async' ? '提交中...' : '生成中...') : polling ? '生成中...' : '生成图片' }}
 									</button>
 								</div>
-								<p v-if="img.revised_prompt" class="border-t border-gray-100 bg-white p-3 text-xs text-gray-500">{{ img.revised_prompt }}</p>
 							</div>
-						</div>
-
-						<!-- 用量条：与对话 Tab 保持同一排版 -->
-						<div v-if="tokenUsage.totalTokens > 0" class="mt-4 flex items-center justify-between gap-3 border-t border-gray-100 pt-3 text-xs text-gray-500">
-							<div class="flex items-center gap-4">
-								<span class="flex items-center gap-1.5">Prompt <span class="font-medium text-gray-700">{{ tokenUsage.promptTokens }}</span></span>
-								<span class="flex items-center gap-1.5">Total <span class="font-medium text-gray-700">{{ tokenUsage.totalTokens }}</span></span>
-							</div>
-							<span v-if="tokenUsage.cost" class="font-medium text-amber-600">{{ tokenUsage.cost }}</span>
 						</div>
 					</div>
 				</div>
@@ -783,3 +1157,25 @@ function closeZoom() {
 		</Transition>
 	</Teleport>
 </template>
+
+<style scoped>
+/* ── 消息操作小按钮：重新生成（与对话 Tab 同名同样式） ── */
+.msg-action {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.25rem;
+	padding: 0.25rem 0.5rem;
+	border-radius: 0.5rem;
+	font-size: 11px;
+	color: #6b7280;
+	transition: color 150ms ease, background-color 150ms ease;
+}
+.msg-action:hover {
+	color: #0d9488;
+	background: #f0fdfa;
+}
+.msg-action:disabled {
+	cursor: not-allowed;
+	opacity: 0.5;
+}
+</style>

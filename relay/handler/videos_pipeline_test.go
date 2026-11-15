@@ -2,7 +2,9 @@ package handler
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/shopspring/decimal"
 
+	"github.com/qianfree/team-api/internal/jsplugin"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
 )
@@ -23,7 +26,7 @@ type stubVideosBillingProvider struct {
 	common.TaskBillingProvider
 }
 
-func (s *stubVideosBillingProvider) EstimateTaskCost(context.Context, int64, string, map[string]any, []byte) (decimal.Decimal, error) {
+func (s *stubVideosBillingProvider) EstimateTaskCost(context.Context, int64, string, map[string]any, []byte, http.Header) (decimal.Decimal, error) {
 	return decimal.NewFromFloat(0.1), nil
 }
 
@@ -64,6 +67,62 @@ func (s *stubVideosSubmitProvider) GetTaskByPublicIDAndUser(_ context.Context, p
 		return s.created, nil
 	}
 	return nil, nil
+}
+
+// TestHandleTaskSubmit_JSPluginModelRejectsStandardEntry JS 插件模型经标准任务端点
+// （/v1/videos 等）提交且插件未声明 standardVideos：应在平台判定阶段拒绝并在错误
+// 信息中指明插件原生路由入口与声明指引，而非走到 jsbridge 才报晦涩的 dispatcher
+// 错误。渠道显式绑定 plugin_key（覆盖按模型解析）的场景同口径。
+func TestHandleTaskSubmit_JSPluginModelRejectsStandardEntry(t *testing.T) {
+	// 渠道绑定的插件未声明 standardVideos → 不支持标准端点
+	cleanup, err := jsplugin.PublishForTest(`export const meta = {
+  apiVersion: 1, key: "kling-pro", name: "KlingPro", version: "1.0.0",
+  models: ["kling-v2-master"], fetchMode: "per_task",
+  routes: [{ method: "POST", path: "/submit", type: "submit" }],
+};
+export function decodeRequest(ctx) {
+  return { kind: "submit", model: "kling-v2-master", requestBody: ctx.body || {} };
+}
+export function buildSubmitRequest() { return { url: "/s", method: "POST", body: {} }; }
+export function parseSubmitResponse() { return { taskId: "t" }; }
+export function buildQueryRequest() { return { url: "/q", method: "GET" }; }
+export function parseQueryResponse(ctx) {
+  return { items: [{ taskId: (ctx.tasks || [])[0].taskId, done: false }] };
+}`)
+	if err != nil {
+		t.Fatalf("发布插件失败: %v", err)
+	}
+	t.Cleanup(cleanup)
+
+	rec := httptest.NewRecorder()
+	rc := &TaskRelayContext{
+		TenantID:  1,
+		UserID:    2,
+		ApiKeyID:  3,
+		RequestID: "req_js_reject",
+		Writer:    rec,
+	}
+	channelMeta := &common.ChannelMeta{
+		ChannelID:         21,
+		ChannelType:       int(constant.ProviderJSTask),
+		ChannelName:       "mock-js-plugin",
+		BaseURL:           "https://upstream.example.com",
+		ApiKey:            "sk-test",
+		UpstreamModelName: "kling-v2-master",
+	}
+	// 渠道显式绑定插件（跳过按模型解析分支）
+	channelMeta.Settings.PluginKey = "kling-pro"
+
+	body, _ := json.Marshal(map[string]any{"model": "kling-v2-master", "prompt": "a cat"})
+	HandleTaskSubmit(context.Background(), body, "/v1/videos", http.Header{}, rc,
+		&stubVideosSubmitProvider{}, &stubVideosBillingProvider{}, channelMeta)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "/pjs/kling-pro") || !strings.Contains(rec.Body.String(), "standardVideos") {
+		t.Fatalf("error should point to native route /pjs/kling-pro and standardVideos hint, got: %s", rec.Body.String())
+	}
 }
 
 func TestHandleTaskSubmit_OpenAIVideosProtocol_FullPipeline(t *testing.T) {
@@ -201,14 +260,16 @@ func TestHandleTaskSubmit_OpenAIVideosProtocol_Seedance(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	// multipart 创建请求：图生视频（input_reference 文件）+ 高清横屏档
+	// multipart 创建请求：图生视频（首帧经 references[].first_frame 内联 data URL）+ 高清横屏档
 	pngBytes := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}
+	firstFrame := "data:image/png;base64," + base64.StdEncoding.EncodeToString(pngBytes)
 	mBody, ct := buildMultipartVideosBody(t, map[string]string{
-		"model":   "doubao-seedance-2-0-260128",
-		"prompt":  "小猫对着镜头打哈欠",
-		"seconds": "12",
-		"size":    "1792x1024",
-	}, "input_reference", "ref.png", pngBytes)
+		"model":      "doubao-seedance-2-0-260128",
+		"prompt":     "小猫对着镜头打哈欠",
+		"seconds":    "12",
+		"size":       "1792x1024",
+		"references": fmt.Sprintf(`[{"role":"first_frame","url":"%s"}]`, firstFrame),
+	}, "", "", nil)
 	req, taskErr := ParseVideosCreateRequest(mBody, ct)
 	if taskErr != nil {
 		t.Fatalf("parse: %+v", taskErr)

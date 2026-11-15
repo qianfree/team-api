@@ -16,6 +16,8 @@ import (
 	"github.com/qianfree/team-api/internal/model/entity"
 	"github.com/qianfree/team-api/internal/utility/crypto"
 	"github.com/qianfree/team-api/relay/common"
+	"github.com/qianfree/team-api/relay/constant"
+	"github.com/qianfree/team-api/relay/taskchannel"
 )
 
 // AsyncProvider 异步任务数据持久化实现
@@ -344,6 +346,32 @@ func (p *AsyncProvider) GetChannelByID(ctx context.Context, channelID int64) (*c
 		ApiKey:   apiKey,
 		Settings: row.Settings,
 	}, nil
+}
+
+// RecoverTaskUsage 从任务终态快照恢复用量摘要（TaskUsageRecoverer 可选能力，查询端点展示用）。
+// 按需解析、不落库、不参与计费——任务行 Data 即终态上游原始查询响应，与结算重试网
+// recoverTerminalFacts 同一解析口径；未显式声明 UsageSummary 的适配器（如 JS 插件）
+// 回退从 MaterialUsage + tokens 合成。历史已完成任务同样可回放
+func (p *AsyncProvider) RecoverTaskUsage(ctx context.Context, task *common.AsyncTask) *common.TaskUsageSummary {
+	if task == nil || task.Status != string(common.TaskStatusSuccess) || len(task.Data) == 0 || task.ChannelID <= 0 {
+		return nil
+	}
+	ch, err := p.GetChannelByID(ctx, task.ChannelID)
+	if err != nil || ch == nil {
+		return nil
+	}
+	adaptor, err := taskchannel.GetAdaptor(constant.ProviderType(ch.Type))
+	if err != nil {
+		return nil
+	}
+	info, err := adaptor.ParseTaskResult(task.Data)
+	if err != nil || info == nil {
+		return nil
+	}
+	if info.UsageSummary != nil {
+		return info.UsageSummary
+	}
+	return common.SynthesizeUsageSummary(info)
 }
 
 // getChannelApiKey 从 chn_channel_keys 获取并解密渠道 API Key

@@ -25,11 +25,13 @@ import (
 	tenantController "github.com/qianfree/team-api/internal/controller/tenant"
 	"github.com/qianfree/team-api/internal/dispatchadapter"
 	"github.com/qianfree/team-api/internal/logic/admin"
+	"github.com/qianfree/team-api/internal/logic/aianalysis"
 	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/monitor"
 	relayLogic "github.com/qianfree/team-api/internal/logic/relay"
 	"github.com/qianfree/team-api/internal/logic/task"
+	"github.com/qianfree/team-api/internal/logic/task/artifact"
 	"github.com/qianfree/team-api/internal/logic/tenant"
 	"github.com/qianfree/team-api/internal/logic/update"
 	"github.com/qianfree/team-api/internal/middleware"
@@ -42,6 +44,7 @@ import (
 	"github.com/qianfree/team-api/internal/handler/public"
 	"github.com/qianfree/team-api/internal/handler/relay"
 	setupHandler "github.com/qianfree/team-api/internal/handler/setup"
+	"github.com/qianfree/team-api/internal/jsplugin"
 	"github.com/qianfree/team-api/internal/plugin"
 	"github.com/qianfree/team-api/web"
 )
@@ -148,6 +151,10 @@ var (
 				g.Log().Infof(ctx, "pprof listening on 127.0.0.1:%d", port)
 			}
 
+			// AI请求分析：清理上次运行残留的 pending/running 任务
+			//（任务队列不跨重启，残留任务若无清理会永远挂起）
+			aianalysis.RecoverStaleJobs(ctx)
+
 			// Register cron jobs
 			common.InitCronScheduler()
 			cs := common.GetCronScheduler()
@@ -177,6 +184,16 @@ var (
 			}
 			if pluginErr := plugin.Bootstrap(ctx, pluginApp); pluginErr != nil {
 				g.Log().Errorf(ctx, "plugin bootstrap: %v", pluginErr)
+			}
+
+			// JS 任务插件基座：装载已激活版本、构建路由 generation
+			//（与 Go 插件框架并存，体系架构见 docs/JS插件体系架构与调用链分析.md）
+			if jsErr := jsplugin.DefaultRegistry().Bootstrap(ctx); jsErr != nil {
+				g.Log().Errorf(ctx, "jsplugin bootstrap: %v", jsErr)
+			} else {
+				// 跨实例失效订阅：其他实例的插件启停/换版/配置变更经 pub/sub 同步到本实例
+				//（Redis 未配置时不启动，单实例部署无广播需求）
+				jsplugin.DefaultRegistry().StartInvalidateSubscriber()
 			}
 
 			// Global middleware
@@ -292,6 +309,15 @@ var (
 				group.GET("/{id}/serve", adminHandler.HandleFileServe)
 			})
 
+			// JS 插件品牌图标：二进制直写，绕过 JSON 包装
+			//（rbac 前缀规则 GET /api/admin/js-plugins/ → plugin:upload 已覆盖本路径）；
+			// AI 助手对话：SSE 流式直写，同样绕过 JSON 包装（rbac: POST /ai-assistant/chat → ai_assistant:use）
+			s.Group("/api/admin", func(group *ghttp.RouterGroup) {
+				group.Middleware(middleware.AdminAuth, middleware.AdminPermissionGuard, middleware.OperationLog)
+				group.GET("/js-plugins/{key}/icon", adminHandler.HandleJSPluginIcon)
+				group.POST("/ai-assistant/chat", adminHandler.HandleAiAssistantChat)
+			})
+
 			// Open Platform API — HMAC-SHA256 authentication
 			// 中间件与 /api/tenant 对齐：演示模式同样要拦住写操作（否则演示部署可经开放平台
 			// 真实改数据），维护模式头同样要下发，幂等同样要生效 —— 开放平台是对外的、
@@ -306,6 +332,10 @@ var (
 
 			// AI proxy endpoints (OpenAI compatible, /v1/xxx)
 			registerRelayRoutes(s)
+
+			// JS 任务插件分发器（/pjs/{key}/...）：静态通配路由 + generation 匹配，
+			// 必须在 relay 路由与前端 SPA 之间注册，永不触碰 gf 路由表
+			relay.RegisterJSDispatcher(s)
 
 			// Register plugin routes
 			plugin.RegisterAllRoutes(ctx, s)
@@ -326,6 +356,9 @@ var (
 			// Start sync-image async worker pool (wraps synchronous image providers as async tasks)
 			task.StartSyncImageWorkers(ctx)
 
+			// JS 插件产物转存流水线（worker 池 + sweep 重试 cron）
+			artifact.Start(ctx)
+
 			// Start webhook dispatcher (event-driven delivery)
 			tenant.InitWebhookDispatcher(ctx)
 
@@ -343,6 +376,10 @@ var (
 			//    正常退出时是空操作。必须在所有任务池/Writer 排空之后执行。
 			defer update.MaybeExecRestart(ctx)
 			defer plugin.Shutdown(ctx)
+			// JS 任务插件：关闭全部插件实例池（在 Go 插件框架关闭之前，顺序无依赖）
+			defer jsplugin.DefaultRegistry().Shutdown()
+			// AI请求分析：停掉任务执行器并等待在跑任务收尾（未开始的任务保持 pending，下次启动标记失败）
+			defer aianalysis.StopJobRunner()
 			defer dispatchadapter.Shutdown()
 			defer tenant.ShutdownWebhookDispatcher()
 			defer common.CloseAuditLogWriter()
@@ -351,6 +388,7 @@ var (
 			defer response.CloseErrorLogWriter()
 			defer task.StopAsyncPolling()
 			defer task.StopSyncImageWorkers()
+			defer artifact.Stop()
 
 			s.Run()
 			return nil
@@ -434,6 +472,7 @@ func syncGlobalRelaySettings(ctx context.Context) {
 // 新增 cron 任务时在此追加一项即可；任务名（用于分布式锁 key）需保持唯一且稳定。
 func registerCronJobs(cs *common.CronScheduler) {
 	watchChannelAutoTestInterval(cs)
+	watchAiAnalysisPatrolSchedule(cs)
 	cs.Register("ops_system_collector", "系统指标采集", "* * * * *", func(ctx context.Context) error {
 		return monitor.CollectSystemMetrics(ctx)
 	})
@@ -514,6 +553,29 @@ func registerCronJobs(cs *common.CronScheduler) {
 	cs.Register("order_expiration", "订单过期处理", "*/5 * * * *", func(ctx context.Context) error {
 		return task.ExpirePendingOrders(ctx)
 	})
+	// AI请求分析：巡查计划按配置注册（PatrolCronExpr 读 sys_options，缺省回落默认表达式），
+	// 巡查开关由 handler 内按配置静默跳过
+	cs.Register(aianalysis.PatrolJobName, "AI请求分析定时巡查", aianalysis.PatrolCronExpr(gctx.New()), func(ctx context.Context) error {
+		aianalysis.RunPatrol(ctx)
+		return nil
+	})
+	cs.Register(aianalysis.RetentionJobName, "AI请求分析报告保留期清理", aianalysis.RetentionCleanupCron, func(ctx context.Context) error {
+		aianalysis.RunRetentionCleanup(ctx)
+		return nil
+	})
+}
+
+// watchAiAnalysisPatrolSchedule 巡查计划配置变更时重排 cron，无需重启。
+// 回调经 Redis pub/sub 触发，多实例会各自重排自己的调度器。
+func watchAiAnalysisPatrolSchedule(cs *common.CronScheduler) {
+	common.OnSettingsChanged(func(ctx context.Context, key string) {
+		if key != "ai_analysis_patrol_cron" {
+			return
+		}
+		if err := cs.Reschedule(ctx, aianalysis.PatrolJobName, aianalysis.PatrolCronExpr(ctx)); err != nil {
+			g.Log().Errorf(ctx, "AI请求分析巡查计划重排失败，沿用原计划: %v", err)
+		}
+	})
 }
 
 // registerPaymentCallbacks registers payment callback routes.
@@ -565,6 +627,14 @@ func registerRelayRoutes(server *ghttp.Server) {
 		group.GET("/videos/{video_id}", relay.HandleVideoRetrieve)
 		group.GET("/videos/{video_id}/content", relay.HandleVideoContent)
 		group.DELETE("/videos/{video_id}", relay.HandleVideoDelete)
+	})
+
+	// 异步任务统一内容链接：签名直链免 API Key（链接即授权，供浏览器 / <video> / 下游拉取），
+	// 不挂 ApiKeyAuth；产物已转存的从对象存储供给，否则平台实时回源
+	server.Group("/v1", func(group *ghttp.RouterGroup) {
+		group.Middleware(middleware.ApiMaintenance, middleware.ResourceGuard, middleware.MaintenanceMode)
+		group.GET("/tasks/{task_id}/content", relay.HandleTaskContent)
+		group.GET("/tasks/{task_id}/content/{artifact_key}", relay.HandleTaskContent)
 	})
 
 	// Gemini 兼容路由（/v1beta/models/{model}:generateContent）

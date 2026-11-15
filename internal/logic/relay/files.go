@@ -488,3 +488,60 @@ func ResolveRelayFileURLs(ctx context.Context, tenantID int64, extIDs []string) 
 	}
 	return urls, nil
 }
+
+// ResolvedRelayFile file_id 解析结果：签名 URL + 上传时记录的 MIME 类型。
+type ResolvedRelayFile struct {
+	URL      string
+	MimeType string
+}
+
+// ResolveRelayFilesForTask 按租户解析 file_id（视频任务参考素材用）：返回签名 URL 与 MIME，
+// 供调用方按用途校验类别。不存在 / 跨租户的 ID 不出现在返回 map 中（由调用方报 not found），
+// error 仅表示查询或存储故障。签名有效期取 TaskReferenceURLTTL——视频任务上游可能排队
+// 后才拉取素材，即时拉取口径的 relay_files_url_ttl_minutes 不够用。
+func ResolveRelayFilesForTask(ctx context.Context, tenantID int64, extIDs []string) (map[string]ResolvedRelayFile, error) {
+	out := make(map[string]ResolvedRelayFile, len(extIDs))
+	if len(extIDs) == 0 {
+		return out, nil
+	}
+	var records []*entity.FilFiles
+	if err := dao.FilFiles.Ctx(ctx).
+		Where("tenant_id", tenantID).
+		WhereIn("ext_id", extIDs).
+		WhereNotNull("ext_id").
+		Scan(&records); err != nil {
+		g.Log().Warningf(ctx, "[RelayFiles] resolve task refs query failed: %v", err)
+		return nil, gerror.New("failed to resolve file references")
+	}
+	if len(records) == 0 {
+		return out, nil
+	}
+	svc, err := cloudFileService(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ttl := TaskReferenceURLTTL(ctx)
+	for _, record := range records {
+		url, err := svc.Provider().PresignedURL(ctx, record.StoragePath, ttl)
+		if err != nil {
+			g.Log().Warningf(ctx, "[RelayFiles] presign task ref %s failed: %v", record.ExtId, err)
+			return nil, gerror.New("failed to resolve file references")
+		}
+		out[record.ExtId] = ResolvedRelayFile{URL: url, MimeType: record.MimeType}
+	}
+	return out, nil
+}
+
+// TaskReferenceURLTTL 视频任务参考素材签名有效期：max(relay_files_url_ttl_minutes,
+// task_reference_url_ttl_minutes)，后者默认 1440 分钟（上游排队后延迟拉取素材的余量）。
+func TaskReferenceURLTTL(ctx context.Context) time.Duration {
+	minutes := common.Config().GetInt(ctx, "task_reference_url_ttl_minutes")
+	if minutes <= 0 {
+		minutes = 1440
+	}
+	ttl := time.Duration(minutes) * time.Minute
+	if base := relayFileURLTTL(ctx); base > ttl {
+		return base
+	}
+	return ttl
+}

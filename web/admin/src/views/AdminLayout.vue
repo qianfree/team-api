@@ -39,9 +39,11 @@ import {
   IconBook,
   IconCheckCircleFill,
   IconInfoCircle,
+  IconRobot,
 } from '@arco-design/web-vue/es/icon'
 import { useAuthStore } from '@/stores/auth'
-import { ADMIN_ROLES } from '@/utils/permission'
+import { ADMIN_ROLES, hasPermission } from '@/utils/permission'
+import AiAssistantWindow from '@/components/aiassistant/AiAssistantWindow.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -54,6 +56,10 @@ const collapsedGroups = reactive<Record<string, boolean>>({})
 const isMobile = ref(false)
 const demoMode = ref(false)
 const demoMessage = ref('')
+
+// --- AI 助手（全局入口，右上角）---
+const aiAssistantVisible = ref(false)
+const canUseAiAssistant = hasPermission('ai_assistant:use')
 
 // --- Version & Update ---
 const appVersion = ref(__APP_VERSION__ || 'dev')
@@ -361,8 +367,7 @@ const ALL_MENU_GROUPS = [
       { name: 'AdminTenantLoginHistory', label: '租户登录历史', icon: IconClockCircle, perm: 'audit:view' },
       { name: 'AdminSessions', label: '会话管理', icon: IconClockCircle, perm: 'user:edit' },
       { name: 'AdminAudit', label: '操作日志', icon: IconFile, perm: 'audit:view' },
-      // ai-req-analyze 插件：权限点由插件声明（PermissionProvider），插件启用后角色配置界面出现该模块
-      { name: 'AdminAiReqAnalyze', label: 'AI请求分析', icon: IconSafe, perm: 'ai-req-analyze:view' },
+      { name: 'AdminAiAnalysis', label: 'AI请求分析', icon: IconSafe, perm: 'ai_analysis:view' },
     ],
   },
   {
@@ -405,6 +410,7 @@ const ALL_MENU_GROUPS = [
       { name: 'AdminUsers', label: '用户管理', icon: IconUserGroup, perm: 'user:view' },
       { name: 'AdminPermissions', label: '角色权限', icon: IconSafe, superOnly: true },
       { name: 'AdminPlugins', label: '插件管理', icon: IconCodeBlock, perm: 'system:plugin' },
+      { name: 'AdminJSPlugins', label: 'JS 任务插件', icon: IconCodeBlock, perm: 'plugin:upload' },
       { name: 'AdminSettings', label: '系统设置', icon: IconSettings, perm: 'system:view' },
       { name: 'AdminPaymentChannels', label: '支付渠道', icon: IconIdcard, perm: 'payment:view' },
       { name: 'AdminFiles', label: '文件管理', icon: IconStorage, perm: 'file:view' },
@@ -804,6 +810,18 @@ onUnmounted(() => {
             </Transition>
           </div>
 
+          <!-- AI 助手：全局浮动窗口（可拖动），ai_assistant:use 权限可见，点击切换开合 -->
+          <button
+            v-if="canUseAiAssistant"
+            type="button"
+            class="admin-header__bell-btn"
+            :class="{ 'admin-header__bell-btn--active': aiAssistantVisible }"
+            title="AI 助手"
+            @click.stop="aiAssistantVisible = !aiAssistantVisible"
+          >
+            <IconRobot class="admin-header__bell-icon" />
+          </button>
+
           <!-- 帮助文档：新窗口打开文档站 -->
           <a
             class="admin-header__docs-btn"
@@ -851,6 +869,9 @@ onUnmounted(() => {
         </router-view>
       </main>
     </div>
+
+    <!-- AI 助手全局浮动窗口 -->
+    <AiAssistantWindow v-model:visible="aiAssistantVisible" />
 
     <!-- Update Modal -->
     <a-modal

@@ -83,6 +83,20 @@ var predefinedPermissionGroups = []v1.PermissionGroup{
 		},
 	},
 	{
+		Name:  "ai_analysis",
+		Label: "AI请求分析",
+		Permissions: []string{
+			"ai_analysis:view", "ai_analysis:analyze", "ai_analysis:config",
+		},
+	},
+	{
+		Name:  "ai_assistant",
+		Label: "AI助手",
+		Permissions: []string{
+			"ai_assistant:use", "ai_assistant:config",
+		},
+	},
+	{
 		Name:  "operation",
 		Label: "内容运营",
 		Permissions: []string{
@@ -109,6 +123,8 @@ var predefinedPermissionGroups = []v1.PermissionGroup{
 		Permissions: []string{
 			// 注：在线自更新无权限点 —— 整个 update 域硬性限定超管（superAdminOnlyRules）
 			"system:view", "system:edit", "system:plugin",
+			// JS 任务插件两权分立：上传即执行，upload 默认只授超管；manage 控制启停/激活/删除
+			"plugin:upload", "plugin:manage",
 		},
 	},
 	{

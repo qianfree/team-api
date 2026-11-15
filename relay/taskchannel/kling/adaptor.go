@@ -38,30 +38,43 @@ func init() {
 
 // klingRequest 可灵视频生成请求（文生视频 + 图生视频共用）
 type klingRequest struct {
-	ModelName      string         `json:"model_name"`
-	Prompt         string         `json:"prompt,omitempty"`
-	NegativePrompt string         `json:"negative_prompt,omitempty"`
-	Mode           string         `json:"mode,omitempty"`
-	Duration       string         `json:"duration,omitempty"`
-	AspectRatio    string         `json:"aspect_ratio,omitempty"`
-	CfgScale       *float64       `json:"cfg_scale,omitempty"`
-	Image          string         `json:"image,omitempty"`
-	ImageTail      string         `json:"image_tail,omitempty"`
-	Sound          string         `json:"sound,omitempty"`
-	CameraControl  map[string]any `json:"camera_control,omitempty"`
+	ModelName      string              `json:"model_name"`
+	Prompt         string              `json:"prompt,omitempty"`
+	NegativePrompt string              `json:"negative_prompt,omitempty"`
+	Mode           string              `json:"mode,omitempty"`
+	Duration       string              `json:"duration,omitempty"`
+	AspectRatio    string              `json:"aspect_ratio,omitempty"`
+	CfgScale       *float64            `json:"cfg_scale,omitempty"`
+	Image          string              `json:"image,omitempty"`
+	ImageTail      string              `json:"image_tail,omitempty"`
+	Sound          string              `json:"sound,omitempty"`
+	CameraControl  map[string]any      `json:"camera_control,omitempty"`
+	WatermarkInfo  *klingWatermarkInfo `json:"watermark_info,omitempty"`
+}
+
+// klingWatermarkInfo 可灵水印开关（官方 watermark_info 对象）
+type klingWatermarkInfo struct {
+	Enabled bool `json:"enabled"`
 }
 
 // klingMetadata 可灵 metadata 参数结构体（用于 UnmarshalMetadata 映射）
 type klingMetadata struct {
-	NegativePrompt string         `json:"negative_prompt,omitempty"`
-	Mode           string         `json:"mode,omitempty"`
-	Duration       any            `json:"duration,omitempty"` // string 或 number
-	AspectRatio    string         `json:"aspect_ratio,omitempty"`
-	CfgScale       *float64       `json:"cfg_scale,omitempty"`
-	Image          string         `json:"image,omitempty"`
-	ImageTail      string         `json:"image_tail,omitempty"`
-	Sound          string         `json:"sound,omitempty"`
-	CameraControl  map[string]any `json:"camera_control,omitempty"`
+	NegativePrompt string   `json:"negative_prompt,omitempty"`
+	Mode           string   `json:"mode,omitempty"`
+	Duration       any      `json:"duration,omitempty"` // string 或 number
+	AspectRatio    string   `json:"aspect_ratio,omitempty"`
+	CfgScale       *float64 `json:"cfg_scale,omitempty"`
+	Image          string   `json:"image,omitempty"`
+	ImageTail      string   `json:"image_tail,omitempty"`
+	// LastFrame 通用词汇的尾帧（references[].role=last_frame 经归一层双写进 metadata.last_frame）。
+	// 与 image_tail 同语义：image_tail（可灵原生词汇）优先，last_frame 兜底——
+	// 此前只读 image_tail，标准端点的尾帧在可灵渠道被静默丢弃
+	LastFrame     string         `json:"last_frame,omitempty"`
+	Sound         string         `json:"sound,omitempty"`
+	CameraControl map[string]any `json:"camera_control,omitempty"`
+	// Watermark 通用收敛词汇的水印开关（/v1/video/generations 顶层 watermark 归一进
+	// metadata.watermark），映射到可灵原生 watermark_info.enabled
+	Watermark *bool `json:"watermark,omitempty"`
 }
 
 // klingSubmitResponse 可灵任务提交响应
@@ -113,7 +126,9 @@ func (a *KlingAdaptor) ValidateRequest(_ context.Context, _ *common.RelayInfo, b
 	if _, ok := req["model"]; !ok {
 		return &common.TaskError{StatusCode: http.StatusBadRequest, Message: "model is required"}
 	}
-	return nil
+	// 标准端点参考素材：本适配器只承接首帧（images[]/metadata.image 兼容字段），其余角色明确拒绝
+	model, _ := req["model"].(string)
+	return common.RejectUnsupportedReferences(common.ReferencesFromTaskBody(req), model, common.RefRoleFirstFrame)
 }
 
 func (a *KlingAdaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, body []byte) map[string]any {
@@ -123,18 +138,22 @@ func (a *KlingAdaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, b
 		return ratios
 	}
 
-	// 高清模式加价
-	if mode, ok := req["mode"].(string); ok && mode == "pro" {
-		ratios["quality"] = 3.5
-	}
-
-	// 时长加价：10s = 2x
+	// 档位/时长均从 metadata 读取（与 BuildRequestBody 同源）：mode 仅经 metadata.mode 传递，
+	// 顶层 mode 已随参数收敛废弃（网关 400）——此前读顶层会造成「按 pro 计费按 std 生成」的错位
 	metadata := taskchannel.ExtractMetadata(req)
 	var meta struct {
+		Mode     string  `json:"mode"`
 		Duration float64 `json:"duration"`
 	}
-	if taskchannel.UnmarshalMetadata(metadata, &meta) == nil && meta.Duration >= 10 {
-		ratios["duration_multiplier"] = 2.0
+	if taskchannel.UnmarshalMetadata(metadata, &meta) == nil {
+		// 高清模式加价：pro 档 3.5x
+		if meta.Mode == "pro" {
+			ratios["quality"] = 3.5
+		}
+		// 时长加价：10s = 2x
+		if meta.Duration >= 10 {
+			ratios["duration_multiplier"] = 2.0
+		}
 	}
 	if seconds, ok := req["seconds"].(string); ok {
 		if d, err := parseInt(seconds); err == nil && d >= 10 {
@@ -143,6 +162,11 @@ func (a *KlingAdaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, b
 	}
 
 	return ratios
+}
+
+// ExtraProtectedPaths extra 禁止改写的上游字段：模型名与计费规格（mode 档位、duration 时长）
+func (a *KlingAdaptor) ExtraProtectedPaths() []string {
+	return []string{"model_name", "mode", "duration"}
 }
 
 func (a *KlingAdaptor) AdjustBillingOnSubmit(_ *common.RelayInfo, _ []byte) map[string]any {
@@ -228,9 +252,17 @@ func (a *KlingAdaptor) BuildRequestBody(_ context.Context, info *common.RelayInf
 	kReq.AspectRatio = meta.AspectRatio
 	kReq.CfgScale = meta.CfgScale
 	kReq.Image = meta.Image
+	// 尾帧：可灵原生 image_tail 优先，通用 last_frame（references 双写）兜底
 	kReq.ImageTail = meta.ImageTail
+	if kReq.ImageTail == "" {
+		kReq.ImageTail = meta.LastFrame
+	}
 	kReq.Sound = meta.Sound
 	kReq.CameraControl = meta.CameraControl
+	// 水印开关：通用收敛词汇 metadata.watermark → 可灵原生 watermark_info.enabled
+	if meta.Watermark != nil {
+		kReq.WatermarkInfo = &klingWatermarkInfo{Enabled: *meta.Watermark}
+	}
 	// duration 支持 string 或 number 两种类型
 	switch v := meta.Duration.(type) {
 	case string:

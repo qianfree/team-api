@@ -57,10 +57,25 @@ const adminRoutes: RouteRecordRaw[] = [
         meta: { title: '插件管理', perm: 'system:plugin' },
       },
       {
+        // JS 任务插件（运行时上传的 plugin.js）：上传/版本/启停/配置/路由预览。
+        // 页面入口收敛在 plugin:upload（只读预览也归上传者）；启停/激活由后端 plugin:manage 校验
+        path: 'js-plugins',
+        name: 'AdminJSPlugins',
+        component: () => import('@/views/system/JSPluginsPage.vue'),
+        meta: { title: 'JS 任务插件', perm: 'plugin:upload' },
+      },
+      {
         path: 'models',
         name: 'AdminModels',
         component: () => import('@/views/ai/ModelsPage.vue'),
         meta: { title: '模型管理', perm: 'model:view' },
+      },
+      {
+        // 工具调用价格表（全局配置页）：入口在模型列表页右上角，不进侧边菜单
+        path: 'models/tool-pricing',
+        name: 'AdminModelToolPricing',
+        component: () => import('@/views/ai/ToolPricingPage.vue'),
+        meta: { title: '工具调用价格', perm: 'model:view' },
       },
       {
         path: 'model-groups',
@@ -188,11 +203,10 @@ const adminRoutes: RouteRecordRaw[] = [
         meta: { title: '请求审计日志', perm: 'audit:view' },
       },
       {
-        // ai-req-analyze 插件页面：插件未安装/未启用时页面内给出引导（路由常驻，权限点控制访问）
-        path: 'ai-req-analyze',
-        name: 'AdminAiReqAnalyze',
-        component: () => import('@/views/plugin/ai-req-analyze/index.vue'),
-        meta: { title: 'AI请求分析', perm: 'ai-req-analyze:view' },
+        path: 'ai-analysis',
+        name: 'AdminAiAnalysis',
+        component: () => import('@/views/security/ai-analysis/index.vue'),
+        meta: { title: 'AI请求分析', perm: 'ai_analysis:view' },
       },
       {
         path: 'notification-templates',

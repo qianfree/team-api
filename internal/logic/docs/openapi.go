@@ -205,7 +205,7 @@ func buildOpenAPISpec(ctx context.Context) map[string]any {
 			"/v1/videos": map[string]any{
 				"post": map[string]any{
 					"summary":     "Create Video",
-					"description": "创建视频生成任务（OpenAI Videos 协议，兼容 openai-python / openai-node SDK 的 client.videos.create）。请求体支持 multipart/form-data（官方 SDK 形态，input_reference 可为文件 part）与 application/json 两种编码。返回官方 Video 对象（status: queued），轮询 GET /v1/videos/{video_id} 直到 completed，再经 GET /v1/videos/{video_id}/content 获取视频二进制。",
+					"description": "创建视频生成任务（OpenAI Videos 协议，兼容 openai-python / openai-node SDK 的 client.videos.create）。请求体支持 multipart/form-data（官方 SDK 形态）与 application/json 两种编码。参考素材（含首帧）统一经扩展字段 references[] 传递（官方 SDK 经 extra_body={\"references\": json.dumps([...])} 传入，首帧用 role first_frame）；扩展字段 extra 可透传厂商私有参数（解包后平铺深合并进上游请求体，计费规格字段受保护），厂商音频开关亦走 extra（可灵 sound / 豆包 generate_audio / 万相 parameters.audio）。历史字段 input_reference / sound / generate_audio 已移除，命中返回 400 field_deprecated。返回官方 Video 对象（status: queued），轮询 GET /v1/videos/{video_id} 直到 completed，completed 响应的 video_url 可直接下载；也可经 GET /v1/videos/{video_id}/content 获取视频二进制。",
 					"operationId": "createVideo",
 					"security":    []map[string]any{{"BearerAuth": []any{}}},
 					"requestBody": map[string]any{
@@ -216,13 +216,13 @@ func buildOpenAPISpec(ctx context.Context) map[string]any {
 									"type":     "object",
 									"required": []string{"model", "prompt"},
 									"properties": map[string]any{
-										"model":           map[string]any{"type": "string", "example": "kling-v2-master"},
-										"prompt":          map[string]any{"type": "string"},
-										"seconds":         map[string]any{"type": "string", "enum": []string{"4", "8", "12"}, "default": "4"},
-										"size":            map[string]any{"type": "string", "enum": []string{"720x1280", "1280x720", "1024x1792", "1792x1024"}, "default": "720x1280"},
-										"aspect_ratio":    map[string]any{"type": "string", "description": "扩展字段：屏幕比例，如 16:9 / 9:16 / 1:1；取值原样透传上游，不传由模型取默认档"},
-										"sound":           map[string]any{"type": "string", "enum": []string{"on", "off"}, "description": "扩展字段：是否包含声音；仅部分模型支持（可灵 / 豆包），其余模型忽略"},
-										"input_reference": map[string]any{"type": "string", "format": "binary", "description": "可选参考图（图生视频），文件上传或 {\"image_url\": \"...\"} 引用对象；file_id 形态不支持"},
+										"model":        map[string]any{"type": "string", "example": "kling-v2-master"},
+										"prompt":       map[string]any{"type": "string"},
+										"seconds":      map[string]any{"type": "string", "enum": []string{"4", "8", "12"}, "default": "4"},
+										"size":         map[string]any{"type": "string", "enum": []string{"720x1280", "1280x720", "1024x1792", "1792x1024"}, "default": "720x1280"},
+										"aspect_ratio": map[string]any{"type": "string", "description": "扩展字段：屏幕比例，如 16:9 / 9:16 / 1:1；取值原样透传上游，不传由模型取默认档"},
+										"references":   map[string]any{"type": "string", "description": "扩展字段：参考素材有序列表（首帧用 role first_frame；顺序即提示词「图片N/视频N/音频N」编号依据）。role 词汇与 Seedance 2.0 / MiniMax H3 一致；首尾帧与 reference_* 互斥；协议层上限：总数 20、参考图 9、参考视频 3、参考音频 3，模型特有约束由模型侧校验，不支持的角色返回 reference_not_supported。大素材（视频/音频）建议先经 /v1/files 上传再以 file_id 引用。 multipart 下须为 JSON 数组字符串。"},
+										"extra":        map[string]any{"type": "string", "description": "扩展字段：厂商参数唯一通道，内容为 JSON 对象字符串（官方 SDK 经 extra_body={\"extra\": json.dumps({...})} 传入）。已知键（可灵 mode/negative_prompt/cfg_scale/camera_control/image_tail、火山 seed/watermark/return_last_frame、阿里 negative_prompt/audio_url/prompt_extend、音频开关 sound(\"on\"/\"off\")/generate_audio(bool)）直接写键名，由网关映射到上游正确位置并联动计费（如可灵 mode=pro 3.5x）；其余键按上游请求体原生路径解包平铺、深合并（对象递归合并、数组/标量整体替换、null 删除该键，如阿里 input.negative_prompt、万相音频开关 parameters.audio）。model / callback_url 与各渠道计费规格字段（时长/分辨率/档位/张数）禁止经未知键改写，命中 400 extra_field_protected（预扣前拒绝）；形态错误 400 invalid_extra。"},
 									},
 								},
 							},
@@ -231,14 +231,25 @@ func buildOpenAPISpec(ctx context.Context) map[string]any {
 									"type":     "object",
 									"required": []string{"model", "prompt"},
 									"properties": map[string]any{
-										"model":           map[string]any{"type": "string"},
-										"prompt":          map[string]any{"type": "string"},
-										"seconds":         map[string]any{"type": "string"},
-										"size":            map[string]any{"type": "string"},
-										"aspect_ratio":    map[string]any{"type": "string", "description": "扩展字段：屏幕比例，如 16:9 / 9:16 / 1:1"},
-										"sound":           map[string]any{"type": "string", "enum": []string{"on", "off"}, "description": "扩展字段：是否包含声音（也可用布尔形态 generate_audio）"},
-										"generate_audio":  map[string]any{"type": "boolean", "description": "扩展字段：sound 的等价布尔形态，sound 缺省时生效"},
-										"input_reference": map[string]any{"type": "object", "properties": map[string]any{"image_url": map[string]any{"type": "string"}}},
+										"model":        map[string]any{"type": "string"},
+										"prompt":       map[string]any{"type": "string"},
+										"seconds":      map[string]any{"type": "string"},
+										"size":         map[string]any{"type": "string"},
+										"aspect_ratio": map[string]any{"type": "string", "description": "扩展字段：屏幕比例，如 16:9 / 9:16 / 1:1"},
+										"extra":        map[string]any{"type": "object", "description": "扩展字段：厂商参数唯一通道（亦接受内容为 JSON 对象的字符串）。已知键（可灵 mode/negative_prompt/cfg_scale/camera_control/image_tail、火山 seed/watermark/return_last_frame、阿里 negative_prompt/audio_url/prompt_extend、音频开关 sound(\"on\"/\"off\")/generate_audio(bool)）直接写键名，由网关映射到上游正确位置并联动计费（如可灵 mode=pro 3.5x）；其余键按上游请求体原生路径解包平铺、深合并（对象递归合并、数组/标量整体替换、null 删除该键），extra 原键名不下发（如阿里 input.negative_prompt / parameters.shot_type、万相音频开关 parameters.audio）。model / callback_url 与各渠道计费规格字段（时长/分辨率/档位/张数）禁止经未知键改写，命中 400 extra_field_protected（预扣前拒绝，无资金副作用）；形态错误 400 invalid_extra。"},
+										"references": map[string]any{
+											"description": "扩展字段：参考素材有序列表（首帧用 role first_frame；顺序即提示词「图片N/视频N/音频N」编号依据）。role 词汇与 Seedance 2.0 / MiniMax H3 一致；首尾帧与 reference_* 互斥；协议层上限：总数 20、参考图 9、参考视频 3、参考音频 3，模型特有约束由模型侧校验，不支持的角色返回 reference_not_supported。大素材（视频/音频）建议先经 /v1/files 上传再以 file_id 引用。 亦接受内容为该数组的 JSON 字符串。",
+											"type":        "array",
+											"items": map[string]any{
+												"type":     "object",
+												"required": []string{"role"},
+												"properties": map[string]any{
+													"role":    map[string]any{"type": "string", "enum": []string{"first_frame", "last_frame", "reference_image", "reference_video", "reference_audio", "file", "link"}},
+													"url":     map[string]any{"type": "string", "description": "与 file_id 二选一：http(s) URL、base64 data URL（MIME 主类型须与 role 一致），或厂商素材 URI（asset:// / mm_file:// / oss:// 百炼临时 URL，仅对应厂商渠道有效）。file 角色仅收 http(s)/oss:// URL（文档类文件 pdf/docx/md 等，≤1 个）；link 角色仅收 http(s) 网页 URL（≤1 个，不接受 file_id）；file 与 link 互斥，均可与 reference_* 组合"},
+													"file_id": map[string]any{"type": "string", "description": "与 url 二选一：POST /v1/files 上传返回的 file-xxx（同租户，MIME 须与 role 一致——file 角色不限内容类型；网关提交前替换为签名 URL）"},
+												},
+											},
+										},
 									},
 								},
 							},
@@ -246,13 +257,14 @@ func buildOpenAPISpec(ctx context.Context) map[string]any {
 					},
 					"responses": map[string]any{
 						"200": map[string]any{"description": "Video 对象（object: video，status: queued）"},
+						"400": map[string]any{"description": "参数错误；参考素材错误码：invalid_references / invalid_reference_role / invalid_reference_source / reference_mode_conflict / reference_file_not_found / reference_file_type_mismatch / too_many_references / reference_not_supported；扩展字段错误码：invalid_extra / extra_field_protected"},
 					},
 				},
 			},
 			"/v1/videos/{video_id}": map[string]any{
 				"get": map[string]any{
 					"summary":     "Retrieve Video",
-					"description": "查询视频生成任务，返回官方 Video 对象。status: queued / in_progress / completed / failed；非终态响应携带 openai-poll-after-ms 轮询间隔建议头。生成失败以 status=failed + error 对象表达（HTTP 仍为 200）。",
+					"description": "查询视频生成任务，返回官方 Video 对象。status: queued / in_progress / completed / failed；非终态响应携带 openai-poll-after-ms 轮询间隔建议头。生成失败以 status=failed + error 对象表达（HTTP 仍为 200）。completed 时附扩展字段 video_url（平台签名直链，免 API Key 可直接播放/下载，有效期见系统设置 task_content_url_ttl_minutes，每次查询重新签发）与 usage（用量摘要：input_video_seconds / output_video_seconds / total_seconds / input_image_count / input_audio_seconds / resolution / prompt_tokens / completion_tokens / total_tokens，渠道上报了哪些字段才出现哪些）。产物开启转存平台对象存储时，上游完成但转存未完成期间保持 in_progress（progress=99），转存完成后才返回 completed + video_url（任务完成 30 分钟后兜底放行）。",
 					"operationId": "retrieveVideo",
 					"security":    []map[string]any{{"BearerAuth": []any{}}},
 					"parameters": []map[string]any{
@@ -312,6 +324,25 @@ func buildOpenAPISpec(ctx context.Context) map[string]any {
 						"200": map[string]any{"description": "视频二进制流（video/mp4）"},
 						"400": map[string]any{"description": "任务未完成或无可用内容"},
 						"404": map[string]any{"description": "视频不存在或已被删除"},
+						"502": map[string]any{"description": "上游内容拉取失败"},
+					},
+				},
+			},
+			"/v1/tasks/{task_id}/content": map[string]any{
+				"get": map[string]any{
+					"summary":     "Task Content (Signed URL)",
+					"description": "异步任务统一内容链接：免 API Key，凭查询响应签发的 expires + signature 访问（链接即授权）。产物已转存平台对象存储的从 OSS 供给，否则平台实时回源上游。通常不需手工拼接，直接使用任务查询响应中的 video_url / url。",
+					"operationId": "getTaskContent",
+					"parameters": []map[string]any{
+						{"name": "task_id", "in": "path", "required": true, "schema": map[string]any{"type": "string"}},
+						{"name": "expires", "in": "query", "required": true, "schema": map[string]any{"type": "integer"}},
+						{"name": "signature", "in": "query", "required": true, "schema": map[string]any{"type": "string"}},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{"description": "产物二进制流"},
+						"400": map[string]any{"description": "任务未完成或无可用内容"},
+						"403": map[string]any{"description": "签名无效（content_url_invalid）或已过期（content_url_expired，重新查询任务获取新链接）"},
+						"404": map[string]any{"description": "任务不存在或已删除"},
 						"502": map[string]any{"description": "上游内容拉取失败"},
 					},
 				},

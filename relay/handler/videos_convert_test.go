@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"mime/multipart"
 	"net/textproto"
-	"strings"
 	"testing"
+
+	"github.com/qianfree/team-api/relay/common"
 )
 
 // buildMultipartVideosBody 构造 multipart/form-data 的创建请求体（模拟官方 SDK 形态）。
@@ -41,16 +42,13 @@ func buildMultipartVideosBody(t *testing.T, fields map[string]string, fileField,
 }
 
 func TestParseVideosCreateRequest_JSON(t *testing.T) {
-	body := `{"model":"kling-v2-master","prompt":"a cat","seconds":"8","size":"1280x720","input_reference":{"image_url":"https://example.com/ref.png"}}`
+	body := `{"model":"kling-v2-master","prompt":"a cat","seconds":"8","size":"1280x720"}`
 	req, taskErr := ParseVideosCreateRequest([]byte(body), "application/json")
 	if taskErr != nil {
 		t.Fatalf("unexpected error: %+v", taskErr)
 	}
 	if req.Model != "kling-v2-master" || req.Prompt != "a cat" || req.Seconds != "8" || req.Size != "1280x720" {
 		t.Fatalf("unexpected request: %+v", req)
-	}
-	if req.InputReference != "https://example.com/ref.png" {
-		t.Fatalf("unexpected input_reference: %s", req.InputReference)
 	}
 }
 
@@ -73,50 +71,52 @@ func TestParseVideosCreateRequest_JSONInvalidSeconds(t *testing.T) {
 	}
 }
 
-func TestParseVideosCreateRequest_JSONFileIDRejected(t *testing.T) {
-	body := `{"model":"m","prompt":"p","input_reference":{"file_id":"file-abc"}}`
-	_, taskErr := ParseVideosCreateRequest([]byte(body), "application/json")
-	if taskErr == nil {
-		t.Fatal("expected file_id to be rejected")
+// TestParseVideosCreateRequest_DeprecatedFieldsRejected 已移除字段（input_reference/sound/
+// generate_audio）命中即 400 并给出替代指引，不静默忽略——静默丢弃首帧图会把图生视频
+// 当文生视频、按请求计费按默认档生成
+func TestParseVideosCreateRequest_DeprecatedFieldsRejected(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"input_reference object", `{"model":"m","prompt":"p","input_reference":{"image_url":"https://example.com/ref.png"}}`},
+		{"input_reference file_id", `{"model":"m","prompt":"p","input_reference":{"file_id":"file-abc12345"}}`},
+		{"sound string", `{"model":"m","prompt":"p","sound":"on"}`},
+		{"sound bool", `{"model":"m","prompt":"p","sound":true}`},
+		{"generate_audio", `{"model":"m","prompt":"p","generate_audio":true}`},
+		{"watermark bool", `{"model":"m","prompt":"p","watermark":true}`},
+		{"watermark string", `{"model":"m","prompt":"p","watermark":"on"}`},
 	}
-	if taskErr.StatusCode != 400 || taskErr.ErrCode != "file_id_not_supported" {
-		t.Fatalf("unexpected error: %+v", taskErr)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, taskErr := ParseVideosCreateRequest([]byte(c.body), "application/json")
+			if taskErr == nil || taskErr.StatusCode != 400 || taskErr.ErrCode != "field_deprecated" {
+				t.Fatalf("expected 400 field_deprecated, got %+v", taskErr)
+			}
+		})
 	}
-}
 
-func TestParseVideosCreateRequest_MultipartWithFile(t *testing.T) {
-	// PNG 魔数，DetectContentType 应识别为 image/png（part 声明为 octet-stream）
+	// multipart 形态：文件 part、字符串 part、brackets 编码与 sound/generate_audio 同样拒绝
 	pngBytes := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D}
-	body, ct := buildMultipartVideosBody(t,
-		map[string]string{"model": "kling-v2-master", "prompt": "a cat", "seconds": "12", "size": "720x1280"},
-		"input_reference", "ref.png", pngBytes)
-
-	req, taskErr := ParseVideosCreateRequest(body, ct)
-	if taskErr != nil {
-		t.Fatalf("unexpected error: %+v", taskErr)
-	}
-	if req.Model != "kling-v2-master" || req.Seconds != "12" || req.Size != "720x1280" {
-		t.Fatalf("unexpected request: %+v", req)
-	}
-	if !strings.HasPrefix(req.InputReference, "data:image/png;base64,") {
-		t.Fatalf("expected data url with sniffed image/png, got %.40q", req.InputReference)
-	}
-}
-
-func TestParseVideosCreateRequest_MultipartStringRef(t *testing.T) {
-	body, ct := buildMultipartVideosBody(t,
-		map[string]string{
-			"model":           "m",
-			"prompt":          "p",
-			"input_reference": `{"image_url":"https://example.com/x.jpg"}`,
-		}, "", "", nil)
-
-	req, taskErr := ParseVideosCreateRequest(body, ct)
-	if taskErr != nil {
-		t.Fatalf("unexpected error: %+v", taskErr)
-	}
-	if req.InputReference != "https://example.com/x.jpg" {
-		t.Fatalf("unexpected input_reference: %s", req.InputReference)
+	for name, fields := range map[string]map[string]string{
+		"file part":      {"model": "m", "prompt": "p", "input_reference": `{"image_url":"https://x"}`},
+		"brackets编码":     {"model": "m", "prompt": "p", "input_reference[image_url]": "https://x"},
+		"sound":          {"model": "m", "prompt": "p", "sound": "on"},
+		"generate_audio": {"model": "m", "prompt": "p", "generate_audio": "true"},
+		"watermark":      {"model": "m", "prompt": "p", "watermark": "true"},
+	} {
+		t.Run("multipart "+name, func(t *testing.T) {
+			fileField := ""
+			if name == "file part" {
+				fileField = "input_reference"
+				delete(fields, "input_reference")
+			}
+			body, ct := buildMultipartVideosBody(t, fields, fileField, "ref.png", pngBytes)
+			_, taskErr := ParseVideosCreateRequest(body, ct)
+			if taskErr == nil || taskErr.StatusCode != 400 || taskErr.ErrCode != "field_deprecated" {
+				t.Fatalf("expected 400 field_deprecated, got %+v", taskErr)
+			}
+		})
 	}
 }
 
@@ -124,11 +124,11 @@ func TestParseVideosCreateRequest_MultipartStringRef(t *testing.T) {
 // 原值进 metadata.size，不派生 aspect_ratio/ratio/resolution（值词汇由调用方按目标供应商原生口径提供）。
 func TestBuildVideosTaskBody_SizePassthrough(t *testing.T) {
 	req := &videosCreateRequest{
-		Model:          "kling-v2-master",
-		Prompt:         "a cat",
-		Seconds:        "8",
-		Size:           "768P",
-		InputReference: "https://example.com/ref.png",
+		Model:      "kling-v2-master",
+		Prompt:     "a cat",
+		Seconds:    "8",
+		Size:       "768P",
+		References: []common.VideoReference{{Role: common.RefRoleFirstFrame, URL: "https://example.com/ref.png"}},
 	}
 	body, err := BuildVideosTaskBody(req)
 	if err != nil {
@@ -185,7 +185,7 @@ func TestBuildVideosTaskBody_Minimal(t *testing.T) {
 		t.Fatal("expected no seconds field")
 	}
 	if _, ok := parsed["images"]; ok {
-		t.Fatal("expected no images field without input_reference")
+		t.Fatal("expected no images field without first_frame reference")
 	}
 	if _, ok := parsed["metadata"]; ok {
 		t.Fatal("expected no metadata field")
@@ -224,61 +224,31 @@ func TestValidateVideosCreateRequest(t *testing.T) {
 	}
 }
 
-// TestParseVideosCreateRequest_JSONAspectRatioAndSound 扩展字段（aspect_ratio/sound）解析与归一
-func TestParseVideosCreateRequest_JSONAspectRatioAndSound(t *testing.T) {
-	cases := []struct {
-		name    string
-		body    string
-		ratio   string
-		sound   string
-		wantErr bool
-	}{
-		{name: "string on", body: `{"model":"m","prompt":"p","aspect_ratio":"9:16","sound":"on"}`, ratio: "9:16", sound: "on"},
-		{name: "string off", body: `{"model":"m","prompt":"p","sound":"off"}`, sound: "off"},
-		{name: "bool true", body: `{"model":"m","prompt":"p","sound":true}`, sound: "on"},
-		{name: "bool false", body: `{"model":"m","prompt":"p","sound":false}`, sound: "off"},
-		{name: "generate_audio fallback", body: `{"model":"m","prompt":"p","generate_audio":true}`, sound: "on"},
-		// sound 更明确，同时存在时 sound 优先
-		{name: "sound wins over generate_audio", body: `{"model":"m","prompt":"p","sound":"off","generate_audio":true}`, sound: "off"},
-		{name: "absent", body: `{"model":"m","prompt":"p"}`},
-		{name: "invalid sound", body: `{"model":"m","prompt":"p","sound":"loud"}`, wantErr: true},
+// TestParseVideosCreateRequest_JSONAspectRatio 扩展字段（aspect_ratio）解析
+func TestParseVideosCreateRequest_JSONAspectRatio(t *testing.T) {
+	req, taskErr := ParseVideosCreateRequest(
+		[]byte(`{"model":"m","prompt":"p","aspect_ratio":"9:16"}`), "application/json")
+	if taskErr != nil {
+		t.Fatalf("unexpected error: %+v", taskErr)
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			req, taskErr := ParseVideosCreateRequest([]byte(c.body), "application/json")
-			if c.wantErr {
-				if taskErr == nil || taskErr.StatusCode != 400 {
-					t.Fatalf("expected 400, got %+v", taskErr)
-				}
-				return
-			}
-			if taskErr != nil {
-				t.Fatalf("unexpected error: %+v", taskErr)
-			}
-			if req.AspectRatio != c.ratio {
-				t.Fatalf("expected aspect_ratio %q, got %q", c.ratio, req.AspectRatio)
-			}
-			if req.Sound != c.sound {
-				t.Fatalf("expected sound %q, got %q", c.sound, req.Sound)
-			}
-		})
+	if req.AspectRatio != "9:16" || req.Sound != "" {
+		t.Fatalf("unexpected request: %+v", req)
 	}
 }
 
-// TestParseVideosCreateRequest_MultipartAspectRatioAndSound multipart 裸字符串 part 走同一归一逻辑
-func TestParseVideosCreateRequest_MultipartAspectRatioAndSound(t *testing.T) {
+// TestParseVideosCreateRequest_MultipartAspectRatio multipart 裸字符串 part 走同一归一逻辑
+func TestParseVideosCreateRequest_MultipartAspectRatio(t *testing.T) {
 	body, ct := buildMultipartVideosBody(t, map[string]string{
 		"model":        "kling-v2-master",
 		"prompt":       "a cat",
 		"aspect_ratio": "1:1",
-		"sound":        "true",
 	}, "", "", nil)
 
 	req, taskErr := ParseVideosCreateRequest(body, ct)
 	if taskErr != nil {
 		t.Fatalf("parse: %+v", taskErr)
 	}
-	if req.AspectRatio != "1:1" || req.Sound != "on" {
+	if req.AspectRatio != "1:1" {
 		t.Fatalf("unexpected request: %+v", req)
 	}
 }
@@ -331,10 +301,64 @@ func TestBuildVideosTaskBody_SoundOff(t *testing.T) {
 	}
 }
 
+// TestBuildVideosTaskBody_ExtraSoundPromoted /v1/videos 已移除 sound/generate_audio 顶层
+// 字段，厂商音频控制走 extra：已知键提升进任务体 metadata（适配器/JS 插件按现有路径
+// 消费），并从 extra 剔除（不平铺、不重复下发）
+func TestBuildVideosTaskBody_ExtraSoundPromoted(t *testing.T) {
+	req := &videosCreateRequest{
+		Model:  "kling-v2-master",
+		Prompt: "p",
+		Extra:  json.RawMessage(`{"sound":"on","generate_audio":true,"custom_key":"v"}`),
+	}
+	body, err := BuildVideosTaskBody(req)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	meta := parsed["metadata"].(map[string]any)
+	if meta["sound"] != "on" || meta["generate_audio"] != true {
+		t.Fatalf("expected sound/generate_audio promoted into metadata, got %v", meta)
+	}
+	extra, _ := parsed["extra"].(map[string]any)
+	if _, ok := extra["sound"]; ok {
+		t.Fatalf("sound must be removed from extra after promotion: %s", body)
+	}
+	if extra["custom_key"] != "v" {
+		t.Fatalf("unknown keys must stay in extra: %s", body)
+	}
+}
+
+// TestBuildVideosTaskBody_Watermark 顶层收敛词汇 watermark 写 metadata.watermark；
+// 与 extra 提升值（一致，由解析层冲突检查保证）共存时顶层覆盖无歧义
+func TestBuildVideosTaskBody_Watermark(t *testing.T) {
+	wm := false
+	body, _ := BuildVideosTaskBody(&videosCreateRequest{Model: "m", Prompt: "p", Watermark: &wm})
+	var parsed map[string]any
+	json.Unmarshal(body, &parsed)
+	meta := parsed["metadata"].(map[string]any)
+	if meta["watermark"] != false {
+		t.Fatalf("expected metadata.watermark false, got %v", meta["watermark"])
+	}
+	if _, ok := parsed["watermark"]; ok {
+		t.Fatal("watermark 不应写任务体顶层（仅 metadata 通道）")
+	}
+
+	// 未传时（无其他可选参数）整个 metadata 都不写入
+	body, _ = BuildVideosTaskBody(&videosCreateRequest{Model: "m", Prompt: "p"})
+	var parsedNoWM map[string]json.RawMessage
+	json.Unmarshal(body, &parsedNoWM)
+	if _, has := parsedNoWM["metadata"]; has {
+		t.Fatalf("未传 watermark 不应有 metadata.watermark: %s", body)
+	}
+}
+
 // TestNewVideosRequestEcho_ExtendedFields 回显需带上扩展字段（submit/retrieve 回填与排障用）
 func TestNewVideosRequestEcho_ExtendedFields(t *testing.T) {
 	echo := NewVideosRequestEcho(&videosCreateRequest{
-		Prompt: "p", Seconds: "8", Size: "768P", AspectRatio: "16:9", Sound: "off",
+		Prompt: "p", Seconds: "8", Size: "768P", AspectRatio: "16:9",
 	})
 	b, err := json.Marshal(echo)
 	if err != nil {
@@ -342,7 +366,10 @@ func TestNewVideosRequestEcho_ExtendedFields(t *testing.T) {
 	}
 	var got map[string]any
 	json.Unmarshal(b, &got)
-	if got["aspect_ratio"] != "16:9" || got["sound"] != "off" {
+	if got["aspect_ratio"] != "16:9" {
 		t.Fatalf("unexpected echo: %s", b)
+	}
+	if _, has := got["sound"]; has {
+		t.Fatalf("sound should not be echoed: %s", b)
 	}
 }

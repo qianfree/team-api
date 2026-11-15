@@ -272,14 +272,20 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 		}
 
 		// 客户端可见 usage 用 OpenAI 语义（input 含缓存，cached 为子集）；
-		// completed 帧同时携带 Claude 计费口径的用量（input 不含缓存、cache 明细独立），
+		// completed 帧同时携带 Claude 计费口径的用量（input 不含缓存、cache 明细独立）
+		// 与服务端工具调用计数（web_search 等，经 ToolCalls 侧信道供按次计费），
 		// 输出缺失时的估算兜底（EstimateStreamOutputTokens）由宿主桥接层处理
 		completedAt := int(time.Now().Unix())
-		if err := emitEvent("response.completed", map[string]any{
-			"type": "response.completed",
-			"response": buildResponsesObjectMap(respID, createdAt, "completed", modelName,
-				finalOutput, buildResponsesUsageMap(claudeVisibleUsage(&usage)), &completedAt, info),
-		}, claudeBillingUsage(&usage)); err != nil {
+		if err := chunkWriter(&relayconvert.StreamEvent{
+			Event: "response.completed",
+			Data: map[string]any{
+				"type": "response.completed",
+				"response": buildResponsesObjectMap(respID, createdAt, "completed", modelName,
+					finalOutput, buildResponsesUsageMap(claudeVisibleUsage(&usage)), &completedAt, info),
+			},
+			Usage:     claudeBillingUsage(&usage),
+			ToolCalls: shared.ServerToolCallsFromClaudeUsage(&usage),
+		}); err != nil {
 			return err
 		}
 		sentCompleted = true
@@ -522,6 +528,10 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 				}
 				if event.Usage.CacheCreation != nil {
 					usage.CacheCreation = event.Usage.CacheCreation
+				}
+				// 服务端工具调用次数为累计报数：整体替换（最终帧胜出）
+				if event.Usage.ServerToolUse != nil {
+					usage.ServerToolUse = event.Usage.ServerToolUse
 				}
 			}
 

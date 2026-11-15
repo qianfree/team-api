@@ -14,12 +14,13 @@ import "github.com/qianfree/team-api/relaykit/dto"
 //   - Event 非空：写为事件帧（event: X\ndata: {json}\n\n），Claude / Responses 风格；
 //   - Event 为空：写为纯数据帧（data: {json}\n\n），Gemini / OpenAI 风格；
 //   - Usage 非空：宿主捕获为本次请求的用量（多次出现取最后一次）。
-//     使用带明细的 UsageWithDetails，缓存读/写 token 明细不丢失（计费按明细扣减缓存价）。
-//
-// 输出为 OpenAI chat 格式时转换器仍可直接产出 *dto.ChatCompletionStreamResponse
-// （宿主桥接层对两种 chunk 类型均兼容）。
+//     使用带明细的 UsageWithDetails，缓存读/写 token 明细不丢失（计费按明细扣减缓存价）；
+//   - ToolCalls 非空：宿主捕获为服务端/云端工具调用计数（工具名 → 次数，多次出现
+//     同名工具取最大值——厂商累计报数替换语义）。Usage 结构体没有工具计数的容身之处
+//     （OpenAI 协议无此字段），经本字段旁路透出供按次附加费计费。
 type StreamEvent struct {
-	Event string
-	Data  any
-	Usage *dto.UsageWithDetails
+	Event     string
+	Data      any
+	Usage     *dto.UsageWithDetails
+	ToolCalls map[string]int
 }

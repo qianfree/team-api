@@ -76,6 +76,8 @@ var adminPermissionRules = []permissionRule{
 	{method: "POST", path: "/api/admin/models/export-json", perm: "model:view"},
 	{method: "POST", path: "/api/admin/models/import-preview", perm: "model:create"},
 	{method: "POST", path: "/api/admin/models/import", perm: "model:create"},
+	// 计费公式校验试算（dry-run）：定价编辑能力，与保存定价同权限
+	{method: "POST", path: "/api/admin/models/pricing/validate-formula", perm: "model:edit"},
 	{method: "PUT", prefix: "/api/admin/models/", perm: "model:edit"},
 	{method: "DELETE", prefix: "/api/admin/models/", perm: "model:delete"},
 	// Model groups
@@ -183,6 +185,26 @@ var adminPermissionRules = []permissionRule{
 	{method: "GET", path: "/api/admin/audit/content-filter-logs", perm: "audit:view"},
 	{method: "DELETE", path: "/api/admin/audit/content-filter-logs/clear", perm: "audit:clear"},
 
+	// ── ai_analysis AI请求分析 ──
+	// 发起按需分析与删除报告是写操作，挂操作档权限点
+	{method: "POST", path: "/api/admin/ai-analysis/analyze", perm: "ai_analysis:analyze"},
+	{method: "DELETE", prefix: "/api/admin/ai-analysis/reports/", perm: "ai_analysis:analyze"},
+	// 报告列表/详情/会话还原/任务列表均为只读（前缀不带尾斜杠，同时覆盖
+	// /reports 与 /reports/{id}[/conversation]）
+	{method: "GET", prefix: "/api/admin/ai-analysis/reports", perm: "ai_analysis:view"},
+	{method: "GET", path: "/api/admin/ai-analysis/jobs", perm: "ai_analysis:view"},
+	// 配置读写与连通性测试：测试会真实调用外部 AI 端点并验证密钥，属配置能力
+	{method: "GET", path: "/api/admin/ai-analysis/config", perm: "ai_analysis:config"},
+	{method: "PUT", path: "/api/admin/ai-analysis/config", perm: "ai_analysis:config"},
+	{method: "POST", path: "/api/admin/ai-analysis/test", perm: "ai_analysis:config"},
+
+	// ── ai_assistant AI 助手 ──
+	// 对话是运营者日常使用（SSE 端点，handler 注册）；配置与连通性测试属配置能力
+	{method: "POST", path: "/api/admin/ai-assistant/chat", perm: "ai_assistant:use"},
+	{method: "GET", path: "/api/admin/ai-assistant/config", perm: "ai_assistant:config"},
+	{method: "PUT", path: "/api/admin/ai-assistant/config", perm: "ai_assistant:config"},
+	{method: "POST", path: "/api/admin/ai-assistant/test", perm: "ai_assistant:config"},
+
 	// ── file 文件管理 ──
 	{method: "GET", path: "/api/admin/files", perm: "file:view"},
 	{method: "GET", path: "/api/admin/files/stats", perm: "file:view"},
@@ -230,6 +252,18 @@ var adminPermissionRules = []permissionRule{
 	{method: "GET", prefix: "/api/admin/plugins", perm: "system:plugin"},
 	{method: "POST", prefix: "/api/admin/plugins/", perm: "system:plugin"},
 	{method: "PUT", prefix: "/api/admin/plugins/", perm: "system:plugin"},
+	// ── JS 任务插件（/api/admin/js-plugins*）：两权分立 ──
+	// upload/版本删除 = plugin:upload；激活/启停 = plugin:manage；列表/路由预览 = upload 可看
+	//（精确 path 规则先于 prefix 规则，见 matchPermission 三阶段匹配）
+	{method: "GET", path: "/api/admin/js-plugins", perm: "plugin:upload"},
+	{method: "POST", path: "/api/admin/js-plugins/upload", perm: "plugin:upload"},
+	// 试运行是上传前自检（只编译与样例执行，不落库不发流量），归 upload 权限；
+	// 不加此精确规则会被下方 POST 前缀规则吃成 plugin:manage
+	{method: "POST", path: "/api/admin/js-plugins/dry-run", perm: "plugin:upload"},
+	{method: "GET", prefix: "/api/admin/js-plugins/", perm: "plugin:upload"},
+	{method: "POST", prefix: "/api/admin/js-plugins/", perm: "plugin:manage"},
+	{method: "DELETE", prefix: "/api/admin/js-plugins/", perm: "plugin:upload"},
+	{method: "PUT", prefix: "/api/admin/js-plugins/", perm: "plugin:manage"},
 	// 邮件发送记录是运营查看通知触达效果的手段，与通知模板同属内容运营，不归系统设置
 	{method: "GET", prefix: "/api/admin/email/", perm: "operation:view"},
 

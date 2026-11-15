@@ -18,7 +18,7 @@ type ClaudeOptions struct {
 	// Claude Messages API 要求必须提供 max_tokens（省略会返回 400），
 	// 因此当该 hook 为 nil 且没有其他路径提供该值时，
 	// OpenAI→Claude 请求转换会以显式错误失败，而不是发出一个上游必然拒绝的请求。
-	// new-api 宿主总是会提供该 hook；
+	// 本仓库宿主总是会提供该 hook；
 	// 独立使用 relaykit 的用户必须自行提供一个，或保证每个请求都带有 max_tokens。
 	DefaultMaxTokens func(modelName string) int
 }

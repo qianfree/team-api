@@ -6,6 +6,8 @@ import (
 	"math"
 	"math/rand/v2"
 	"reflect"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/gogf/gf/v2/database/gredis"
@@ -14,6 +16,15 @@ import (
 	"github.com/gogf/gf/v2/os/gcache"
 	"github.com/gogf/gf/v2/util/gconv"
 	"golang.org/x/sync/singleflight"
+)
+
+const (
+	// cacheInvalidateChannel 精确 key 失效频道：payload 为完整缓存键
+	cacheInvalidateChannel = "cache:invalidate"
+	// cacheInvalidatePatternChannel 模式失效频道：payload 为完整 glob 模式（仅 * 通配）。
+	// L1-only 键（L2 已过期/丢失但内存条目仍存活）对发布方的 SCAN 不可见，也无法逐 key
+	// 枚举其他实例的内存，只能广播模式、由各订阅方对本进程 L1 全量匹配后自行清除
+	cacheInvalidatePatternChannel = "cache:invalidate:pattern"
 )
 
 // Cache provides a two-level caching mechanism:
@@ -288,16 +299,21 @@ func (c *Cache) Delete(ctx context.Context, key string) {
 	_, _ = g.Redis().Do(ctx, "DEL", fullKey)
 
 	// Publish invalidation for other instances
-	_, _ = g.Redis().Do(ctx, "PUBLISH", "cache:invalidate", fullKey)
+	_, _ = g.Redis().Do(ctx, "PUBLISH", cacheInvalidateChannel, fullKey)
 }
 
 // DeleteByPattern removes all cache entries matching the pattern.
 // Uses SCAN + DEL to properly handle wildcard patterns (Redis DEL does not support wildcards).
 // 同时清除 L1（gcache）并发布跨实例失效通知，与 Delete 行为对齐。
+// 待清键 = SCAN(L2) 结果 ∪ 本进程 L1 按模式匹配出的键：L1 回填会以全新 TTL 给内存条目
+// 续命（GetJSON/Get 命中 L2 回填、进程重启、Redis 写失败均会产生「只在 L1、不在 L2」
+// 的键），只按 SCAN 结果清 L1 会漏掉这类键——租户调级/模型改价的失效操作因此对旧值
+// 不生效，旧折扣在 L1 TTL 内继续计费。其他实例的 L1-only 键对本地不可见，
+// 经模式频道广播由各实例自行清除（见 StartCacheInvalidationSubscriber）。
 func (c *Cache) DeleteByPattern(ctx context.Context, pattern string) {
 	fullPattern := c.fullKey(pattern)
 
-	// 先收集所有匹配的 key，再统一处理 L1/L2/pub/sub
+	// L2：SCAN 收集 Redis 中所有匹配的 key
 	var allKeys []string
 	cursor := int64(0)
 	for {
@@ -317,11 +333,34 @@ func (c *Cache) DeleteByPattern(ctx context.Context, pattern string) {
 		}
 	}
 
+	// L1 补集：gcache 不支持通配符枚举，全量取本进程 key 后先按缓存前缀粗筛、
+	// 再模式精筛，只补充 SCAN 未返回的键。调用方均为管理端低频操作，可接受全量枚举
+	keySet := make(map[string]struct{}, len(allKeys))
+	for _, k := range allKeys {
+		keySet[k] = struct{}{}
+	}
+	prefixScope := c.prefix + ":"
+	match := cachePatternMatcher(fullPattern)
+	if l1Keys, err := gcache.KeyStrings(ctx); err == nil {
+		for _, k := range l1Keys {
+			if _, ok := keySet[k]; ok {
+				continue
+			}
+			if !strings.HasPrefix(k, prefixScope) {
+				continue
+			}
+			if match(k) {
+				allKeys = append(allKeys, k)
+				keySet[k] = struct{}{}
+			}
+		}
+	}
+
 	if len(allKeys) == 0 {
 		return
 	}
 
-	// L2: 批量删除 Redis（比逐条快）
+	// L2: 批量删除 Redis（比逐条快）；L1-only 键在 Redis 中不存在，DEL 为 no-op
 	delArgs := make([]any, len(allKeys))
 	for i, k := range allKeys {
 		delArgs[i] = k
@@ -332,24 +371,43 @@ func (c *Cache) DeleteByPattern(ctx context.Context, pattern string) {
 	// （gcache 不支持通配符删除，只能逐 key；PUBLISH 触发其他实例的订阅者清理 L1）
 	for _, key := range allKeys {
 		gcache.Remove(ctx, key)
-		_, _ = g.Redis().Do(ctx, "PUBLISH", "cache:invalidate", key)
+		_, _ = g.Redis().Do(ctx, "PUBLISH", cacheInvalidateChannel, key)
 	}
+
+	// 模式频道兜底：其他实例可能持有本进程 gcache 看不到的 L1-only 键，
+	// 广播完整模式由各订阅方对本地 L1 全量匹配清除
+	_, _ = g.Redis().Do(ctx, "PUBLISH", cacheInvalidatePatternChannel, fullPattern)
+}
+
+// cachePatternMatcher 将缓存删除模式（glob，仅支持 * 通配——本包调用方均为此形态）
+// 编译为全匹配判定函数。不用 path.Match：其 * 不跨越路径分隔符 /，而模型名可含 /
+// （如 meta-llama/Llama-3），会漏匹配；Redis SCAN MATCH 的 * 无此限制，需语义对齐。
+func cachePatternMatcher(pattern string) func(string) bool {
+	quoted := strings.Split(pattern, "*")
+	for i, p := range quoted {
+		quoted[i] = regexp.QuoteMeta(p)
+	}
+	re := regexp.MustCompile("^" + strings.Join(quoted, ".*") + "$")
+	return re.MatchString
 }
 
 // PublishInvalidation publishes a cache invalidation message via Redis Pub/Sub.
 func PublishInvalidation(ctx context.Context, fullKey string) {
-	_, _ = g.Redis().Do(ctx, "PUBLISH", "cache:invalidate", fullKey)
+	_, _ = g.Redis().Do(ctx, "PUBLISH", cacheInvalidateChannel, fullKey)
 }
 
-// StartCacheInvalidationSubscriber 订阅 Redis "cache:invalidate" 频道，收到失效通知时移除本进程 L1(gcache)中对应 key。
+// StartCacheInvalidationSubscriber 订阅 Redis "cache:invalidate"（精确 key）与
+// "cache:invalidate:pattern"（模式）频道，收到失效通知时移除本进程 L1(gcache)中对应条目。
 // C1 修复：此前 Cache.Delete / PublishInvalidation 只向 cache:invalidate 频道 PUBLISH，全仓库无人 SUBSCRIBE，
 // 多实例部署下某实例删除 key 后，其他实例的 L1 gcache 会一直陈旧到自然 TTL。此订阅方补齐跨实例 L1 失效。
+// 模式频道为 DeleteByPattern 的配套：L1-only 键（L2 已过期/丢失但内存仍存活）对发布方 SCAN
+// 不可见，广播模式由各实例对本地 L1 全量匹配清除。
 // 在 cmd.go 启动时调用一次；断线自动重连，语义与 ConfigService.StartSubscriber 一致。
 func StartCacheInvalidationSubscriber(ctx context.Context) {
 	go func() {
 		var reconnectCount int
 		for {
-			conn, _, err := g.Redis().Subscribe(ctx, "cache:invalidate")
+			conn, _, err := g.Redis().Subscribe(ctx, cacheInvalidateChannel, cacheInvalidatePatternChannel)
 			if err != nil {
 				reconnectCount++
 				g.Log().Warningf(ctx, "[PubSub:cache] 连接失败 (第%d次): %v", reconnectCount, err)
@@ -376,6 +434,19 @@ func StartCacheInvalidationSubscriber(ctx context.Context) {
 				msg, ok := v.Val().(*gredis.Message)
 				if !ok {
 					continue // skip Subscription/Pong 等
+				}
+
+				if msg.Channel == cacheInvalidatePatternChannel {
+					// 模式失效：payload 为完整 glob 模式，对本进程 L1 全量 key 匹配后移除
+					match := cachePatternMatcher(msg.Payload)
+					if l1Keys, l1Err := gcache.KeyStrings(ctx); l1Err == nil {
+						for _, k := range l1Keys {
+							if match(k) {
+								gcache.Remove(ctx, k)
+							}
+						}
+					}
+					continue
 				}
 
 				// 仅移除本进程 L1；L2(Redis) 由发布方已 DEL，无需重复处理

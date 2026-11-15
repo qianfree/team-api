@@ -2,7 +2,6 @@
 import { ref, reactive, computed, watch } from 'vue'
 import { NInput, NInputNumber } from 'naive-ui'
 import { createPlaygroundApi } from '@/utils/playgroundApi'
-import { calculateCost } from './calculateCost'
 import Icon from '@/components/common/Icon.vue'
 import BaseSelect from '../../../components/common/BaseSelect.vue'
 
@@ -40,7 +39,7 @@ const modelOptions = computed(() => props.models.map(m => ({ value: m.model_id, 
 interface EmbeddingResult { index: number; embedding: number[] }
 const embeddings = ref<EmbeddingResult[]>([])
 const showFullEmbedding = ref<number | null>(null)
-const tokenUsage = reactive({ promptTokens: 0, totalTokens: 0, cost: '' })
+const tokenUsage = reactive({ promptTokens: 0, totalTokens: 0 })
 
 async function embed() {
 	if (!inputText.value.trim() || !selectedModel.value) return
@@ -65,7 +64,6 @@ async function embed() {
 		const usage = data.usage || {}
 		tokenUsage.promptTokens = usage.prompt_tokens || 0
 		tokenUsage.totalTokens = usage.total_tokens || 0
-		tokenUsage.cost = calculateCost(selectedModelItem.value, usage) || ''
 	} catch (e) {
 		console.error(e)
 		errorMessage.value = (e as any)?.message || '请求失败，请重试'
@@ -209,7 +207,6 @@ const resultStatus = computed<{ label: string; cls: string } | null>(() => {
 									<span class="flex items-center gap-1.5">Prompt <span class="font-medium text-gray-700">{{ tokenUsage.promptTokens }}</span></span>
 									<span class="flex items-center gap-1.5">Total <span class="font-medium text-gray-700">{{ tokenUsage.totalTokens }}</span></span>
 								</div>
-								<span v-if="tokenUsage.cost" class="font-medium text-amber-600">{{ tokenUsage.cost }}</span>
 							</div>
 						</div>
 					</div>

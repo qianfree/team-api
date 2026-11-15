@@ -118,6 +118,17 @@ var tierPermissions = map[string]map[string][]string{
 		TierOperate: {"audit:view", "audit:export"},
 		TierFull:    {"audit:view", "audit:export", "audit:read_sensitive", "audit:clear"},
 	},
+	// AI请求分析：只读=查看报告/任务；操作=+发起分析与删除报告；完全=+分析配置
+	"ai_analysis": {
+		TierRead:    {"ai_analysis:view"},
+		TierOperate: {"ai_analysis:view", "ai_analysis:analyze"},
+		TierFull:    {"ai_analysis:view", "ai_analysis:analyze", "ai_analysis:config"},
+	},
+	// AI 助手：对话是运营日常（只读档即可用）；配置（端点/密钥）是敏感能力，完全档独占
+	"ai_assistant": {
+		TierRead: {"ai_assistant:use"},
+		TierFull: {"ai_assistant:use", "ai_assistant:config"},
+	},
 	"user": {
 		TierRead:    {"user:view"},
 		TierOperate: {"user:view", "user:create", "user:edit"},

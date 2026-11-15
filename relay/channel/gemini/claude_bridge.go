@@ -68,10 +68,13 @@ func (a *Adaptor) handleNonStreamToClaude(ctx context.Context, resp *http.Respon
 
 	// 计费用量仍走 Gemini 口径（candidates+thoughts 合计、prompt 含 cached），
 	// 与本适配器其他出站路径一致；上面写给客户端的是 Claude 协议口径。
+	usage := &common.Usage{}
 	if geminiResp.UsageMetadata != nil {
-		return geminiUsageToCommon(geminiResp.UsageMetadata), nil
+		usage = geminiUsageToCommon(geminiResp.UsageMetadata)
 	}
-	return &common.Usage{}, nil
+	// grounding 搜索计数独立于 usageMetadata 存在
+	applyGeminiGroundingCount(usage, &geminiResp)
+	return usage, nil
 }
 
 // handleStreamToClaude 将 Gemini 流式响应转换为 Claude Messages SSE 格式

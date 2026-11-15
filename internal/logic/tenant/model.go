@@ -341,6 +341,11 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 			if effectiveBillingMode == "tiered" {
 				item.PricingTiers = buildTiers(pi.CustomPricingTiers, pi.BaseInputPrice, pi.BaseOutputPrice, baseTiersMap[m.ModelDBID])
 			}
+			// 表达式计费：透出平台公式原文与请求规则（价格透明；租户侧无公式覆盖能力）
+			if effectiveBillingMode == billing.BillingModeFormula && pi.BaseBlob != nil {
+				item.Formula = pi.BaseBlob.Formula
+				item.FormulaRules = pi.BaseBlob.FormulaRules
+			}
 			// 按秒/特殊计费：矩阵租户覆盖优先（整体替换），未覆盖走平台定价；
 			// special 的矩阵是输出生成组件的参考单价（素材组件单价在方案配置中）
 			if effectiveBillingMode == "per_second" || effectiveBillingMode == billing.BillingModeSpecial {
@@ -399,6 +404,10 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 			}
 			if (billingMode == "per_second" || billingMode == billing.BillingModeSpecial) && ok && gp.BaseBlob != nil {
 				item.PerSecondPrices = gp.BaseBlob.Prices
+			}
+			if billingMode == billing.BillingModeFormula && ok && gp.BaseBlob != nil {
+				item.Formula = gp.BaseBlob.Formula
+				item.FormulaRules = gp.BaseBlob.FormulaRules
 			}
 			item.TimePrices = buildTimePrices(timeSegmentsMap[m.ModelDBID], billingMode,
 				inputPrice, outputPrice, perRequestPrice, item.PricingTiers, item.PerSecondPrices)
@@ -516,10 +525,14 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 
 // resolveBillingMode 解析有效计费模式。
 // 特殊计费方案模型的模式由平台方案决定（special），租户级覆盖无效
-// （与 billing.GetModelPriceAt 的读侧守卫、admin.UpdateTenantModel 的写侧守卫同口径）
+// （与 billing.GetModelPriceAt 的读侧守卫、admin.UpdateTenantModel 的写侧守卫同口径）；
+// formula 同理：公式是平台运营能力，租户改模式只会造成展示与计费口径错位
 func resolveBillingMode(tenantMode *string, baseMode string) string {
 	if baseMode == billing.BillingModeSpecial {
 		return billing.BillingModeSpecial
+	}
+	if baseMode == billing.BillingModeFormula {
+		return billing.BillingModeFormula
 	}
 	if tenantMode != nil && *tenantMode != "" {
 		return *tenantMode
@@ -589,6 +602,11 @@ func buildTiers(customTiersJSON string, baseInputPrice, baseOutputPrice float64,
 func buildTimePrices(segments []billing.TimeSegment, billingMode string,
 	inputPrice, outputPrice, perRequestPrice *float64, tiers []v1.PricingTierItem, perSecondPrices map[string]float64) []v1.TimePriceItem {
 	if len(segments) == 0 {
+		return nil
+	}
+	// formula 模式无单一基准价（公式输出整体系数），时段价目不做单价换算
+	//（乘数仍作用于计费，账单快照可解释；前端价格页显示「表达式计费」标签）
+	if billingMode == billing.BillingModeFormula {
 		return nil
 	}
 

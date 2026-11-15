@@ -564,7 +564,12 @@ func settleSuccessfulRequest(
 		usageRecord.OutputCost = settleResult.OutputCost
 		usageRecord.CacheCreationCost = settleResult.CacheCreationCost
 		usageRecord.CacheReadCost = settleResult.CacheReadCost
+		usageRecord.ToolSurchargeCost = settleResult.ToolSurchargeCost
 	}
+
+	// 工具调用计数（联网搜索/云端工具按次附加费的采集侧数据）：
+	// 结算失败（settleResult nil）时仍落计数，供对账排查
+	usageRecord.ToolUsage = usage.ToolCalls
 
 	v.billingResult.FirstTokenMs = firstTokenMs
 	provider.RecordUsage(postCtx, usageRecord)
@@ -627,11 +632,15 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 
 	var preDeductAmount float64
 	if billing != nil {
-		amt, err := billing.PreDeduct(ctx, rc.TenantID, v.modelName, v.imageCount, v.estimatedTokens, v.maxTokens, v.isStream, rc.RequestID)
+		amt, err := billing.PreDeduct(ctx, rc.TenantID, v.modelName, v.imageCount, v.estimatedTokens, v.maxTokens, v.isStream, rc.RequestID, headers, body)
 		if err != nil {
 			// 未配价模型 fail-closed：返回明确的请求错误，而非误导性的"余额不足"
 			if errors.Is(err, common.ErrModelPricingNotConfigured) {
 				return nil, nil, constant.NewRequestError("model pricing not configured: "+v.modelName, err)
+			}
+			// 表达式计费公式在本次请求上求值失败（多为请求参数类型与公式不符）：请求错误而非余额不足
+			if errors.Is(err, common.ErrBillingFormulaEval) {
+				return nil, nil, constant.NewRequestError(common.ErrBillingFormulaEval.Error()+": "+v.modelName, err)
 			}
 			return nil, nil, constant.NewQuotaError("insufficient balance", err)
 		}
@@ -664,6 +673,10 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		RequestedModel: v.modelName,
 	}
 
+	// 重试循环的最后一次尝试信息（携带上方 trace）：全部渠道失败（调度器耗尽）时，
+	// 用量日志据此补录最后失败渠道，转发链路挂入审计日志，见 handleChannelUnavailable
+	last := &lastAttemptInfo{trace: trace}
+
 	// 租户模型权限与渠道范围校验（原 GetChannelForModel 的第一步，不属于调度模块）
 	modelEnabled, channelScope, err := provider.CheckTenantModelAccess(ctx, rc.TenantID, v.lookupModel)
 	if err != nil {
@@ -675,11 +688,11 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			}
 			return nil, v.billingResult, err
 		}
-		result := handleChannelUnavailable(ctx, billing, provider, rc, v, preDeductAmount, channelErrors, err, "")
+		result := handleChannelUnavailable(ctx, billing, provider, rc, v, preDeductAmount, channelErrors, err, "", last)
 		return result.usage, result.billingResult, result.err
 	}
 	if !modelEnabled {
-		result := handleChannelUnavailable(ctx, billing, provider, rc, v, preDeductAmount, channelErrors, common.ErrTenantModelNotEnabled, "")
+		result := handleChannelUnavailable(ctx, billing, provider, rc, v, preDeductAmount, channelErrors, common.ErrTenantModelNotEnabled, "", last)
 		return result.usage, result.billingResult, result.err
 	}
 
@@ -725,7 +738,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 				return nil, v.billingResult, constant.NewRequestError(
 					constant.StatefulResponsesSwitchEndpointHint, nil)
 			}
-			result := handleChannelUnavailable(ctx, billing, provider, rc, v, preDeductAmount, channelErrors, common.ErrChannelUnavailable, sess.NoChannelDiagnosis().Summary())
+			result := handleChannelUnavailable(ctx, billing, provider, rc, v, preDeductAmount, channelErrors, common.ErrChannelUnavailable, sess.NoChannelDiagnosis().Summary(), last)
 			return result.usage, result.billingResult, result.err
 		}
 		appendSchedulerDecision(trace, d, attempt)
@@ -743,7 +756,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			// Key 解密失败 / 目录元数据缺失：按渠道级致命上报换渠道，不发起上游请求
 			channelErrors = append(channelErrors, fmt.Sprintf("attempt=%d channel=%d materialize_error=[%v]", attempt, d.Channel.ID, mErr))
 			if decision := reportMaterializeFailure(ctx, sess, mErr); decision == dispatch.DecisionAbort {
-				result := handleChannelUnavailable(ctx, billing, provider, rc, v, preDeductAmount, channelErrors, common.ErrChannelUnavailable, "")
+				result := handleChannelUnavailable(ctx, billing, provider, rc, v, preDeductAmount, channelErrors, common.ErrChannelUnavailable, "", last)
 				return result.usage, result.billingResult, result.err
 			}
 			continue
@@ -751,6 +764,9 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		selection.SelectionReason = string(d.Reason)
 		selection.Weight = int(d.Channel.BaseWeight)
 		selection.HealthScore = d.Breakdown.Health * 100
+		// 记录最后一次成功物化的渠道选择，供全部失败出口定位「最后实际发出请求的渠道」
+		last.selection = selection
+		last.attempt = attempt
 
 		// 阿里云百炼（DashScope）异步图片模型（wanx*、qwen-image-plus 等）上游为异步任务式
 		// （提交拿 task_id → 轮询取图），其 image-synthesis 端点强制异步，无法经同步
@@ -788,7 +804,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			attemptCtx = common.WithDebugAttempt(ctx, dbgAttempt.Capture)
 		}
 
-		info := buildRelayInfo(attemptCtx, rc, v, selection, path, headers, attempt)
+		info := buildRelayInfo(attemptCtx, rc, v, selection, path, headers, body, attempt)
 		dbgAttempt.CaptureProtocol(info)
 
 		if tr := monitor.GetTrackedRequest(rc.RequestID); tr != nil {
@@ -880,7 +896,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 						rc.RequestID, rc.TenantID, rErr)
 				}
 			}
-			recordFailedUsage(provider, rc, selection, v.modelName, v.relayMode, v.isStream, err, info.StreamStatus, info.UpstreamRequestID)
+			recordFailedUsage(provider, rc, selection, attempt, v.modelName, v.relayMode, v.isStream, err, info.StreamStatus, info.UpstreamRequestID)
 			recordChannelError(rc, selection, v.modelName, attempt, true, err, info.LatencyMs())
 			finalizeTrace(trace, rc, hop, false, attempt, selection, err.Error(), info.LatencyMs())
 			dbgAttempt.MarkFinal(err)
@@ -919,7 +935,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 				var interruptSettle *common.SettlementResult
 				if billing != nil && preDeductAmount > 0 {
 					settleResult, err := billing.SettleStreamInterrupted(settleCtx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
-						v.modelName, rc.RequestID, v.relayModeStr, streamUsage, preDeductAmount, rc.ProjectID, info.ImageCount, info.StartTime)
+						v.modelName, rc.RequestID, v.relayModeStr, streamUsage, preDeductAmount, rc.ProjectID, info.ImageCount, info.StartTime, headers, body)
 					if err != nil {
 						g.Log().Warningf(settleCtx, "[RelayHandler] Stream interrupted settlement failed: tenant=%d project=%d request=%s err=%v",
 							rc.TenantID, rc.ProjectID, rc.RequestID, err)
@@ -935,7 +951,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 					}
 					interruptSettle = settleResult
 				}
-				recordFailedUsageWithTokens(provider, rc, selection, v.modelName, v.relayMode, v.isStream, err, streamUsage, interruptSettle, info.StreamStatus, info.UpstreamRequestID)
+				recordFailedUsageWithTokens(provider, rc, selection, attempt, v.modelName, v.relayMode, v.isStream, err, streamUsage, interruptSettle, info.StreamStatus, info.UpstreamRequestID)
 				finalizeTrace(trace, rc, hop, false, attempt, selection, err.Error(), info.LatencyMs())
 				dbgAttempt.MarkFinal(err)
 				return usage, v.billingResult, err
@@ -990,7 +1006,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 						rc.RequestID, rc.TenantID, rErr)
 				}
 			}
-			recordFailedUsage(provider, rc, selection, v.modelName, v.relayMode, v.isStream, err, info.StreamStatus, info.UpstreamRequestID)
+			recordFailedUsage(provider, rc, selection, attempt, v.modelName, v.relayMode, v.isStream, err, info.StreamStatus, info.UpstreamRequestID)
 			recordChannelError(rc, selection, v.modelName, attempt, true, err, info.LatencyMs())
 			finalizeTrace(trace, rc, hop, false, attempt, selection, err.Error(), info.LatencyMs())
 			dbgAttempt.MarkFinal(err)
@@ -1015,7 +1031,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 
 // buildRelayInfo 从渠道选择结果构建 RelayInfo
 // attempt 为当前重试轮次（0=首次），写入 RetryIndex 供 ParamOverride「是否重试」规则与 bil_usage_logs.retry_index 使用（C3）。
-func buildRelayInfo(ctx context.Context, rc *RelayContext, v *relayValidation, selection *common.ChannelSelection, path string, headers http.Header, attempt int) *common.RelayInfo {
+func buildRelayInfo(ctx context.Context, rc *RelayContext, v *relayValidation, selection *common.ChannelSelection, path string, headers http.Header, body []byte, attempt int) *common.RelayInfo {
 	info := &common.RelayInfo{
 		Context:         ctx,
 		TenantID:        rc.TenantID,
@@ -1031,6 +1047,7 @@ func buildRelayInfo(ctx context.Context, rc *RelayContext, v *relayValidation, s
 		BaseModelName:   v.lookupModel,
 		RequestURLPath:  path,
 		RequestHeaders:  headers,
+		RequestBody:     body,
 		StartTime:       time.Now(),
 		StreamStatus:    common.NewStreamStatus(),
 		InboundFormat:   relayModeToInboundFormat(v.relayMode),
@@ -1147,6 +1164,16 @@ func convertRequestBody(ctx context.Context, info *common.RelayInfo, body []byte
 	return bytes.NewReader(sanitized), nil
 }
 
+// lastAttemptInfo 重试循环的最后一次尝试信息。
+// 全部渠道失败（调度器耗尽 / 物化失败终止）时：用量日志据此补录最后失败渠道——
+// 此前该出口固定传 nil，多渠道连环失败的 error 记录渠道字段全空，管理员无从定位
+// 报错渠道；trace 则挂入 rc.ForwardingTrace，让审计日志保留每跳渠道与错误的完整链路。
+type lastAttemptInfo struct {
+	trace     *common.ForwardingTrace  // 本请求累积的转发链路（调度决策 + 每跳结果）
+	selection *common.ChannelSelection // 最后一次成功物化的渠道选择（nil=从未物化成功）
+	attempt   int                      // selection 对应的重试轮次（0=首次）
+}
+
 // channelUnavailableResult 渠道不可用时的返回值
 type channelUnavailableResult struct {
 	usage         *common.Usage
@@ -1165,6 +1192,7 @@ func handleChannelUnavailable(
 	channelErrors []string,
 	err error,
 	noChannelDiag string, // 调度器无可用渠道时的排除原因摘要（NoChannelDiag.Summary()），无诊断信息传 ""
+	last *lastAttemptInfo, // 重试循环最后一次尝试信息：全部失败分支补录最后失败渠道与转发链路
 ) *channelUnavailableResult {
 	if err != common.ErrChannelUnavailable {
 		if billing != nil && preDeductAmount > 0 {
@@ -1185,12 +1213,23 @@ func handleChannelUnavailable(
 		// 全部渠道失败是真实运营告警，保留 ERROR 级别；但调用栈固定无意义，禁用堆栈打印
 		g.Log().Stack(false).Errorf(ctx, "[RelayHandler] All %d channels failed for model=%s tenant=%d user=%d request=%s.%s Failure details: %s",
 			len(channelErrors), v.modelName, rc.TenantID, rc.UserID, rc.RequestID, diagSuffix, strings.Join(channelErrors, "\n"))
+		// 补挂转发链路（每跳渠道与错误已在重试循环中累积）：此前该出口不调 finalizeTrace，
+		// rc.ForwardingTrace 恒为空，审计日志看不到各渠道尝试详情。每轮失败尝试各追加
+		// 一条 channelErrors，即尝试总数
+		last.trace.TotalAttempts = len(channelErrors)
+		if last.selection != nil {
+			last.trace.UpstreamModel = last.selection.UpstreamModelName
+			last.trace.ModelMapped = last.selection.IsModelMapped
+		}
+		rc.ForwardingTrace = last.trace
 		// 用户侧只返回通用错误，不暴露渠道数量和详情
 		allFailedErr := constant.NewChannelError(
 			"当前模型暂时不可用",
 			constant.ErrAllChannelsFailed,
 		)
-		recordFailedUsage(provider, rc, nil, v.modelName, v.relayMode, v.isStream, allFailedErr, nil, "")
+		// 用量日志补录最后一次实际发出请求的渠道（多渠道连环失败不再渠道留空）；
+		// error_message 对租户可见，保持通用文案不拼渠道详情，完整明细看审计转发链路
+		recordFailedUsage(provider, rc, last.selection, last.attempt, v.modelName, v.relayMode, v.isStream, allFailedErr, nil, "")
 		return &channelUnavailableResult{nil, v.billingResult, allFailedErr}
 	}
 
@@ -1290,9 +1329,10 @@ func applyStreamEndDiag(record *common.UsageRecord, streamStatus *common.StreamS
 
 // recordFailedUsage 记录失败用量。
 // selection 非 nil 时记录具体失败渠道（ID/名称/类型/上游模型），便于在用量日志定位失败渠道；
-// nil 表示无单一渠道（全部渠道失败），渠道字段留空，失败详情见 error_message。
+// 全部渠道失败时为最后一次实际发出上游请求的渠道（从未发出过则 nil，渠道字段留空）。
+// attempt 为该次尝试的重试轮次（0=首次），落 retry_index，与成功路径口径一致。
 // streamStatus 非 nil 且已有结束原因时，同步落 stream_end_reason 并修正 error_message。
-func recordFailedUsage(provider common.DataProvider, rc *RelayContext, selection *common.ChannelSelection, modelName string, relayMode constant.RelayMode, isStream bool, err error, streamStatus *common.StreamStatus, upstreamRequestID string) {
+func recordFailedUsage(provider common.DataProvider, rc *RelayContext, selection *common.ChannelSelection, attempt int, modelName string, relayMode constant.RelayMode, isStream bool, err error, streamStatus *common.StreamStatus, upstreamRequestID string) {
 	record := &common.UsageRecord{
 		TenantID:       rc.TenantID,
 		UserID:         rc.UserID,
@@ -1304,6 +1344,7 @@ func recordFailedUsage(provider common.DataProvider, rc *RelayContext, selection
 		IsStream:       isStream,
 		Success:        false,
 		RequestID:      rc.RequestID,
+		RetryIndex:     attempt,
 		Status:         "error",
 		// 租户端用量日志可见 error_message，须经脱敏（上游域名/URL/IP 禁止落库）；
 		// 完整原始错误保留在应用日志与审计 ForwardingTrace（仅管理员可见）
@@ -1322,7 +1363,8 @@ func recordFailedUsage(provider common.DataProvider, rc *RelayContext, selection
 
 // recordFailedUsageWithTokens 记录失败用量（含 token 明细，用于流中断等已有部分 usage 的场景）。
 // 与 recordFailedUsage 的区别：此函数会填充 token 字段，避免报表中流中断记录的 token 全为 0。
-func recordFailedUsageWithTokens(provider common.DataProvider, rc *RelayContext, selection *common.ChannelSelection, modelName string, relayMode constant.RelayMode, isStream bool, err error, usage *common.Usage, settleResult *common.SettlementResult, streamStatus *common.StreamStatus, upstreamRequestID string) {
+// attempt 为失败尝试的重试轮次（0=首次），落 retry_index。
+func recordFailedUsageWithTokens(provider common.DataProvider, rc *RelayContext, selection *common.ChannelSelection, attempt int, modelName string, relayMode constant.RelayMode, isStream bool, err error, usage *common.Usage, settleResult *common.SettlementResult, streamStatus *common.StreamStatus, upstreamRequestID string) {
 	record := &common.UsageRecord{
 		TenantID:       rc.TenantID,
 		UserID:         rc.UserID,
@@ -1334,6 +1376,7 @@ func recordFailedUsageWithTokens(provider common.DataProvider, rc *RelayContext,
 		IsStream:       isStream,
 		Success:        false,
 		RequestID:      rc.RequestID,
+		RetryIndex:     attempt,
 		Status:         "error",
 		// 租户端用量日志可见 error_message，须经脱敏（上游域名/URL/IP 禁止落库）；
 		// 完整原始错误保留在应用日志与审计 ForwardingTrace（仅管理员可见）

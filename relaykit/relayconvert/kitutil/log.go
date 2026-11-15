@@ -60,5 +60,5 @@ func LogSystemError(message string) {
 }
 
 // Debug 标识是否启用 kit 的详细诊断信息。宿主在启动时设置一次
-// （new-api 将 common.DebugEnabled 镜像同步给它）。
+// （镜像自身的调试开关；未设置时默认关闭）。
 var Debug atomic.Bool

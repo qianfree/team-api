@@ -130,12 +130,18 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 	//   - *dto.ChatCompletionStreamResponse：OpenAI 客户端方向，序列化为纯 data 帧；
 	//   - *relayconvert.StreamEvent：非 OpenAI 客户端方向的通用封装，Event 非空写事件帧
 	//     （Claude/Responses 风格），为空写纯 data 帧（Gemini 风格），Usage 非空即捕获。
+	//     ToolCalls（服务端工具调用计数，计费旁路）先于 Data==nil 早退捕获——
+	//     OpenAI 方向的转换器会发 Data 为 nil 的纯侧信道事件。
 	chunkWriter := func(chunk any) error {
 		switch c := chunk.(type) {
 		case *dto.ChatCompletionStreamResponse:
 			return writeChatChunk(c)
 		case *relayconvert.StreamEvent:
-			if c == nil || c.Data == nil {
+			if c == nil {
+				return nil
+			}
+			captureToolCalls(capturedUsage, c.ToolCalls)
+			if c.Data == nil {
 				return nil
 			}
 			if !firstChunk {
@@ -272,4 +278,22 @@ func captureDtoUsage(dst *common.Usage, u *dto.UsageWithDetails) {
 	dst.CacheCreationTokens = convertedCacheCreationTokens(u.PromptTokensDetails)
 	dst.PromptTokensDetails = common.DtoTokenDetailsToCommon(u.PromptTokensDetails)
 	dst.CompletionTokenDetails = common.DtoTokenDetailsToCommon(u.CompletionTokenDetails)
+}
+
+// captureToolCalls 把转换器上报的服务端工具调用计数并入宿主 Usage。
+// 同名工具取最大值：厂商累计报数（如 Claude server_tool_use）为替换语义，
+// 流式多次上报时最终帧的累计值 ≥ 中间帧；协议层增量计数由转换器在内部
+// 归一为最终总数后上报，max 同样成立（防止异常重发导致重复累加）
+func captureToolCalls(dst *common.Usage, calls map[string]int) {
+	if len(calls) == 0 {
+		return
+	}
+	for tool, count := range calls {
+		if count > dst.ToolCalls[tool] {
+			if dst.ToolCalls == nil {
+				dst.ToolCalls = make(map[string]int)
+			}
+			dst.ToolCalls[tool] = count
+		}
+	}
 }

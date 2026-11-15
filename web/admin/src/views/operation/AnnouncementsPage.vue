@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, h } from 'vue'
 import {
-  Tag, Button, Space, Message, Modal,
+  Tag, Button, Space, Switch, Message, Modal,
 } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
@@ -47,8 +47,15 @@ const columns: TableColumnData[] = [
     const labelMap: Record<string, string> = { draft: '草稿', published: '已发布', archived: '已归档' }
     return h(Tag, { color: colorMap[record.status] || undefined, size: 'small' }, () => labelMap[record.status] || record.status)
   }},
+  // 置顶独立成列：开关受控（modelValue 绑 record.is_pinned），复用 PUT /admin/announcements/{id} 仅提交 is_pinned，
+  // 乐观更新驱动开关联动，失败回滚。切换不重新拉列表（置顶影响排序，刷新时自然生效）
   { title: '置顶', dataIndex: 'is_pinned', width: 70, render({ record }) {
-    return h(Tag, { color: record.is_pinned ? 'orangered' : undefined, size: 'small' }, () => record.is_pinned ? '置顶' : '-')
+    return h(Switch, {
+      modelValue: !!record.is_pinned,
+      size: 'small',
+      loading: !!record._pinning,
+      onChange: () => togglePinned(record),
+    })
   }},
   { title: '展示位置', dataIndex: 'display_position', width: 100, render({ record }) {
     return h('span', {}, positionLabelMap[record.display_position] || record.display_position)
@@ -193,6 +200,23 @@ async function archiveAnnouncement(row: any) {
       }
     },
   })
+}
+
+// 快捷置顶/取消置顶：复用 PUT /admin/announcements/{id}，仅提交 is_pinned（后端零值字段跳过，不影响其他字段）
+async function togglePinned(record: any) {
+  if (record._pinning) return
+  const next = record.is_pinned ? 0 : 1
+  const prev = record.is_pinned
+  record._pinning = true
+  record.is_pinned = next // 乐观更新，开关即时联动
+  try {
+    await request.put(`/admin/announcements/${record.id}`, { is_pinned: next })
+    Message.success(next ? '已置顶' : '已取消置顶')
+  } catch {
+    record.is_pinned = prev // 失败回滚，错误提示由 request 拦截器统一处理
+  } finally {
+    record._pinning = false
+  }
 }
 
 onMounted(fetchList)
