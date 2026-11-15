@@ -22,6 +22,20 @@ func requireRegisterRateLimitRedis(t *testing.T, ctx context.Context) {
 	}
 }
 
+// requireRegisterRateLimitDatabase 防护：配置项未命中 sys_options 内存缓存时 Config() 会回退查库，
+// 单元测试二进制若未链接数据库驱动（本包测试默认不导入 pgsql 驱动）会 panic 而非失败。
+// 历史上因 redis adapter 未注册、Redis 防护先行 skip，DB 路径不可达；包内缓存测试引入
+// redis adapter 后该路径变得可达，此处与 Redis 防护同款处理——DB 驱动不可用即跳过。
+func requireRegisterRateLimitDatabase(t *testing.T, ctx context.Context) {
+	t.Helper()
+	defer func() {
+		if r := recover(); r != nil {
+			t.Skipf("Database driver is not available: %v", r)
+		}
+	}()
+	_ = g.DB()
+}
+
 func setRegisterRateLimitConfig(ctx context.Context, t *testing.T, key string, value string) {
 	t.Helper()
 	Config().cache.Set(ctx, key, value)
@@ -34,6 +48,7 @@ func setRegisterRateLimitConfig(ctx context.Context, t *testing.T, key string, v
 func TestCheckRegisterRateLimit(t *testing.T) {
 	ctx := context.Background()
 	requireRegisterRateLimitRedis(t, ctx)
+	requireRegisterRateLimitDatabase(t, ctx)
 
 	// 测试IP级别限流
 	t.Run("IP hourly limit", func(t *testing.T) {
