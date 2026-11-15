@@ -381,7 +381,8 @@ func (a *Adaptor) FetchTask(ctx context.Context, baseURL, apiKey string, taskDat
 	}
 	plugin, ok := jsplugin.CurrentGeneration().Plugin(pluginKey)
 	if !ok {
-		// 插件不在当前 generation：包装哨兵，轮询链凭 errors.Is 立即终态化存量任务
+		// 插件不在当前 generation：包装哨兵，轮询链凭 errors.Is 跳过本轮等待插件回归
+		// （30 分钟超时网兜底永久缺席）
 		return nil, fmt.Errorf("%w: %q", ErrPluginNotActive, pluginKey)
 	}
 	a.pluginKey = pluginKey
@@ -564,7 +565,8 @@ func (a *Adaptor) FetchBatchTasks(ctx context.Context, baseURL, apiKey string, r
 	}
 	plugin, ok := jsplugin.CurrentGeneration().Plugin(pluginKey)
 	if !ok {
-		// 插件不在当前 generation：包装哨兵，轮询链凭 errors.Is 立即终态化存量任务
+		// 插件不在当前 generation：包装哨兵，轮询链凭 errors.Is 跳过本轮等待插件回归
+		// （30 分钟超时网兜底永久缺席）
 		return nil, fmt.Errorf("%w: %q", ErrPluginNotActive, pluginKey)
 	}
 	a.pluginKey = pluginKey

@@ -110,10 +110,13 @@ func (s *sAdmin) FetchChannelUpstreamModels(ctx context.Context, req *v1.Channel
 
 // supportsUpstreamModelList 判断该类型渠道是否具备标准模型列表接口。
 // 任务/生成类渠道（视频、图像、音乐）只有提交任务与轮询结果接口，没有 /models。
+// JS 任务插件渠道除外：它有独立的 base_url + Key，上游通常是 OpenAI 兼容网关
+// （默认支持 /v1/models），协议转换由插件完成，模型列表可直接透传拉取；
+// 上游真不支持时由 fetchUpstreamModelList 的错误分支降级为手动输入。
 func supportsUpstreamModelList(pt constant.ProviderType) bool {
 	switch pt {
 	case constant.ProviderJimeng, constant.ProviderSora, constant.ProviderKling,
-		constant.ProviderSuno, constant.ProviderMidjourney, constant.ProviderJSTask:
+		constant.ProviderSuno, constant.ProviderMidjourney:
 		return false
 	default:
 		return true

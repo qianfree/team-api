@@ -247,8 +247,8 @@ func jsonContains(s, sub string) bool {
 
 // TestFetchTaskPluginNotActive 插件不在当前 generation（被禁用/删除）：
 // FetchTask/FetchBatchTasks 返回包装 ErrPluginNotActive 的错误且保留插件 key 细节，
-// 轮询链凭 errors.Is 识别后立即终态化存量任务。key 选不被任何测试发布的名字，
-// 且本测试不发布任何插件——generation 里必然没有它。
+// 轮询链凭 errors.Is 识别后跳过本轮等待插件回归（30 分钟超时网兜底永久缺席）。
+// key 选不被任何测试发布的名字，且本测试不发布任何插件——generation 里必然没有它。
 func TestFetchTaskPluginNotActive(t *testing.T) {
 	a := &Adaptor{}
 

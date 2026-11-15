@@ -7,16 +7,19 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gogf/gf/v2/database/gdb"
+	"github.com/gogf/gf/v2/errors/gcode"
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/glog"
 
+	"github.com/qianfree/team-api/internal/consts"
 	"github.com/qianfree/team-api/internal/jsplugin/contract"
 	"github.com/qianfree/team-api/internal/logic/billing/formula"
 )
@@ -24,6 +27,19 @@ import (
 // 说明：按生成式 dao 惯例应由 `make dao` 生成访问层；该命令需可达数据库，
 // 当前以 g.DB().Model 直访 + 本文件内的行结构承担，生成条件具备后可替换。
 const tableName = "js_plugin_versions"
+
+// pluginOpCode JS 插件管理操作的用户可修复校验错误码（HTTP 422）。
+// 不带码的 gerror 会被 response.Error 当作内部错误脱敏成「服务器内部错误」，
+// 管理员在前端看不到真实原因（只能翻服务端日志）——版本冲突、路由冲突、
+// 状态限制等校验文案本身就是给上传者看的，必须带业务码透出。
+func pluginOpCode() gcode.Code {
+	return gcode.New(consts.CodeJSPluginOperation, "", nil)
+}
+
+// pluginOpError 创建带业务码的校验错误（Newf 语义）。
+func pluginOpError(format string, args ...any) error {
+	return gerror.NewCodef(pluginOpCode(), format, args...)
+}
 
 // PluginVersionRow js_plugin_versions 行。
 type PluginVersionRow struct {
@@ -164,14 +180,15 @@ func (r *Registry) Shutdown() {
 func (r *Registry) Upload(ctx context.Context, source string, iconDataURI string, remark string) (*contract.Manifest, error) {
 	compiled, err := r.engine.Compile(source)
 	if err != nil {
-		return nil, err
+		// 编译/manifest 校验失败是源码问题（上传者可修复），带码透出文案
+		return nil, gerror.WrapCode(pluginOpCode(), err)
 	}
 	// 加密配置字段类型限制：加密仅支持 string/text（写入侧只对这两型加密、读取侧
 	// 一律 GetSecret 解密），其余类型声明 encrypted 会明文落库——上传期拒绝。
 	// 不放 Manifest.Validate：它在 Compile 内还服务存量行装载（materialize），
 	// 会让 DB 里的坏行毒化整个 rebuildGeneration（全有或全无的热更新）。
 	if err := validateEncryptedConfigTypes(compiled.Manifest); err != nil {
-		return nil, err
+		return nil, gerror.WrapCode(pluginOpCode(), err)
 	}
 	hash := sourceHash(source)
 	manifestJSON, _ := json.Marshal(*compiled.Manifest)
@@ -180,7 +197,7 @@ func (r *Registry) Upload(ctx context.Context, source string, iconDataURI string
 	// 品牌图标校验（失败拒绝上传）
 	if iconDataURI != "" {
 		if _, err := ValidateIconDataURI(iconDataURI); err != nil {
-			return nil, gerror.Wrap(err, "图标校验失败")
+			return nil, gerror.WrapCode(pluginOpCode(), err, "图标校验失败")
 		}
 	}
 	existing, err := r.loadRow(ctx, compiled.Key, compiled.Version)
@@ -189,7 +206,7 @@ func (r *Registry) Upload(ctx context.Context, source string, iconDataURI string
 	}
 	if existing != nil {
 		if existing.SourceHash != hash {
-			return nil, gerror.Newf("插件 %s@%s 已存在且源码不同（同版本号不允许改内容，请升版本号）", compiled.Key, compiled.Version)
+			return nil, pluginOpError("插件 %s@%s 已存在且源码不同（同版本号不允许改内容，请升版本号）", compiled.Key, compiled.Version)
 		}
 		// 同源码重复上传：允许顺带更新图标与备注（合并为一次 Update）。
 		// 图标的内置行例外——icon 列语义为「上传版本的品牌图」（内置版本用
@@ -312,14 +329,17 @@ func (r *Registry) List(ctx context.Context) ([]PluginSummary, error) {
 	return out, nil
 }
 
-// Activate 激活指定版本：冲突预检 → 事务翻 active → 重建 generation（若 enabled）。
+// Activate 激活指定版本：冲突预检 → 事务翻 active（继承旧激活版本 enabled）→ 重建 generation。
+// enabled 继承：同 key 热切换时新版本沿用旧版本的启用态，插件在 generation 中连续存在、
+// 执行中的任务不掉线；旧版本处于禁用态则新版本保持禁用（激活不悄悄复活禁用插件）；
+// 该 key 无旧 active 行（首次上线）保持目标行原值，仍需显式 Enable。
 // 预检在事务内持 advisory lock 进行——事务外预检存在 TOCTOU：两个管理员并发激活
 // 路由/模型冲突的插件，互相看不到对方未提交的激活而双双通过，generation 内
 // 模型映射静默后者覆盖前者、路由二义命中。
 func (r *Registry) Activate(ctx context.Context, key, version string) error {
 	target, err := r.loadRow(ctx, key, version)
 	if err != nil || target == nil {
-		return gerror.Newf("插件 %s@%s 不存在", key, version)
+		return pluginOpError("插件 %s@%s 不存在", key, version)
 	}
 	var targetManifest contract.Manifest
 	if err := json.Unmarshal(target.Manifest, &targetManifest); err != nil {
@@ -355,7 +375,7 @@ func (r *Registry) Activate(ctx context.Context, key, version string) error {
 		}
 		if _, err := tx.Model(tableName).Ctx(ctx).
 			Where("plugin_key", key).Where("version", version).
-			Data(g.Map{"active": true, "updated_at": time.Now()}).Update(); err != nil {
+			Data(g.Map{"active": true, "enabled": inheritEnabled(key, target.Enabled, others), "updated_at": time.Now()}).Update(); err != nil {
 			return err
 		}
 		return nil
@@ -376,6 +396,19 @@ func (r *Registry) Activate(ctx context.Context, key, version string) error {
 	return nil
 }
 
+// inheritEnabled 计算目标行激活后的 enabled：有同 key 旧 active 行则继承其值
+// （同 key 热切换不掉出 generation、禁用态不被激活悄悄复活），无旧 active 行
+// 保持目标行原值（首个上线版本仍需显式 Enable）。others 为事务内读到的全部
+// active 行（含同 key 旧行），无需额外查询。
+func inheritEnabled(key string, targetEnabled bool, others []PluginVersionRow) bool {
+	for i := range others {
+		if others[i].PluginKey == key {
+			return others[i].Enabled
+		}
+	}
+	return targetEnabled
+}
+
 // Enable 启用/禁用插件（作用于 active 版本行）。禁用即从 generation 摘除，
 // 池关闭；启用即重新装载。
 func (r *Registry) Enable(ctx context.Context, key string, enabled bool) error {
@@ -386,7 +419,7 @@ func (r *Registry) Enable(ctx context.Context, key string, enabled bool) error {
 		return gerror.Wrap(err, "更新启用状态失败")
 	}
 	if affected, _ := res.RowsAffected(); affected == 0 {
-		return gerror.Newf("插件 %s 没有激活版本", key)
+		return pluginOpError("插件 %s 没有激活版本", key)
 	}
 	failed, err := r.rebuildGeneration(ctx)
 	if err != nil {
@@ -408,7 +441,7 @@ func (r *Registry) VersionSource(ctx context.Context, key, version string) (*Plu
 		return nil, err
 	}
 	if row == nil {
-		return nil, gerror.Newf("插件 %s@%s 不存在", key, version)
+		return nil, pluginOpError("插件 %s@%s 不存在", key, version)
 	}
 	return row, nil
 }
@@ -421,7 +454,7 @@ func (r *Registry) GetPluginIcon(ctx context.Context, key string) (string, error
 		return "", err
 	}
 	if row == nil {
-		return "", gerror.Newf("插件 %s 没有激活版本", key)
+		return "", pluginOpError("插件 %s 没有激活版本", key)
 	}
 	return row.Icon, nil
 }
@@ -433,7 +466,7 @@ func (r *Registry) ActiveManifest(ctx context.Context, key string) (*contract.Ma
 		return nil, err
 	}
 	if row == nil {
-		return nil, gerror.Newf("插件 %s 没有激活版本", key)
+		return nil, pluginOpError("插件 %s 没有激活版本", key)
 	}
 	var m contract.Manifest
 	if err := json.Unmarshal(row.Manifest, &m); err != nil {
@@ -477,7 +510,10 @@ func (r *Registry) UpdatePluginConfig(ctx context.Context, key string, values ma
 	}
 	r.PublishInvalidate(ctx) // 本实例已重建，广播其余实例
 	if loadErr, ok := failed[key]; ok {
-		return gerror.Wrapf(loadErr, "插件 %s 配置已保存但装载失败，运行中仍是旧配置（其余插件不受影响）", key)
+		// 部分成功状态：配置已落库但新实例装载失败，运行中仍是旧值——管理员必须
+		// 在前端看到（带码透出），否则只能翻日志才能发现配置未生效
+		return gerror.WrapCode(pluginOpCode(), loadErr,
+			fmt.Sprintf("插件 %s 配置已保存但装载失败，运行中仍是旧配置（其余插件不受影响）", key))
 	}
 	return nil
 }
@@ -487,13 +523,13 @@ func (r *Registry) UpdatePluginConfig(ctx context.Context, key string, values ma
 func (r *Registry) DeleteVersion(ctx context.Context, key, version string) error {
 	row, err := r.loadRow(ctx, key, version)
 	if err != nil || row == nil {
-		return gerror.Newf("插件 %s@%s 不存在", key, version)
+		return pluginOpError("插件 %s@%s 不存在", key, version)
 	}
 	if row.Origin == "builtin" {
-		return gerror.New("内置版本不可删除（可禁用，或激活上传版本覆盖）")
+		return pluginOpError("内置版本不可删除（可禁用，或激活上传版本覆盖）")
 	}
 	if row.Active && row.Enabled {
-		return gerror.New("该版本激活且启用中，请先禁用或切换激活版本")
+		return pluginOpError("该版本激活且启用中，请先禁用或切换激活版本")
 	}
 	if _, err := g.DB().Model(tableName).Ctx(ctx).
 		Where("plugin_key", key).Where("version", version).Delete(); err != nil {
@@ -803,7 +839,7 @@ func checkManifestConflict(keyA string, a *contract.Manifest, keyB string, b *co
 	for _, ra := range a.Routes {
 		for _, rb := range b.Routes {
 			if ra.Method == rb.Method && routeShapeKey(ra.Path) == routeShapeKey(rb.Path) {
-				return gerror.Newf("路由冲突：%s %s 与插件 %s 的 %s 形状重复（先禁用对方再激活）", ra.Method, ra.Path, keyB, rb.Path)
+				return pluginOpError("路由冲突：%s %s 与插件 %s 的 %s 形状重复（先禁用对方再激活）", ra.Method, ra.Path, keyB, rb.Path)
 			}
 		}
 	}
@@ -812,7 +848,7 @@ func checkManifestConflict(keyA string, a *contract.Manifest, keyB string, b *co
 		for _, mb := range b.Models {
 			if ma == mb {
 				if !sharedOK {
-					return gerror.Newf("模型 %s 已被插件 %s 声明（如需同名多插件经不同渠道服务，双方 manifest 均声明 sharedModels: true）", ma, keyB)
+					return pluginOpError("模型 %s 已被插件 %s 声明（如需同名多插件经不同渠道服务，双方 manifest 均声明 sharedModels: true）", ma, keyB)
 				}
 				glog.Warningf(context.Background(),
 					"jsplugin: 模型 %s 由插件 %s 与 %s 共享声明（双方已声明 sharedModels；路由归属由渠道 plugin_key 决定）", ma, keyA, keyB)
@@ -820,7 +856,7 @@ func checkManifestConflict(keyA string, a *contract.Manifest, keyB string, b *co
 			}
 			if strings.EqualFold(ma, mb) {
 				if !sharedOK {
-					return gerror.Newf("模型 %s 与插件 %s 的 %s 仅大小写不同", ma, keyB, mb)
+					return pluginOpError("模型 %s 与插件 %s 的 %s 仅大小写不同", ma, keyB, mb)
 				}
 				glog.Warningf(context.Background(),
 					"jsplugin: 模型 %s(%s) 与插件 %s 的 %s 仅大小写不同（双方已声明 sharedModels）", keyA, ma, keyB, mb)

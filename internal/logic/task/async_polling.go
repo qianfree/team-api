@@ -467,16 +467,6 @@ type privateData struct {
 	} `json:"billing_context"`
 }
 
-// jsPluginInactiveFailure 构造「任务所属 JS 插件已停用/删除」的失败终态 TaskInfo。
-// 插件不在当前 generation 时存量任务永远轮询不出结果，立即按失败终态化并退款
-// （applyTaskPollResult 失败分支），不再空转到 30 分钟超时网——预扣资金不被长冻。
-func jsPluginInactiveFailure() *common.TaskInfo {
-	return &common.TaskInfo{
-		Status:     common.TaskStatusFailure,
-		FailReason: "任务所属 JS 插件已停用，自动终止并退款",
-	}
-}
-
 // pollSingleTask 轮询单个任务
 func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *common.ChannelBasicInfo, task *common.AsyncTask) {
 	// 从 PrivateData 提取上游任务 ID 和计费上下文
@@ -524,15 +514,13 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 
 	resp, err := adaptor.FetchTask(pollCtx, channel.BaseURL, channel.ApiKey, taskData)
 	if err != nil {
-		// 插件停用/删除：任务归属的 JS 插件已不在当前 generation，后续轮询永无结果，
-		// 不等下一轮更不等超时网，立即按失败终态化并退款（applyTaskPollResult 失败分支，
-		// 复用状态 CAS、SettleTaskFailed 退款、用量日志与审计）。body 传任务既有快照，
-		// 避免空 body 把 data 列覆盖为 null
+		// 插件缺席（更新窗口/禁用/删除）：本轮跳过，任务保持非终态等插件回归——上游
+		// 可能仍在执行且已真实扣费，立即判死退款会造成平台资损。永久缺席由
+		// 30 分钟超时网（handleTimedOutTasks → 失败 + 退款）兜底
 		if errors.Is(err, jsbridge.ErrPluginNotActive) {
-			g.Log().Warningf(ctx, "poll: js plugin for task %s not active, abort and refund: %v", task.PublicTaskID, err)
+			g.Log().Warningf(ctx, "poll: js plugin for task %s not active, skip this round (waiting plugin return): %v", task.PublicTaskID, err)
 			dbgAttempt.MarkFinal(err)
 			dbgSess.FinalizeAndSubmit(0, 0)
-			applyTaskPollResult(ctx, task, channel, jsPluginInactiveFailure(), task.Data, nil, pd, nil, nil)
 			return
 		}
 		g.Log().Warningf(ctx, "poll: fetch task %s: %v", task.PublicTaskID, err)
@@ -807,15 +795,12 @@ func pollBatchTasks(ctx context.Context, batcher common.BatchTaskPoller, channel
 
 		resp, err := batcher.FetchBatchTasks(ctx, channel.BaseURL, channel.ApiKey, refs)
 		if err != nil {
-			// 插件停用/删除：整批任务立即按失败终态化并退款（不等超时网），逐任务走
-			// applyTaskPollResult 失败分支。body 传各任务既有快照，避免空 body 把
-			// data 列覆盖为 null（批量路径无逐任务调试会话，dbg 参数与既有调用一致传 nil）
+			// 插件缺席（更新窗口/禁用/删除）：整批任务本轮跳过，保持非终态等插件回归——
+			// 上游可能仍在执行且已真实扣费，立即判死退款会造成平台资损。永久缺席由
+			// 30 分钟超时网兜底（handleTimedOutTasks → 失败 + 退款）
 			if errors.Is(err, jsbridge.ErrPluginNotActive) {
-				g.Log().Warningf(ctx, "poll: js plugin for channel %d platform %s not active, abort and refund %d tasks: %v",
+				g.Log().Warningf(ctx, "poll: js plugin for channel %d platform %s not active, skip %d tasks this round (waiting plugin return): %v",
 					channel.ID, platform, len(refs), err)
-				for _, w := range wrapped {
-					applyTaskPollResult(ctx, w.task, channel, jsPluginInactiveFailure(), w.task.Data, nil, w.pd, nil, nil)
-				}
 				continue
 			}
 			g.Log().Warningf(ctx, "poll: batch fetch channel %d platform %s (%d tasks): %v", channel.ID, platform, len(refs), err)

@@ -106,7 +106,7 @@ func GetConfigView(ctx context.Context, pluginKey string, m *contract.Manifest) 
 func validateEncryptedConfigTypes(m *contract.Manifest) error {
 	for _, f := range m.Config {
 		if f.Encrypted && f.Type != "string" && f.Type != "text" {
-			return gerror.Newf("配置项 %q 声明 encrypted，但加密仅支持 string/text 类型（当前 %q）", f.Key, f.Type)
+			return gerror.NewCodef(pluginOpCode(), "配置项 %q 声明 encrypted，但加密仅支持 string/text 类型（当前 %q）", f.Key, f.Type)
 		}
 	}
 	return nil
@@ -118,7 +118,7 @@ func validateEncryptedConfigTypes(m *contract.Manifest) error {
 // 中途失败不会留下半更新状态（加密/校验失败时一个键都不写）。
 func UpdateConfig(ctx context.Context, pluginKey string, m *contract.Manifest, values map[string]any) error {
 	if len(values) == 0 {
-		return gerror.New("配置值不能为空")
+		return pluginOpError("配置值不能为空")
 	}
 	// 写入期防御：拦截存量坏行（加密声明 + 非 string/text 类型——加密写路径
 	// 只覆盖 string/text，其余类型会明文落库而读取侧却走解密）
@@ -127,7 +127,7 @@ func UpdateConfig(ctx context.Context, pluginKey string, m *contract.Manifest, v
 	}
 	for k := range values {
 		if m.ConfigFieldByKey(k) == nil {
-			return gerror.Newf("配置项 %q 未在 manifest.config 中声明", k)
+			return pluginOpError("配置项 %q 未在 manifest.config 中声明", k)
 		}
 	}
 	// modelsFromConfig 扩展模型预检：冲突在此拒绝，而不是落库后 generation 重建
@@ -153,7 +153,8 @@ func UpdateConfig(ctx context.Context, pluginKey string, m *contract.Manifest, v
 		}
 		str, err := configValueFromAny(ctx, field, v)
 		if err != nil {
-			return gerror.Wrapf(err, "配置项 %q", field.Key)
+			// 类型校验失败（需要整数/不在选项内等）是提交值问题，带码透出文案
+			return gerror.WrapCode(pluginOpCode(), err, "配置项 "+strconv.Quote(field.Key))
 		}
 		writes = append(writes, pendingWrite{key: configKey(pluginKey, field.Key), val: str})
 	}
@@ -190,7 +191,8 @@ func precheckModelsConfig(ctx context.Context, pluginKey string, m *contract.Man
 	}
 	setA, err := effectiveModelSet(m, merged)
 	if err != nil {
-		return gerror.Wrapf(err, "扩展模型配置 %q", m.ModelsFromConfig)
+		// 扩展模型值解析失败（填坏值）是提交值问题，带码透出文案
+		return gerror.WrapCode(pluginOpCode(), err, "扩展模型配置 "+strconv.Quote(m.ModelsFromConfig))
 	}
 
 	// 其他激活且启用插件的有效集（与 generation 实际装载口径一致；未启用插件

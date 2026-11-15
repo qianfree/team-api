@@ -3,8 +3,6 @@ package jsplugin
 import (
 	"strings"
 
-	"github.com/gogf/gf/v2/errors/gerror"
-
 	"github.com/qianfree/team-api/internal/jsplugin/contract"
 )
 
@@ -84,12 +82,12 @@ func checkModelSetConflict(self modelSetParty, others []modelSetParty) error {
 			for _, mb := range other.models {
 				if ma == mb {
 					if !sharedOK {
-						return gerror.Newf("模型 %s 已被插件 %s 声明（如需同名多插件经不同渠道服务，双方 manifest 均声明 sharedModels: true）", ma, other.key)
+						return pluginOpError("模型 %s 已被插件 %s 声明（如需同名多插件经不同渠道服务，双方 manifest 均声明 sharedModels: true）", ma, other.key)
 					}
 					continue
 				}
 				if strings.EqualFold(ma, mb) && !sharedOK {
-					return gerror.Newf("模型 %s 与插件 %s 的 %s 仅大小写不同", ma, other.key, mb)
+					return pluginOpError("模型 %s 与插件 %s 的 %s 仅大小写不同", ma, other.key, mb)
 				}
 			}
 		}

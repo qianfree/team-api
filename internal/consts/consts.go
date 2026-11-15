@@ -245,6 +245,10 @@ const (
 
 	// Team feature gating
 	CodeTeamNotEnabled = 10418
+
+	// JS plugin management (jsplugin 渠道插件上传/激活/启停/删除的用户可修复校验错误，
+	// 文案中文自解释，凭 message 区分场景)
+	CodeJSPluginOperation = 10419
 )
 
 // Common error messages
