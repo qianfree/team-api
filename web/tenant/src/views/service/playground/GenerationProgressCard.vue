@@ -144,7 +144,8 @@ const elapsedText = computed(() => {
 .gen-card--image {
 	aspect-ratio: 1 / 1;
 	max-width: 360px;
-	margin-inline: auto;
+	/* 对话流中头像下方左对齐（曾用 margin-inline:auto 居中于整页结果区，该布局已废弃） */
+	margin-inline: 0;
 }
 .gen-card--video {
 	aspect-ratio: 16 / 9;
