@@ -160,6 +160,8 @@ type IAdminV1 interface {
 	JSPluginActivate(ctx context.Context, req *v1.JSPluginActivateReq) (res *v1.JSPluginActivateRes, err error)
 	JSPluginEnable(ctx context.Context, req *v1.JSPluginEnableReq) (res *v1.JSPluginEnableRes, err error)
 	JSPluginDelete(ctx context.Context, req *v1.JSPluginDeleteReq) (res *v1.JSPluginDeleteRes, err error)
+	JSPluginDeleteCheck(ctx context.Context, req *v1.JSPluginDeleteCheckReq) (res *v1.JSPluginDeleteCheckRes, err error)
+	JSPluginPurge(ctx context.Context, req *v1.JSPluginPurgeReq) (res *v1.JSPluginPurgeRes, err error)
 	JSPluginSource(ctx context.Context, req *v1.JSPluginSourceReq) (res *v1.JSPluginSourceRes, err error)
 	JSPluginRoutes(ctx context.Context, req *v1.JSPluginRoutesReq) (res *v1.JSPluginRoutesRes, err error)
 	JSPluginOpsStats(ctx context.Context, req *v1.JSPluginOpsStatsReq) (res *v1.JSPluginOpsStatsRes, err error)

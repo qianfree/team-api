@@ -56,8 +56,12 @@ const {
   send,
   stop,
   repair,
+  continueCode,
   toggleSkill,
 } = chat
+
+/** 可见消息：隐藏的续写指令仍进上游上下文，但不渲染 */
+const visibleMessages = computed(() => messages.value.filter((m) => !m.hidden))
 
 const listEl = ref<HTMLElement | null>(null)
 const textareaEl = ref<HTMLTextAreaElement | null>(null)
@@ -65,8 +69,9 @@ const textareaEl = ref<HTMLTextAreaElement | null>(null)
 const activeView = ref<'chat' | 'config'>('chat')
 
 // 未启用判定：公共配置未开启 且 无配置权限（有配置权限的人始终可进配置面板开启）
+// 注意 settings 是 ref，script 里必须 .value 取值（模板才会自动解包）
 const assistantDisabled = computed(
-  () => publicSettings.ai_assistant_enabled !== true && !canConfig
+  () => publicSettings.value.ai_assistant_enabled !== true && !canConfig
 )
 
 /** 空态引导问句：点一下填进输入框（不直接发送，留出改字空间） */
@@ -84,6 +89,41 @@ const typingMsgId = computed(() => {
   return last.parts.some((p) => p.content.length > 0) ? 0 : last.id
 })
 
+// ── 思考过程（推理型模型的 reasoning）────────────────────
+// 正文/代码开始输出后自动收藏；手动点开则以手动状态为准
+const thinkingLiveId = computed(() => {
+  if (!streaming.value) return 0
+  const last = messages.value[messages.value.length - 1]
+  if (!last || last.role !== 'assistant' || !last.thinking) return 0
+  return last.parts.some((p) => p.content.length > 0) ? 0 : last.id
+})
+
+const thinkOpen = ref<Record<number, boolean>>({})
+
+function isThinkOpen(msg: ChatMsg): boolean {
+  const stored = thinkOpen.value[msg.id]
+  return stored === undefined ? msg.id === thinkingLiveId.value : stored
+}
+
+function toggleThink(msg: ChatMsg) {
+  thinkOpen.value[msg.id] = !isThinkOpen(msg)
+}
+
+// 思考正文自动跟底（只跟正在思考的那条）
+const thinkEl = ref<HTMLElement | null>(null)
+function setThinkEl(el: unknown) {
+  thinkEl.value = (el as HTMLElement) || null
+}
+watch(
+  () => messages.value[messages.value.length - 1]?.thinking?.length || 0,
+  async () => {
+    if (!thinkingLiveId.value) return
+    await nextTick()
+    const el = thinkEl.value
+    if (el) el.scrollTop = el.scrollHeight
+  },
+)
+
 function renderMarkdown(text: string): string {
   if (!text) return ''
   return sanitizeHtml(marked.parse(text) as string)
@@ -91,6 +131,15 @@ function renderMarkdown(text: string): string {
 
 function skillLabel(key: string): string {
   return SKILL_OPTIONS.find((o) => o.key === key)?.label || key
+}
+
+/** 续写被截断的代码：增量并回原代码段，结束后自动重新校验 */
+async function onContinueCode(part: MessagePart) {
+  if (streaming.value) return
+  await continueCode(part)
+  await nextTick()
+  const el = listEl.value
+  if (el) el.scrollTop = el.scrollHeight
 }
 
 function close() {
@@ -482,7 +531,7 @@ watch(activeView, (v) => {
         </div>
         <div class="ai-head__actions">
           <button
-            v-if="activeView === 'chat' && messages.length > 0"
+            v-if="activeView === 'chat' && visibleMessages.length > 0"
             type="button"
             class="ai-head__btn"
             title="新对话"
@@ -574,6 +623,10 @@ watch(activeView, (v) => {
                   <AInputNumber v-model="configForm.ai_assistant_timeout_ms" :min="1000" :max="600000" :step="1000" hide-button />
                 </div>
               </div>
+              <p class="cfg-hint">
+                激活技能生成代码时，输出上限自动抬到 16,384、温度降到 0.2（你的配置更严格时以你的为准）；
+                单次输出被截断时，可在工作台点「续写剩余部分」接着写，续写会合并进同一版本。
+              </p>
             </section>
 
             <!-- 会话与限流 -->
@@ -642,7 +695,7 @@ watch(activeView, (v) => {
       <template v-if="activeView === 'chat'">
         <!-- 消息列表 -->
         <div ref="listEl" class="ai-list">
-          <div v-if="messages.length === 0" class="ai-empty">
+          <div v-if="visibleMessages.length === 0" class="ai-empty">
             <span class="ai-empty__mark"><IconRobot /></span>
             <template v-if="assistantDisabled">
               <p class="ai-empty__title">AI 助手未启用</p>
@@ -662,12 +715,31 @@ watch(activeView, (v) => {
             </template>
           </div>
 
-          <div v-for="msg in messages" :key="msg.id" class="ai-row" :class="`ai-row--${msg.role}`">
+          <div v-for="msg in visibleMessages" :key="msg.id" class="ai-row" :class="`ai-row--${msg.role}`">
             <span v-if="msg.role === 'assistant'" class="ai-row__avatar"><IconRobot /></span>
             <div class="ai-row__body">
               <div v-if="msg.role === 'user' && msg.skills?.length" class="ai-row__skills">
                 <span v-for="s in msg.skills" :key="s" class="ai-chip">{{ skillLabel(s) }}</span>
               </div>
+              <!-- 思考过程：推理型模型正文前会持续输出 reasoning -->
+              <div
+                v-if="msg.role === 'assistant' && msg.thinking"
+                class="ai-think"
+                :class="{ 'ai-think--live': msg.id === thinkingLiveId }"
+              >
+                <button type="button" class="ai-think__head" @click="toggleThink(msg)">
+                  <i class="ai-think__dot" />
+                  <span class="ai-think__label">{{ msg.id === thinkingLiveId ? '正在思考…' : '思考过程' }}</span>
+                  <span class="ai-think__meta">{{ msg.thinking.length.toLocaleString() }} 字</span>
+                  <span class="ai-think__chev">{{ isThinkOpen(msg) ? '收起' : '展开' }}</span>
+                </button>
+                <div
+                  v-if="isThinkOpen(msg)"
+                  :ref="(el) => { if (msg.id === thinkingLiveId) setThinkEl(el) }"
+                  class="ai-think__body"
+                >{{ msg.thinking }}</div>
+              </div>
+
               <template v-for="(part, idx) in msg.parts" :key="idx">
                 <!-- 正文：助手走 markdown；用户消息按纯文本插值（不过 marked，避免 <p> 默认外边距
                      把单行气泡撑高，也避免用户输入的 * / # 被当成语法） -->
@@ -690,6 +762,13 @@ watch(activeView, (v) => {
                     </button>
                   </div>
                   <pre v-show="!partCollapsed(msg, idx)" class="ai-code__pre"><code>{{ part.content }}</code></pre>
+                  <!-- 被 max_tokens 截断：明确告知 + 一键续写 -->
+                  <div v-if="part.truncated" class="ai-trunc">
+                    <span class="ai-trunc__text">输出达到长度上限，代码不完整</span>
+                    <button type="button" class="ai-trunc__btn" :disabled="streaming" @click="onContinueCode(part)">
+                      {{ streaming ? '续写中…' : '续写剩余部分' }}
+                    </button>
+                  </div>
                   <!-- 校验报告 -->
                   <div v-if="part.report" class="ai-report" :class="part.report.ok ? 'ai-report--ok' : 'ai-report--fail'">
                     <div class="ai-report__title">
@@ -717,7 +796,7 @@ watch(activeView, (v) => {
                       </li>
                     </ul>
                     <button
-                      v-if="!streaming && reportNeedsRepair(part.report)"
+                      v-if="!streaming && !part.truncated && reportNeedsRepair(part.report)"
                       type="button"
                       class="ai-report__repair"
                       @click="onRepair(part.report!)"
@@ -727,7 +806,7 @@ watch(activeView, (v) => {
               </template>
 
               <!-- 等待首 token -->
-              <div v-if="msg.id === typingMsgId" class="ai-typing"><i /><i /><i /></div>
+              <div v-if="msg.id === typingMsgId && !msg.thinking" class="ai-typing"><i /><i /><i /></div>
 
               <div v-if="msg.error" class="ai-row__error">
                 <IconCloseCircleFill />
@@ -1378,6 +1457,110 @@ watch(activeView, (v) => {
 }
 
 /* 打字指示器 */
+/* 截断提示条 */
+.ai-trunc {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--ta-border);
+  background: color-mix(in srgb, rgb(var(--orange-5)) 7%, transparent);
+  font-size: 12px;
+  color: var(--ta-text-secondary);
+}
+.ai-trunc__text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-trunc__btn {
+  flex-shrink: 0;
+  padding: 3px 10px;
+  border: none;
+  border-radius: 6px;
+  background: linear-gradient(135deg, rgb(var(--orange-5)), rgb(var(--orange-6)));
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+}
+.ai-trunc__btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* 思考过程（reasoning）折叠块 */
+.ai-think {
+  border: 1px solid var(--ta-border);
+  border-radius: 10px;
+  background: var(--ta-bg-secondary);
+  overflow: hidden;
+}
+.ai-think--live {
+  border-color: color-mix(in srgb, var(--ta-primary) 32%, transparent);
+  background: color-mix(in srgb, var(--ta-primary) 5%, var(--ta-bg-card));
+}
+.ai-think__head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+.ai-think__dot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--ta-text-tertiary, #94a3b8);
+}
+.ai-think--live .ai-think__dot {
+  background: var(--ta-primary);
+  animation: aiThinkPulse 1.4s infinite ease-in-out;
+}
+@keyframes aiThinkPulse {
+  0%, 100% { opacity: 0.3; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1.15); }
+}
+.ai-think__label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ta-text-secondary);
+}
+.ai-think--live .ai-think__label {
+  color: var(--ta-primary);
+}
+.ai-think__meta {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--ta-text-tertiary, #94a3b8);
+  font-variant-numeric: tabular-nums;
+}
+.ai-think__chev {
+  font-size: 11px;
+  color: var(--ta-text-tertiary, #94a3b8);
+}
+.ai-think__head:hover .ai-think__chev {
+  color: var(--ta-primary);
+}
+.ai-think__body {
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 0 12px 9px 23px;
+  font-size: 12px;
+  line-height: 1.75;
+  color: var(--ta-text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  scrollbar-width: thin;
+}
+
+
 .ai-typing {
   display: inline-flex;
   align-items: center;

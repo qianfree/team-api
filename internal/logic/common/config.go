@@ -287,6 +287,31 @@ func (s *ConfigService) SetOption(ctx context.Context, key, value string) error 
 	return nil
 }
 
+// DeleteOptionsByPrefix 按前缀删除配置项（JS 插件整删时清理 plugin.{key}.* 键），
+// 返回删除的键数。先取键清单再删行，逐键逐出内存缓存——绕过缓存直接删行会让
+// 已缓存的旧值在本进程内继续生效（同 key 重新上传时会静默继承旧配置）。
+// 前缀匹配基于 LIKE：调用方须保证前缀不含 %/_ 通配符（插件 key 格式
+// ^[a-z][a-z0-9-]{1,29}$ 已排除）。
+func (s *ConfigService) DeleteOptionsByPrefix(ctx context.Context, prefix string) (int64, error) {
+	if prefix == "" {
+		return 0, gerror.New("配置键前缀不能为空")
+	}
+	keys, err := dao.SysOptions.Ctx(ctx).WhereLike("key", prefix+"%").Fields("key").Array()
+	if err != nil {
+		return 0, err
+	}
+	if len(keys) == 0 {
+		return 0, nil
+	}
+	if _, err = dao.SysOptions.Ctx(ctx).WhereLike("key", prefix+"%").Delete(); err != nil {
+		return 0, err
+	}
+	for _, k := range keys {
+		s.cache.Delete(ctx, k.String())
+	}
+	return int64(len(keys)), nil
+}
+
 // UpdateCategory batch-updates all settings in a category.
 // Skips masked sensitive values ("******").
 func (s *ConfigService) UpdateCategory(ctx context.Context, category string, values map[string]string) error {

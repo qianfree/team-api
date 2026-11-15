@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -28,11 +29,14 @@ type aiChatRequest struct {
 // 流式响应必须与统一 JSON 包装互斥，故走 handler 注册（同 file_serve 的归类逻辑）。
 // 事件协议（前端按 type 分发）：
 //
+//	data: {"type":"thinking","content":"..."}     思考过程增量（推理型模型的 reasoning，与正文分开渲染）
 //	data: {"type":"delta","content":"..."}        正文增量（markdown 渲染）
 //	data: {"type":"code_start","skill":"js_plugin","lang":"js"}
 //	data: {"type":"code_delta","content":"..."}   代码增量（专用代码卡片渲染，不经 markdown）
-//	data: {"type":"code_end"}
+//	data: {"type":"code_end","implicit":true}      闭栏是服务端补的（模型未写闭栏）
+//	data: {"type":"truncated","reason":"max_tokens","limit":N} 输出被输出上限截断
 //	data: {"type":"validate", ...}                技能校验报告（流末，提取到代码且有激活技能时）
+//	data: {"type":"notice","message":"..."}       非致命提示（如 max_tokens 回退重试）
 //	data: {"type":"usage","model":"...","prompt_tokens":N,...}
 //	data: {"type":"error","message":"..."}        流中错误（此后紧跟 [DONE]）
 //	data: [DONE]
@@ -77,52 +81,80 @@ func HandleAiAssistantChat(r *ghttp.Request) {
 
 	writeSSE(r, map[string]any{"type": "start", "model": cfg.Model})
 
-	splitter := aiassistant.NewFenceSplitter()
+	activeSkills := aiassistant.FilterSkillKeys(req.Skills)
+	// 技能激活 = 代码生成模式：给足 max_tokens、压低温度（默认 4096 写不完一个
+	// 400 行插件，必然截断）
+	maxTokens, temperature := aiassistant.GenerationParams(cfg.MaxTokens, cfg.Temperature, len(activeSkills) > 0)
+	client := aiassistant.NewClient(cfg)
+
 	var (
 		textBuf    strings.Builder // 全文（兜底提取用）
 		codeBuf    strings.Builder // 围栏内代码
 		inCode     bool
 		codeOpened bool
 		fenceLang  string
+		wroteAny   bool // 是否已向前端写出过任何增量
 	)
-	activeSkills := aiassistant.FilterSkillKeys(req.Skills)
 
-	usage, err := aiassistant.NewClient(cfg).ChatStream(ctx, msgs, cfg.MaxTokens, cfg.Temperature, func(delta string) {
-		textBuf.WriteString(delta)
-		for _, ev := range splitter.Feed(delta) {
-			switch ev.Kind {
-			case aiassistant.FenceText:
-				writeSSE(r, map[string]any{"type": "delta", "content": ev.Text})
-			case aiassistant.FenceCodeStart:
-				inCode, codeOpened = true, true
-				fenceLang = ev.Lang
-				writeSSE(r, map[string]any{"type": "code_start", "lang": ev.Lang})
-			case aiassistant.FenceCodeDelta:
-				if inCode {
-					codeBuf.WriteString(ev.Text)
+	// runStream 跑一次完整流（含收尾冲刷）。wroteAny 由 emit 统一置位：
+	// 只有「一个字都没写出去」时，回退重试才是安全且不重复的。
+	runStream := func(mt int, temp float64) (*aiassistant.StreamResult, error) {
+		splitter := aiassistant.NewFenceSplitter()
+		textBuf.Reset()
+		codeBuf.Reset()
+		inCode, codeOpened, fenceLang = false, false, ""
+
+		emit := func(evs []aiassistant.FenceEvent) {
+			for _, ev := range evs {
+				switch ev.Kind {
+				case aiassistant.FenceText:
+					wroteAny = true
+					writeSSE(r, map[string]any{"type": "delta", "content": ev.Text})
+				case aiassistant.FenceCodeStart:
+					wroteAny = true
+					inCode, codeOpened = true, true
+					fenceLang = ev.Lang
+					writeSSE(r, map[string]any{"type": "code_start", "lang": ev.Lang})
+				case aiassistant.FenceCodeDelta:
+					wroteAny = true
+					if inCode {
+						codeBuf.WriteString(ev.Text)
+					}
+					writeSSE(r, map[string]any{"type": "code_delta", "content": ev.Text})
+				case aiassistant.FenceCodeEnd:
+					wroteAny = true
+					inCode = false
+					// implicit=true：闭栏行是服务端补的，模型没写闭栏 = 输出不完整
+					writeSSE(r, map[string]any{"type": "code_end", "implicit": ev.Implicit})
 				}
-				writeSSE(r, map[string]any{"type": "code_delta", "content": ev.Text})
-			case aiassistant.FenceCodeEnd:
-				inCode = false
-				writeSSE(r, map[string]any{"type": "code_end"})
 			}
 		}
-	})
 
-	// 流结束：冲刷未完成行 + 隐式闭合
-	for _, ev := range splitter.Finish() {
-		switch ev.Kind {
-		case aiassistant.FenceText:
-			writeSSE(r, map[string]any{"type": "delta", "content": ev.Text})
-		case aiassistant.FenceCodeDelta:
-			if inCode {
-				codeBuf.WriteString(ev.Text)
-			}
-			writeSSE(r, map[string]any{"type": "code_delta", "content": ev.Text})
-		case aiassistant.FenceCodeEnd:
-			inCode = false
-			writeSSE(r, map[string]any{"type": "code_end"})
-		}
+		res, err := client.ChatStream(ctx, msgs, mt, temp, func(delta string) {
+			wroteAny = true
+			textBuf.WriteString(delta)
+			emit(splitter.Feed(delta))
+		}, func(reasoning string) {
+			// 思考过程不进围栏切分器（它不是正文，也不参与代码提取）
+			wroteAny = true
+			writeSSE(r, map[string]any{"type": "thinking", "content": reasoning})
+		})
+		// 流结束：冲刷未完成行 + 隐式闭合（出错也冲刷，保住已生成的部分）
+		emit(splitter.Finish())
+		return res, err
+	}
+
+	res, err := runStream(maxTokens, temperature)
+	// 上游不接受抬高后的 max_tokens（小上限模型/上下文窗口不足）：回退配置值重试一次。
+	// 前置条件是还没写出任何增量，否则重试会把内容重复推给前端。
+	if err != nil && maxTokens != cfg.MaxTokens && !wroteAny && aiassistant.IsMaxTokensRejected(err) {
+		g.Log().Warningf(ctx, "[AiAssistant] max_tokens %d rejected, fallback to %d: %v", maxTokens, cfg.MaxTokens, err)
+		writeSSE(r, map[string]any{
+			"type":    "notice",
+			"message": fmt.Sprintf("上游不接受 %d 的输出上限，已回退到 %d 重试", maxTokens, cfg.MaxTokens),
+		})
+		maxTokens = cfg.MaxTokens
+		res, err = runStream(cfg.MaxTokens, cfg.Temperature)
 	}
 
 	if err != nil {
@@ -146,9 +178,24 @@ func HandleAiAssistantChat(r *ghttp.Request) {
 			writeSSE(r, map[string]any{"type": "code_end"})
 		}
 	}
+	// 截断标记必须在此刻（兜底提取之后、validate 之前）下发：前端据此给「当前代码段」
+	// 打 incomplete 标记，把「让 AI 修复」换成「续写剩余部分」——重写只会撞同一上限。
+	if res.Truncated() {
+		writeSSE(r, map[string]any{"type": "truncated", "reason": "max_tokens", "limit": maxTokens})
+	}
+
 	if code != "" && len(activeSkills) > 0 {
 		if s, ok := skills.Get(aiassistant.SkillKeyForFence(fenceLang, activeSkills)); ok {
 			report := s.Validate(strings.TrimSuffix(code, "\n"))
+			if res.Truncated() {
+				// 截断的报告要能自解释根因，否则只有一句「编译失败」误导用户
+				report.OK = false
+				report.Checks = append([]skills.Check{{
+					Name:   "completion",
+					Status: "fail",
+					Detail: fmt.Sprintf("输出达到 max_tokens 上限（%d），代码被截断，需续写后重新校验", maxTokens),
+				}}, report.Checks...)
+			}
 			writeSSE(r, report)
 		}
 	}
@@ -156,15 +203,15 @@ func HandleAiAssistantChat(r *ghttp.Request) {
 	writeSSE(r, map[string]any{
 		"type":              "usage",
 		"model":             cfg.Model,
-		"prompt_tokens":     usage.PromptTokens,
-		"completion_tokens": usage.CompletionTokens,
-		"total_tokens":      usage.TotalTokens,
+		"prompt_tokens":     res.Usage.PromptTokens,
+		"completion_tokens": res.Usage.CompletionTokens,
+		"total_tokens":      res.Usage.TotalTokens,
 	})
 	writeDone(r)
 
 	// 元数据日志（不落对话内容）：调用留痕 + 成本可见
 	g.Log().Infof(ctx, "[AiAssistant] chat done admin=%d model=%s skills=%v tokens=%d",
-		adminID, cfg.Model, activeSkills, usage.TotalTokens)
+		adminID, cfg.Model, activeSkills, res.Usage.TotalTokens)
 }
 
 // allowChatRate 每管理员固定窗口限流（Redis INCR + EXPIRE）。

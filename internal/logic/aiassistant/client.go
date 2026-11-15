@@ -88,14 +88,46 @@ type chatResponse struct {
 	} `json:"error"`
 }
 
+// streamDelta 单条分片的增量字段。
+// 同时兼容两种思考字段：reasoning_content（DeepSeek/Qwen/GLM 等）与
+// reasoning（部分兼容端点的写法），两者都不参与正文。
+type streamDelta struct {
+	Content          string `json:"content"`
+	ReasoningContent string `json:"reasoning_content"`
+	Reasoning        string `json:"reasoning"`
+}
+
+// ReasoningText 思考增量（两种字段名任取其一）。
+func (d streamDelta) ReasoningText() string {
+	if d.ReasoningContent != "" {
+		return d.ReasoningContent
+	}
+	return d.Reasoning
+}
+
 // streamChunk 流式分片。
 type streamChunk struct {
 	Choices []struct {
-		Delta struct {
-			Content string `json:"content"`
-		} `json:"delta"`
+		Delta        streamDelta `json:"delta"`
+		FinishReason string      `json:"finish_reason"`
 	} `json:"choices"`
 	Usage *Usage `json:"usage"`
+}
+
+// FinishReasonLength 上游因 max_tokens 被截断（其余取值：stop / content_filter / tool_calls）。
+const FinishReasonLength = "length"
+
+// StreamResult 一次流式调用的结果。
+type StreamResult struct {
+	Usage        Usage
+	FinishReason string // 端点未返回时为空
+}
+
+// Truncated 本次输出是否因达到 max_tokens 被截断。
+// 这是「代码不完整」的唯一可靠信号——模型自然停止（stop）但漏写闭合行属另一类问题，
+// 由调用方按隐式闭合单独处理。
+func (r *StreamResult) Truncated() bool {
+	return r != nil && r.FinishReason == FinishReasonLength
 }
 
 // ConnTestResult 连通性测试结果（与 aianalysis 同构）。
@@ -108,9 +140,11 @@ type ConnTestResult struct {
 	Error      string `json:"error,omitempty"`
 }
 
-// ChatStream 流式对话：逐 delta 回调 onDelta，返回最终 usage。
+// ChatStream 流式对话：逐增量回调 onDelta（正文）与 onReasoning（思考过程），
+// 返回最终 usage。推理型模型会先持续输出思考内容再输出正文，两条通道必须分开
+// 回传，否则前端只能干等正文首 token。
 // ctx 取消（管理员关闭页面/停止生成）会联动中断上游请求，及时止损 token。
-func (c *Client) ChatStream(ctx context.Context, messages []ChatMessage, maxTokens int, temperature float64, onDelta func(string)) (*Usage, error) {
+func (c *Client) ChatStream(ctx context.Context, messages []ChatMessage, maxTokens int, temperature float64, onDelta, onReasoning func(string)) (*StreamResult, error) {
 	reqBody := chatRequest{
 		Model:       c.model,
 		Messages:    messages,
@@ -122,12 +156,12 @@ func (c *Client) ChatStream(ctx context.Context, messages []ChatMessage, maxToke
 	}
 	body, err := json.Marshal(reqBody)
 	if err != nil {
-		return nil, err
+		return &StreamResult{}, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return &StreamResult{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
@@ -137,16 +171,16 @@ func (c *Client) ChatStream(ctx context.Context, messages []ChatMessage, maxToke
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return nil, gerror.Wrap(err, "调用 AI 助手端点失败")
+		return &StreamResult{}, gerror.Wrap(err, "调用 AI 助手端点失败")
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		msg := readErrMessage(resp.Body)
-		return nil, gerror.Newf("AI 助手端点返回非成功状态（HTTP %d）: %s", resp.StatusCode, msg)
+		return &StreamResult{}, gerror.Newf("AI 助手端点返回非成功状态（HTTP %d）: %s", resp.StatusCode, msg)
 	}
 
-	usage := &Usage{}
+	res := &StreamResult{}
 	reader := bufio.NewReaderSize(resp.Body, 64<<10)
 	for {
 		line, err := reader.ReadString('\n')
@@ -154,7 +188,7 @@ func (c *Client) ChatStream(ctx context.Context, messages []ChatMessage, maxToke
 			if err == io.EOF {
 				break
 			}
-			return usage, gerror.Wrap(err, "读取 AI 助手流式响应失败")
+			return res, gerror.Wrap(err, "读取 AI 助手流式响应失败")
 		}
 		line = strings.TrimRight(line, "\r\n")
 		if line == "" || strings.HasPrefix(line, ":") {
@@ -166,7 +200,7 @@ func (c *Client) ChatStream(ctx context.Context, messages []ChatMessage, maxToke
 		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 		if data == "" || data == "[DONE]" {
 			if data == "[DONE]" {
-				return usage, nil
+				return res, nil
 			}
 			continue
 		}
@@ -175,14 +209,42 @@ func (c *Client) ChatStream(ctx context.Context, messages []ChatMessage, maxToke
 			continue // 兼容端点夹带的非 JSON 行，跳过不中断
 		}
 		if chunk.Usage != nil {
-			*usage = *chunk.Usage
+			res.Usage = *chunk.Usage
 		}
-		if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" && onDelta != nil {
-			onDelta(chunk.Choices[0].Delta.Content)
+		if len(chunk.Choices) == 0 {
+			continue
+		}
+		if fr := chunk.Choices[0].FinishReason; fr != "" {
+			res.FinishReason = fr
+		}
+		d := chunk.Choices[0].Delta
+		if r := d.ReasoningText(); r != "" && onReasoning != nil {
+			onReasoning(r)
+		}
+		if d.Content != "" && onDelta != nil {
+			onDelta(d.Content)
 		}
 	}
-	// 流未发 [DONE] 自然结束（部分兼容端点的形态），usage 原样返回
-	return usage, nil
+	// 流未发 [DONE] 自然结束（部分兼容端点的形态），结果原样返回
+	return res, nil
+}
+
+// IsMaxTokensRejected 判断上游错误是否在拒绝本次请求的 max_tokens
+// （小上限模型的典型回应："max_tokens is too large" / "maximum context length"）。
+// 命中时调用方可退回配置值重试一次——它发生在写出任何增量之前，重试安全。
+func IsMaxTokensRejected(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, kw := range []string{"max_tokens", "max_output_tokens", "max new tokens", "context length"} {
+		if strings.Contains(msg, kw) {
+			return true
+		}
+	}
+	// "This model's maximum context length is 8192 tokens" 这类：抬高 max_tokens 后
+	// prompt+max_tokens 超窗，同样是本端抬高导致的，值得回退重试一次。
+	return strings.Contains(msg, "maximum") && strings.Contains(msg, "token")
 }
 
 // TestConnection 用最小补全验证端点/密钥/模型可用性（非流式）。

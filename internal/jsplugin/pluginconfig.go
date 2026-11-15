@@ -43,6 +43,14 @@ func seedConfigDefaults(ctx context.Context, m *contract.Manifest) error {
 	return nil
 }
 
+// deletePluginConfigKeys 整删插件时清理 sys_options 的 plugin.{key}.* 配置键
+// （含加密密钥与宿主内置项，如 artifact_storage 转存开关）。不清理的话，
+// 同 key 重新上传的新插件会经 seedConfigDefaults 静默继承旧值。
+func deletePluginConfigKeys(ctx context.Context, pluginKey string) error {
+	_, err := lcommon.Config().DeleteOptionsByPrefix(ctx, configKey(pluginKey, ""))
+	return err
+}
+
 // loadPluginConfig 装载插件配置值（加密字段解密），返回给实例注入 utils.config.get。
 func loadPluginConfig(ctx context.Context, m *contract.Manifest) (map[string]any, error) {
 	fields := m.AllConfig()

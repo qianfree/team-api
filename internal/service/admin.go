@@ -378,6 +378,12 @@ type (
 		JSPluginActivate(ctx context.Context, req *v1.JSPluginActivateReq) (*v1.JSPluginActivateRes, error)
 		JSPluginEnable(ctx context.Context, req *v1.JSPluginEnableReq) (*v1.JSPluginEnableRes, error)
 		JSPluginDelete(ctx context.Context, req *v1.JSPluginDeleteReq) (*v1.JSPluginDeleteRes, error)
+		// JSPluginDeleteCheck 整删预检：注册中心判定（内置 / 启用中拒绝）+ 在途任务计数。
+		// 在途 = platform=js:{key} 的非终态任务（SUCCESS/FAILURE 之外）——整删后轮询等不到
+		// 插件回归，由 30 分钟超时网判失败并退款，确认弹窗必须让管理员看到这个数。
+		JSPluginDeleteCheck(ctx context.Context, req *v1.JSPluginDeleteCheckReq) (*v1.JSPluginDeleteCheckRes, error)
+		// JSPluginPurge 删除整个上传插件（全部版本 + 配置键），预检拒绝条件同 DeletePlugin。
+		JSPluginPurge(ctx context.Context, req *v1.JSPluginPurgeReq) (*v1.JSPluginPurgeRes, error)
 		// JSPluginSource 查看指定版本源码（只读，内置/上传版本均可）。
 		JSPluginSource(ctx context.Context, req *v1.JSPluginSourceReq) (*v1.JSPluginSourceRes, error)
 		// JSPluginRoutes 路由预览取激活版本 manifest（上传/内置 seed 时从 plugin.js 解析落库），

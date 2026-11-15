@@ -13,7 +13,7 @@ import request from '@/utils/request'
 import { downloadTextFile } from '@/utils/download'
 import { fetchModeLabel } from './pluginMeta'
 
-const props = defineProps<{ visible: boolean }>()
+const props = defineProps<{ visible: boolean; presetSource?: string }>()
 const emit = defineEmits<{
   (e: 'update:visible', v: boolean): void
   (e: 'uploaded', manifest: any): void
@@ -45,7 +45,11 @@ const prettySize = computed(() => {
 watch(
   () => props.visible,
   (v) => {
-    if (v) reset()
+    if (!v) return
+    reset()
+    // 外部带入的源码（如插件生成器「用此源码上传」）：reset 后预填，
+    // fileName 留空表示非文件载入，可直接编辑/试运行
+    if (props.presetSource) source.value = props.presetSource
   },
 )
 

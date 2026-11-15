@@ -39,6 +39,9 @@ type FenceEvent struct {
 	Kind FenceEventKind `json:"kind"`
 	Text string         `json:"text"`
 	Lang string         `json:"lang,omitempty"`
+	// Implicit 仅在 CodeEnd 时有意义：true 表示闭栏是 Finish 补出来的
+	// （模型没写闭栏行 = 输出被截断或提前结束），前端据此区分「完整」与「可能不完整」。
+	Implicit bool `json:"implicit,omitempty"`
 }
 
 var (
@@ -78,7 +81,7 @@ func (s *FenceSplitter) Finish() []FenceEvent {
 	}
 	if s.inside {
 		s.inside = false
-		events = append(events, FenceEvent{Kind: FenceCodeEnd})
+		events = append(events, FenceEvent{Kind: FenceCodeEnd, Implicit: true})
 	}
 	return events
 }

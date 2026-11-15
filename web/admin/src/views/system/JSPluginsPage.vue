@@ -10,7 +10,7 @@ import { computed, h, onMounted, ref } from 'vue'
 import { Button, Input, Message, Popconfirm, Select, Space, Tag } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import {
-  IconApps, IconBarChart, IconDashboard, IconList, IconRefresh, IconSearch, IconUpload,
+  IconApps, IconBarChart, IconDashboard, IconList, IconRefresh, IconRobot, IconSearch, IconUpload,
 } from '@arco-design/web-vue/es/icon'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
@@ -18,10 +18,12 @@ import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import JSPluginConfigModal from '@/components/JSPluginConfigModal.vue'
 import JSPluginCard from '@/components/jsplugin/JSPluginCard.vue'
 import JSPluginUploadModal from '@/components/jsplugin/JSPluginUploadModal.vue'
+import JSPluginGeneratorModal from '@/components/jsplugin/JSPluginGeneratorModal.vue'
 import JSPluginDetailDrawer from '@/components/jsplugin/JSPluginDetailDrawer.vue'
 import JSPluginMetricsDrawer from '@/components/jsplugin/JSPluginMetricsDrawer.vue'
 import JSPluginOpsDrawer from '@/components/jsplugin/JSPluginOpsDrawer.vue'
 import { fetchModeLabel, pluginStatus, type JSPlugin } from '@/components/jsplugin/pluginMeta'
+import { hasPermission } from '@/utils/permission'
 import request from '@/utils/request'
 
 const loading = ref(false)
@@ -131,6 +133,23 @@ const showMetrics = ref(false)
 const showOps = ref(false)
 const showConfigModal = ref(false)
 const configPluginKey = ref('')
+
+// ── AI 插件生成工作台 ──────────────────────────────────────
+// 入口与顶栏全局 AI 助手同权限口径（ai_assistant:use）
+const canGenerate = hasPermission('ai_assistant:use')
+const showGenerator = ref(false)
+// 生成器「用此源码上传」带入的源码：预填上传弹窗，关闭时清空避免下次误带入
+const uploadPresetSource = ref('')
+
+function onApplySource(source: string) {
+  uploadPresetSource.value = source
+  showUpload.value = true
+}
+
+function onUploadVisibleChange(v: boolean) {
+  showUpload.value = v
+  if (!v) uploadPresetSource.value = ''
+}
 
 const detailKey = ref('')
 const showDetail = ref(false)
@@ -296,6 +315,9 @@ onMounted(fetchData)
       description="上传 plugin.js 源码、管理版本与启用状态；启用后路由挂载在 /pjs/{key}/ 下"
     >
       <template #actions>
+        <Button v-if="canGenerate" type="secondary" @click="showGenerator = true">
+          <template #icon><IconRobot /></template>插件生成
+        </Button>
         <Button type="primary" @click="showUpload = true">
           <template #icon><IconUpload /></template>上传插件
         </Button>
@@ -440,7 +462,19 @@ onMounted(fetchData)
       </div>
     </ACard>
 
-    <JSPluginUploadModal v-model:visible="showUpload" @uploaded="fetchData" />
+    <!-- AI 插件生成工作台：左侧对话（可带附件）/ 右侧源码，apply 把源码带入上传弹窗 -->
+    <JSPluginGeneratorModal
+      :visible="showGenerator"
+      @update:visible="(v: boolean) => (showGenerator = v)"
+      @apply="onApplySource"
+    />
+
+    <JSPluginUploadModal
+      :visible="showUpload"
+      :preset-source="uploadPresetSource"
+      @update:visible="onUploadVisibleChange"
+      @uploaded="fetchData"
+    />
 
     <JSPluginDetailDrawer
       v-model:visible="showDetail"

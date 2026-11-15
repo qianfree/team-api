@@ -4,7 +4,7 @@
 // 由父页面刷新列表，prop 更新后自动重算，无需抽屉内维护副本。
 import { computed, h, ref, toRef, watch } from 'vue'
 import {
-  Button, Drawer, Message, Popconfirm, Space, Table, Tag,
+  Button, Drawer, Message, Modal, Popconfirm, Space, Table, Tag,
 } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import { IconCopy, IconLink } from '@arco-design/web-vue/es/icon'
@@ -55,6 +55,55 @@ const iconURL = usePluginIcon(toRef(props, 'plugin'))
 
 // 与后端 rbac 对齐：激活/启停需 plugin:manage，删除版本需 plugin:upload
 const canManage = computed(() => hasPermission('plugin:manage'))
+const canUpload = computed(() => hasPermission('plugin:upload'))
+
+// 纯上传插件（所有版本均非内置）才提供整删入口；含内置版本的 key 只能逐个删上传版本
+const canPurge = computed(() =>
+  versions.value.length > 0 && versions.value.every((v) => v.origin !== 'builtin'),
+)
+
+// ── 整删插件 ──────────────────────────────────────────────
+// 点击先取预检（版本数 + 在途任务数），确认弹窗展示后果后才发 DELETE
+const purgeVisible = ref(false)
+const purgeChecking = ref(false)
+const purgeLoading = ref(false)
+const purgeCheck = ref<{ version_count: number; pending_tasks: number } | null>(null)
+
+async function openPurge() {
+  if (!props.plugin) return
+  purgeChecking.value = true
+  try {
+    const res: any = await request.get(`/admin/js-plugins/${props.plugin.key}/delete-check`)
+    const d = res.data?.data
+    if (!d?.allowed) {
+      Message.warning(d?.reason || '当前状态不允许删除该插件')
+      return
+    }
+    purgeCheck.value = d
+    purgeVisible.value = true
+  } catch {
+    // 拦截器已提示
+  } finally {
+    purgeChecking.value = false
+  }
+}
+
+async function confirmPurge() {
+  if (!props.plugin) return
+  purgeLoading.value = true
+  try {
+    await request.delete(`/admin/js-plugins/${props.plugin.key}`)
+    Message.success('已删除该插件（含全部版本与配置）')
+    purgeVisible.value = false
+    // 插件已不存在：列表刷新后详情数据源为空，直接关抽屉
+    emit('update:visible', false)
+    emit('changed')
+  } catch {
+    // 拦截器已提示
+  } finally {
+    purgeLoading.value = false
+  }
+}
 
 const basicItems = computed(() => {
   const p = props.plugin
@@ -284,6 +333,13 @@ const versionColumns: TableColumnData[] = [
           @click="viewSource(plugin.active_version)"
         >查看源码</Button>
         <Button type="secondary" @click="emit('config')">配置</Button>
+        <Button
+          v-if="canPurge && canUpload"
+          type="outline"
+          status="danger"
+          :loading="purgeChecking"
+          @click="openPurge"
+        >删除插件</Button>
         <Button v-if="plugin.website" type="text" :href="plugin.website" target="_blank" rel="noopener">
           <template #icon><IconLink /></template>官网
         </Button>
@@ -376,6 +432,28 @@ const versionColumns: TableColumnData[] = [
       :version="sourceVersion"
       @update:visible="(v: boolean) => (sourceVisible = v)"
     />
+
+    <!-- 整删确认：预检数据（版本数 / 在途任务数）在此展示，确认后才发 DELETE -->
+    <Modal
+      :visible="purgeVisible"
+      title="删除插件"
+      ok-text="确认删除"
+      :ok-loading="purgeLoading"
+      :ok-button-props="{ status: 'danger' }"
+      :mask-closable="false"
+      @ok="confirmPurge"
+      @cancel="purgeVisible = false"
+    >
+      <p class="jp-purge__lead" v-if="plugin">
+        将删除插件 <b>{{ plugin.name || plugin.key }}</b>（<code>{{ plugin.key }}</code>）的
+        <b>{{ purgeCheck?.version_count ?? 0 }}</b> 个版本，源码、图标与配置一并清除，不可恢复。
+      </p>
+      <p v-if="(purgeCheck?.pending_tasks || 0) > 0" class="jp-purge__warn">
+        有 {{ purgeCheck?.pending_tasks }} 个在途任务：删除后轮询等不到插件回归，
+        将由 30 分钟超时网判为失败并退款。
+      </p>
+      <p class="jp-purge__note">历史任务、计费与用量记录保留，不受影响。</p>
+    </Modal>
   </Drawer>
 </template>
 
@@ -664,6 +742,32 @@ const versionColumns: TableColumnData[] = [
   font-size: 12px;
   color: var(--color-text-3);
   line-height: 1.6;
+}
+
+/* 整删确认弹窗（Modal teleport 到 body，scoped attr 仍随内容携带，可命中） */
+.jp-purge__lead {
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.jp-purge__lead code {
+  font-family: 'JetBrains Mono', Consolas, monospace;
+  font-size: 12px;
+}
+
+.jp-purge__warn {
+  margin: 0 0 8px;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: rgb(var(--danger-6));
+}
+
+.jp-purge__note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-3);
 }
 
 @media (max-width: 640px) {
