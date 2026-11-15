@@ -30,6 +30,7 @@ type ChannelItem struct {
 	Type            int      `json:"type"`
 	TypeName        string   `json:"type_name"`
 	BaseURL         string   `json:"base_url"`
+	BaseURLType     string   `json:"base_url_type"` // base_url 填写形态：空=自动 root=站点根 versioned=已含版本前缀
 	Status          string   `json:"status"`
 	Priority        int      `json:"priority"`
 	Weight          int      `json:"weight"`
@@ -72,6 +73,7 @@ type ChannelCreateReq struct {
 	Name                    string `json:"name" v:"required|length:1,100#请输入渠道名|渠道名长度1-100" dc:"渠道名称"`
 	Type                    int    `json:"type" v:"required|min:1#请选择供应商类型" dc:"供应商类型"`
 	BaseURL                 string `json:"base_url" dc:"API 基础地址（留空使用供应商默认地址）"`
+	BaseURLType             string `json:"base_url_type" v:"in:,root,versioned" dc:"base_url 填写形态：留空=自动（以供应商已知版本段结尾时自动剥离）、root=域名站点根、versioned=已含版本前缀（如 /v1、/v1beta）"`
 	ApiKey                  string `json:"api_key" v:"required#请输入 API Key" dc:"API Key"`
 	Priority                int    `json:"priority" d:"0" dc:"优先级"`
 	Weight                  int    `json:"weight" d:"100" v:"between:0,100" dc:"权重"`
@@ -97,6 +99,7 @@ type ChannelUpdateReq struct {
 	Name                    string  `json:"name" dc:"渠道名称"`
 	Type                    *int    `json:"type" v:"min:1#请选择供应商类型" dc:"供应商类型（留空不修改）"`
 	BaseURL                 string  `json:"base_url" dc:"API 基础地址（留空不更新；切换类型且旧地址为该类型默认值时自动跟随新类型默认地址）"`
+	BaseURLType             *string `json:"base_url_type" v:"in:,root,versioned" dc:"base_url 填写形态：留空不更新，传空串=恢复自动；root=域名站点根、versioned=已含版本前缀（如 /v1、/v1beta）"`
 	ApiKey                  *string `json:"api_key" dc:"更新 API Key（留空不更新）"`
 	Priority                *int    `json:"priority" dc:"优先级（留空不更新）"`
 	Weight                  *int    `json:"weight" dc:"权重（留空不更新）"`
@@ -134,6 +137,7 @@ type ChannelDetailRes struct {
 	Type                    int      `json:"type"`
 	TypeName                string   `json:"type_name"`
 	BaseURL                 string   `json:"base_url"`
+	BaseURLType             string   `json:"base_url_type"` // base_url 填写形态：空=自动 root=站点根 versioned=已含版本前缀
 	Status                  string   `json:"status"`
 	Priority                int      `json:"priority"`
 	Weight                  int      `json:"weight"`

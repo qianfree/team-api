@@ -13,7 +13,7 @@ import ChannelModelTestModal from '@/components/ChannelModelTestModal.vue'
 import { useExport } from '@/composables/useExport'
 import { usePluginOptions } from '@/composables/usePluginOptions'
 import { hasPermission } from '@/utils/permission'
-import { providerTypeOptions, providerTypeName, filterProviderOption, providerCategoryMap, filterTypeOptionsByCategory } from '@/constants/channel'
+import { providerTypeOptions, providerTypeName, filterProviderOption, providerCategoryMap, filterTypeOptionsByCategory, baseURLTypeOptions } from '@/constants/channel'
 
 const router = useRouter()
 const message = Message
@@ -310,10 +310,10 @@ const providerDefaultURLs: Record<number, string> = {
   35: 'https://chatgpt.com',
 }
 
-const form = reactive({ name: '', type: 1, base_url: '', api_key: '', priority: 0, weight: 100, max_concurrency: 100, tier: 'primary', strict_capacity: false, test_model: '', remark: '', status: 'active', use_proxy: false, plugin_key: '' })
+const form = reactive({ name: '', type: 1, base_url: '', base_url_type: '', api_key: '', priority: 0, weight: 100, max_concurrency: 100, tier: 'primary', strict_capacity: false, test_model: '', remark: '', status: 'active', use_proxy: false, plugin_key: '' })
 
 function openCreate() {
-  Object.assign(form, { name: '', type: 1, base_url: '', api_key: '', priority: 0, weight: 100, max_concurrency: 100, tier: 'primary', strict_capacity: false, test_model: '', remark: '', status: 'active', use_proxy: false, plugin_key: '' })
+  Object.assign(form, { name: '', type: 1, base_url: '', base_url_type: '', api_key: '', priority: 0, weight: 100, max_concurrency: 100, tier: 'primary', strict_capacity: false, test_model: '', remark: '', status: 'active', use_proxy: false, plugin_key: '' })
   providerCategory.value = 'basic'
   showModal.value = true
 }
@@ -651,28 +651,34 @@ const { exporting, exportFile } = useExport({
             </span>
           </template>
         </AFormItem>
-        <ARow :gutter="16">
-          <ACol :span="12">
-            <AFormItem label="Base URL">
-              <AInput
-                v-model="form.base_url"
-                :placeholder="form.type === 43
-                  ? '插件上游 API 地址（插件返回相对路径时以此为前缀，可留空）'
-                  : (providerDefaultURLs[form.type] || 'https://api.openai.com')"
-              />
-              <template #extra>
-                <span v-if="providerDefaultURLs[form.type]" style="color:var(--color-text-3);font-size:12px">
-                  {{ form.base_url ? '留空则自动使用默认地址' : '将使用默认地址: ' + providerDefaultURLs[form.type] }}
-                </span>
-              </template>
-            </AFormItem>
-          </ACol>
-          <ACol :span="12">
-            <AFormItem field="api_key" label="API Key" required>
-              <AInput v-model="form.api_key" type="textarea" :auto-size="{ minRows: 1, maxRows: 4 }" placeholder="sk-xxxx..." />
-            </AFormItem>
-          </ACol>
-        </ARow>
+        <AFormItem label="Base URL">
+          <div class="base-url-row">
+            <ASelect
+              v-if="form.type !== 43"
+              v-model="form.base_url_type"
+              :options="baseURLTypeOptions"
+              style="width: 130px; flex-shrink: 0"
+            />
+            <AInput
+              v-model="form.base_url"
+              :placeholder="form.type === 43
+                ? '插件上游 API 地址（插件返回相对路径时以此为前缀，可留空）'
+                : (providerDefaultURLs[form.type] || 'https://api.openai.com')"
+              style="flex: 1"
+            />
+          </div>
+          <template #extra>
+            <span v-if="providerDefaultURLs[form.type]" style="color:var(--color-text-3);font-size:12px">
+              {{ form.base_url ? '留空则自动使用默认地址' : '将使用默认地址: ' + providerDefaultURLs[form.type] }}
+            </span>
+            <span v-if="form.type !== 43" style="color:var(--color-text-3);font-size:12px;display:block">
+              ⓘ 填站点根（如 https://api.openai.com），系统自动拼 /v1/... 路径；已带版本段（…/v1、…/v1beta）时自动剥离
+            </span>
+          </template>
+        </AFormItem>
+        <AFormItem field="api_key" label="API Key" required>
+          <AInput v-model="form.api_key" type="textarea" :auto-size="{ minRows: 1, maxRows: 4 }" placeholder="sk-xxxx..." />
+        </AFormItem>
         <!-- 调度与容量 -->
         <div class="form-group-title">调度与容量</div>
         <ARow :gutter="16">
@@ -872,6 +878,12 @@ const { exporting, exportFile } = useExport({
   padding-left: 8px;
   border-left: 3px solid #165dff;
   line-height: 1.2;
+}
+/* Base URL 输入框 + 地址形态选择并排 */
+.base-url-row {
+  display: flex;
+  gap: 8px;
+  width: 100%;
 }
 /* 供应商分类胶囊条：置于表单顶部，视觉上与表单分组标题对齐 */
 .provider-capsules {

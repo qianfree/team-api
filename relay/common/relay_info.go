@@ -131,6 +131,12 @@ type ChannelSettings struct {
 	DisableStore          bool `json:"disable_store,omitempty"`           // 禁用 store 字段（隐私保护）
 	AllowSafetyIdentifier bool `json:"allow_safety_identifier,omitempty"` // 允许 safety_identifier 字段（默认移除）
 
+	// BaseURLType base_url 填写形态：""（默认）=自动，以供应商已知版本段结尾时自动剥离；
+	// "root"=站点根（域名），原样使用由 adaptor 拼完整路径；
+	// "versioned"=已含版本前缀（如 /v1、/v1beta、/api/paas/v4），转发前按供应商剥离。
+	// 归一化见 relay/helper.NormalizeBaseURL
+	BaseURLType string `json:"base_url_type,omitempty"`
+
 	// UseProxy 启用代理，使用系统配置的代理地址转发请求
 	UseProxy bool `json:"use_proxy,omitempty"`
 

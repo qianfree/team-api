@@ -11,6 +11,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/relay/helper"
 	"github.com/qianfree/team-api/relaykit/dispatch"
 )
 
@@ -435,10 +436,12 @@ func (c *Catalog) Rebuild(ctx context.Context) {
 			upstream = row.ModelName
 		}
 		idx.meta[row.ChannelID][row.ModelName] = ChannelMeta{
-			ChannelID:         row.ChannelID,
-			ChannelName:       row.ChannelName,
-			ChannelType:       row.ChannelType,
-			BaseURL:           row.BaseURL,
+			ChannelID:   row.ChannelID,
+			ChannelName: row.ChannelName,
+			ChannelType: row.ChannelType,
+			// base_url 按填写形态归一化成站点根（adaptor 拼 URL 的统一契约），
+			// 用户粘贴官方文档地址（常带 /v1、/v1beta 等版本段）时自动纠偏
+			BaseURL:           helper.NormalizeBaseURL(row.ChannelType, row.BaseURL, row.Settings),
 			UpstreamModel:     upstream,
 			IsModelMapped:     row.UpstreamModel != "" && row.UpstreamModel != row.ModelName,
 			Settings:          row.Settings,

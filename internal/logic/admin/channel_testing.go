@@ -13,6 +13,7 @@ import (
 	"github.com/qianfree/team-api/internal/dispatchadapter"
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/relay"
+	"github.com/qianfree/team-api/relay/helper"
 )
 
 // TestChannel 测试渠道可用性（发送最小请求验证）。
@@ -107,9 +108,9 @@ func (s *sAdmin) TestChannel(ctx context.Context, req *v1.ChannelTestReq) (*v1.C
 		}
 	}
 
-	// 发送最小测试请求
+	// 发送最小测试请求（base_url 与转发链路同样做填写形态归一化，保证测试 URL 与真实请求一致）
 	startTime := time.Now()
-	result := sendTestRequest(ctx, ch.Type, ch.BaseURL, apiKey, upstreamModel, useProxy)
+	result := sendTestRequest(ctx, ch.Type, helper.NormalizeBaseURL(ch.Type, ch.BaseURL, ch.Settings), apiKey, upstreamModel, useProxy)
 	latencyMs := time.Since(startTime).Milliseconds()
 
 	// 更新健康度（喂给调度引擎的健康体系；探测失败只喂熔断窗口不衰减健康分）。

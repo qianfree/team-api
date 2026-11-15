@@ -6,7 +6,7 @@ import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import request from '@/utils/request'
 import ChannelModelTestModal from '@/components/ChannelModelTestModal.vue'
-import { providerTypeOptions, filterProviderOption } from '@/constants/channel'
+import { providerTypeOptions, filterProviderOption, baseURLTypeOptions } from '@/constants/channel'
 import { usePluginOptions } from '@/composables/usePluginOptions'
 import * as echarts from 'echarts'
 
@@ -67,6 +67,7 @@ const editForm = reactive({
   type: 0,
   name: '',
   base_url: '',
+  base_url_type: '',
   priority: 0,
   weight: 100,
   max_concurrency: 100,
@@ -98,6 +99,7 @@ function openEditModal() {
     type: detail.value.type ?? 0,
     name: detail.value.name || '',
     base_url: detail.value.base_url || '',
+    base_url_type: detail.value.base_url_type || '',
     priority: detail.value.priority || 0,
     weight: detail.value.weight,
     max_concurrency: detail.value.max_concurrency ?? 100,
@@ -1586,9 +1588,17 @@ function formatHeaders(headers: Record<string, string>): string {
           </template>
         </AFormItem>
         <AFormItem label="Base URL">
-          <AInput v-model="editForm.base_url" placeholder="留空使用供应商默认地址" />
+          <div style="display:flex;gap:8px;width:100%">
+            <ASelect
+              v-if="editForm.type !== 43"
+              v-model="editForm.base_url_type"
+              :options="baseURLTypeOptions"
+              style="width: 130px; flex-shrink: 0"
+            />
+            <AInput v-model="editForm.base_url" placeholder="留空使用供应商默认地址" style="flex:1" />
+          </div>
           <template #extra>
-            <span class="field-help">ⓘ 修改供应商类型后，请同步检查 Base URL 与「模型能力」配置</span>
+            <span class="field-help">ⓘ 填站点根（如 https://api.openai.com），系统自动拼 /v1/... 路径；已带版本段（…/v1、…/v1beta）时自动剥离。修改供应商类型后，请同步检查 Base URL 与「模型能力」配置</span>
           </template>
         </AFormItem>
 

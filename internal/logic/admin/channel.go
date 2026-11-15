@@ -181,6 +181,7 @@ func (s *sAdmin) ListChannels(ctx context.Context, req *v1.ChannelListReq) (*v1.
 			Type:           ch.Type,
 			TypeName:       typeName,
 			BaseURL:        ch.BaseURL,
+			BaseURLType:    settings.BaseURLType,
 			Status:         ch.Status,
 			Priority:       ch.Priority,
 			Weight:         ch.Weight,
@@ -349,6 +350,9 @@ func (s *sAdmin) CreateChannel(ctx context.Context, req *v1.ChannelCreateReq) (*
 	if req.WebSearchToGoogleSearch {
 		settings["web_search_to_google_search"] = true
 	}
+	if req.BaseURLType != "" {
+		settings["base_url_type"] = req.BaseURLType
+	}
 	if req.Type == int(relay_constant.ProviderJSTask) {
 		settings["plugin_key"] = req.PluginKey
 	}
@@ -464,7 +468,7 @@ func (s *sAdmin) UpdateChannel(ctx context.Context, req *v1.ChannelUpdateReq) (*
 	// 若写成多个同构块，各自从 DB 读旧值再各自 marshal，同请求多字段时会互相覆盖。
 	if req.UseProxy != nil || req.WebSearchToGoogleSearch != nil || req.DebugLogEnabled != nil ||
 		req.DebugLogTenantID != nil || req.DebugLogUserID != nil || req.DebugLogApiKeyID != nil ||
-		req.PluginKey != nil || req.Type != nil {
+		req.PluginKey != nil || req.Type != nil || req.BaseURLType != nil {
 		// 注意：读单列字符串必须用 Value()——gdb 的 Model.Scan 只接受 struct 系列，
 		// 传入 *string 会直接报错；此前用 _ = Scan(&string) 吞错导致永远读到空串，
 		// 每次局部更新都会把未提交的 settings 字段静默重置为默认值
@@ -478,6 +482,10 @@ func (s *sAdmin) UpdateChannel(ctx context.Context, req *v1.ChannelUpdateReq) (*
 		}
 		if req.WebSearchToGoogleSearch != nil {
 			settings.WebSearchToGoogleSearch = *req.WebSearchToGoogleSearch
+		}
+		// base_url 填写形态：传空串 = 恢复自动（omitempty 序列化时键自然消失）
+		if req.BaseURLType != nil {
+			settings.BaseURLType = *req.BaseURLType
 		}
 		if req.DebugLogEnabled != nil {
 			settings.DebugLogEnabled = *req.DebugLogEnabled
@@ -662,6 +670,7 @@ func (s *sAdmin) GetChannelDetail(ctx context.Context, req *v1.ChannelDetailReq)
 		Type:                    ch.Type,
 		TypeName:                typeName,
 		BaseURL:                 ch.BaseURL,
+		BaseURLType:             settings.BaseURLType,
 		Status:                  ch.Status,
 		Priority:                ch.Priority,
 		Weight:                  ch.Weight,
