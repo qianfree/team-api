@@ -45,8 +45,8 @@ type artifactRow struct {
 	RetryCount  int    `json:"retry_count"`
 }
 
-// declPath 声明路径：source_path 优先；存量行（000033 之前）source_url 未被改写为
-// URL 时即为路径。
+// declPath 声明路径：source_path 优先；存量行 source_url 未被改写为 URL 时
+// 即为路径。
 func (r *artifactRow) declPath() string {
 	if r.SourcePath != "" {
 		return r.SourcePath

@@ -5,7 +5,6 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 )
 
-// 数据模型。三张表属审计域（aud_ 前缀），迁移建表见 migrations/000030_ai_analysis.sql。
 // 刻意手写 DO/Entity 而不走 gf gen dao：分析引擎是自包含域，查询统一走
 // g.DB().Model("aud_ai_analysis_xxx") + DO 对象，与生成物解耦。
 

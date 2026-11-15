@@ -1,6 +1,22 @@
 -- +goose Up
 -- ============================================================
--- AI请求分析：插件 → 核心功能迁移
+-- v0.3 通用更新：计费扩展 + AI请求分析转内置功能
+--
+-- 一、表达式计费模式（billing_mode=formula）
+-- 二、工具调用计费（联网搜索/云端工具按次附加费）
+--
+-- 计算按次附加费，叠加在任何计费模式之上：
+--   附加费 = Σ min(次数, 10000) × 单价（固定单次计费，
+--   租户/时段/参数乘数均不作用于工具费，只作用于模型 token 费，
+--   见 billing/pricing.go applyToolSurcharge 及 tool_pricing_test.go 行为锁定）
+-- 预扣不含工具费（调用次数事前未知），结算补差；明细随计费快照
+-- billing_snapshot.tool_surcharges 留痕。
+--
+-- 为 bil_usage_logs 增加两列（可查询聚合，快照 JSONB 仍是完整真相）：
+--   tool_usage            工具调用计数 JSONB（{"web_search": 3}）
+--   tool_surcharge_cost   工具附加费合计（已含在 total_cost/actual_cost 中）
+--
+-- ── 三、AI请求分析：插件 → 核心功能迁移 ───────────────────
 --
 -- ai-req-analyze 插件（基于请求审计日志与会话关联，用独立分析 AI
 -- 按会话单元分析用户 AI 使用行为的合规/泄露风险）转为系统原生功能：
@@ -12,10 +28,24 @@
 --
 -- 幂等性：覆盖三种部署状态——装过插件（重命名保数据）、从未安装（新建表）、
 -- 部分执行重跑（各步均有存在性守卫）。
+-- ============================================================
 
--- ── 1. 数据表迁移 ──────────────────────────────────────────
+-- ═══ 一、表达式计费模式：更新值域注释 ═════════════════════
 
--- 1a. 已安装过插件：三表重命名（含索引/序列），数据原样保留
+COMMENT ON COLUMN mdl_pricing.billing_mode IS '计费模式：token=按量；per_request=按次；tiered=阶梯；per_second=按秒（视频）；special=特殊计费；formula=表达式计费（pricing JSONB formula 键）';
+
+-- ═══ 二、工具调用计费：bil_usage_logs 增列 ════════════════
+
+ALTER TABLE bil_usage_logs
+    ADD COLUMN IF NOT EXISTS tool_usage JSONB,
+    ADD COLUMN IF NOT EXISTS tool_surcharge_cost NUMERIC(20,10) DEFAULT 0 NOT NULL;
+
+COMMENT ON COLUMN bil_usage_logs.tool_usage IS '服务端/云端工具调用计数（工具名→次数，如 {"web_search": 3}）；无工具调用为 NULL';
+COMMENT ON COLUMN bil_usage_logs.tool_surcharge_cost IS '工具调用附加费合计（按次收费，固定单次计费不乘租户/时段乘数，已含在 total_cost 中）';
+
+-- ═══ 三、AI请求分析：插件 → 核心功能迁移 ═══════════════════
+
+-- 3a. 已安装过插件：三表重命名（含索引/序列），数据原样保留
 -- +goose StatementBegin
 DO $$
 BEGIN
@@ -48,7 +78,7 @@ END
 $$;
 -- +goose StatementEnd
 
--- 1b. 从未安装插件（或个别表缺失）：按核心规范建表
+-- 3b. 从未安装插件（或个别表缺失）：按核心规范建表
 CREATE TABLE IF NOT EXISTS aud_ai_analysis_reports (
     id             BIGSERIAL PRIMARY KEY,
     tenant_id      BIGINT       NOT NULL,
@@ -144,7 +174,7 @@ COMMENT ON COLUMN aud_ai_analysis_jobs.error_msg IS '失败原因';
 COMMENT ON COLUMN aud_ai_analysis_jobs.created_by IS '触发人管理员ID（patrol 为 0）';
 CREATE INDEX IF NOT EXISTS idx_aud_ai_analysis_jobs_status ON aud_ai_analysis_jobs (status, created_at);
 
--- ── 2. 配置迁移：sys_plugins.config → sys_options（仅搬运插件配置中已有的键，空值跳过） ──
+-- 3c. 配置迁移：sys_plugins.config → sys_options（仅搬运插件配置中已有的键，空值跳过）
 INSERT INTO sys_options ("key", value, category, description, is_public)
 SELECT 'ai_analysis_base_url', config->>'ai_base_url', 'ai_analysis', '分析 AI 端点', false
 FROM sys_plugins WHERE name = 'ai-req-analyze' AND COALESCE(config->>'ai_base_url', '') <> ''
@@ -221,19 +251,18 @@ SELECT 'ai_analysis_retention_days', config->>'retention_days', 'ai_analysis', '
 FROM sys_plugins WHERE name = 'ai-req-analyze' AND COALESCE(config->>'retention_days', '') <> ''
 ON CONFLICT ("key") DO NOTHING;
 
--- ── 3. 权限点改写：已授权角色无缝衔接新权限点 ──
+-- 3d. 权限点改写：已授权角色无缝衔接新权限点
 UPDATE sys_admin_role_perms
 SET permission_point = 'ai_analysis:' || split_part(permission_point, ':', 2)
 WHERE permission_point LIKE 'ai-req-analyze:%';
 
--- ── 4. 清理插件痕迹 ──
+-- 3e. 清理插件痕迹
 DELETE FROM sys_plugins WHERE name = 'ai-req-analyze';
 DELETE FROM tnt_tenant_plugins WHERE plugin_name = 'ai-req-analyze';
 DELETE FROM sys_options WHERE "key" LIKE 'plugin.ai-req-analyze.%';
 
 -- +goose Down
--- 尽力恢复插件形态：表名/索引/序列改回、权限点反向改写、删除 ai_analysis_* 配置键。
--- sys_plugins 安装记录不重建（插件代码已随应用版本移除，如需完整回滚请连同应用一并回退后重装插件）。
+-- ═══ 回滚顺序与 Up 相反：先撤 AI请求分析（尽力恢复插件形态），再撤计费变更 ═══
 -- +goose StatementBegin
 DO $$
 BEGIN
@@ -276,3 +305,9 @@ DELETE FROM sys_options WHERE "key" IN (
     'ai_analysis_units_per_batch', 'ai_analysis_snippet_max_len', 'ai_analysis_patrol_enabled',
     'ai_analysis_patrol_cron', 'ai_analysis_patrol_scope', 'ai_analysis_patrol_window_h', 'ai_analysis_retention_days'
 );
+
+ALTER TABLE bil_usage_logs
+    DROP COLUMN IF EXISTS tool_surcharge_cost,
+    DROP COLUMN IF EXISTS tool_usage;
+
+COMMENT ON COLUMN mdl_pricing.billing_mode IS '计费模式：token=按量；per_request=按次；tiered=阶梯；per_second=按秒（视频）；special=特殊计费';

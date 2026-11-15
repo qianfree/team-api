@@ -21,7 +21,6 @@ import (
 	"github.com/qianfree/team-api/internal/logic/billing/formula"
 )
 
-// tableName JS 插件版本表（migrations/000031_js_plugin.sql）。
 // 说明：按生成式 dao 惯例应由 `make dao` 生成访问层；该命令需可达数据库，
 // 当前以 g.DB().Model 直访 + 本文件内的行结构承担，生成条件具备后可替换。
 const tableName = "js_plugin_versions"

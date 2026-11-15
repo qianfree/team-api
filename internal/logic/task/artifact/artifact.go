@@ -166,7 +166,7 @@ func EnqueueTransfer(ctx context.Context, task *rcommon.AsyncTask, artifacts []r
 }
 
 // SweepPending 重试未完成的产物转存（最多一批）。
-// 进程重启后的恢复网：行里带齐任务归属（tenant/user/channel，000032 起落库），
+// 进程重启后的恢复网：行里带齐任务归属（tenant/user/channel，建表即落库），
 // 重建的 job 与 EnqueueTransfer 等价——相对 URL 产物能按 channel_id 解析渠道，
 // fil_files 落正确租户，不会再产生 tenant_id=0 的孤儿文件记录。
 func SweepPending(ctx context.Context) {
@@ -220,7 +220,7 @@ func SweepPending(ctx context.Context) {
 			TenantID: rows[0].TenantID, UserID: rows[0].UserID, ChannelID: rows[0].ChannelID,
 		}
 		for _, ar := range rows {
-			// source_path 为声明原样路径；存量行（000033 之前）回落 source_url
+			// source_path 为声明原样路径；存量行（source_path 为空）回落 source_url
 			path := firstNonEmpty(ar.SourcePath, ar.SourceUrl)
 			job.Artifacts = append(job.Artifacts, rcommon.TaskArtifact{
 				Key: ar.ArtifactKey, SourceType: ar.SourceType, SourcePath: path,
