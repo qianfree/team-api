@@ -15,13 +15,21 @@ import (
 // fetch 白名单故意留空（任何 utils.fetch 都会被拒），从机制上杜绝外呼。
 //
 // 检查项（按序执行，单项失败不阻断后续可执行的检查）：
-//   - compile         编译 + manifest 校验 + 加密配置类型限制（与 Upload 同口径）
-//   - hooks           钩子齐备性（必选钩子缺失 = fail；渲染钩子缺失 = warn 走默认透传）
-//   - standard-endpoint 标准视频端点能力（声明缺钩子 = fail；疑似视频插件未声明 = warn）
-//   - conflict        与当前在服务插件的跨插件路由/模型冲突预检（复用激活时的规则）
-//   - sample-decode   样例请求执行 decode 钩子并校验返回契约
-//   - sample-build    样例执行 buildSubmitRequest 并校验返回契约
+//   - compile             编译 + manifest 校验 + 加密配置类型限制（与 Upload 同口径）
+//   - lint-host-api       静态：utils.* 宿主 API 用法（不存在的成员、utils.log() 直调、fetch 非单对象参数 = fail）
+//   - lint-module-state   静态：模块作用域可变状态（实例跨租户复用，命中 = warn）
+//   - hooks               钩子齐备性（必选钩子缺失 = fail；渲染钩子缺失 = warn 走默认透传）
+//   - standard-endpoint   标准视频端点（声明缺钩子 = fail；声明则以通用任务体样例执行；疑似视频插件未声明 = warn）
+//   - conflict            与当前在服务插件的跨插件模型冲突预检（复用激活时的规则）
+//   - sample-decode       样例请求执行 decode 钩子并校验返回契约
+//   - sample-build        样例执行 buildSubmitRequest 并校验返回契约
+//   - sample-estimate     样例执行 estimateUsage，校验用量键 ∈ usageSchema
+//   - sample-parse-submit 构造受理响应执行 parseSubmitResponse 并校验返回契约
+//   - sample-query        轮询链 buildQueryRequest + parseQueryResponse（构造处理中响应）
+//   - sample-render       构造进行中任务执行渲染钩子
 //
+// 错误分档见 dryRunClassifyCallError：编程错误（ReferenceError、调用非函数、宿主 API 误用）
+// 任何环节一律 fail；插件拒绝样例请求 = warn；拒绝构造的上游响应属预期 = pass。
 // 编译失败是唯一例外：后续检查全部无从谈起，只返回一条 fail。
 
 // 检查状态。
@@ -45,7 +53,7 @@ type DryRunReport struct {
 
 // DryRunCheck 单项检查结果。
 type DryRunCheck struct {
-	Name   string `json:"name"`   // compile | hooks | standard-endpoint | conflict | sample-decode | sample-build | lint-fetch-url
+	Name   string `json:"name"`   // 检查项名，见文件头清单
 	Status string `json:"status"` // pass=通过 / warn=提示（不阻断上传） / fail=缺陷（不建议上传）
 	Detail string `json:"detail"` // 中文说明
 }
@@ -84,13 +92,15 @@ func DryRun(source string) *DryRunReport {
 		})
 		return report
 	}
+	m := compiled.Manifest
 	report.Checks = append(report.Checks, DryRunCheck{
 		Name:   "compile",
 		Status: dryRunPass,
 		Detail: fmt.Sprintf("编译通过：%s@%s（%d 条路由 / %d 个模型）",
-			compiled.Manifest.Key, compiled.Manifest.Version,
-			len(compiled.Manifest.Routes), len(compiled.Manifest.Models)),
+			m.Key, m.Version, len(m.Routes), len(m.Models)),
 	})
+	// 静态检查覆盖样例执行走不到的分支
+	report.Checks = append(report.Checks, dryRunLintHostAPI(source), dryRunLintModuleState(source))
 
 	// 样例执行选项：AllowedHosts 故意留空——白名单为空时 utils.fetch 对任何 host
 	// 都被拒，杜绝试运行发出真实 HTTP（插件内 fetch 失败按「样例被拒绝」处理）。
@@ -102,30 +112,53 @@ func DryRun(source string) *DryRunReport {
 			Status: dryRunFail,
 			Detail: "临时实例创建失败（顶层执行崩溃/超时）：" + instErr.Error(),
 		})
-	} else {
-		defer inst.Close()
-		report.Checks = append(report.Checks, dryRunHookCompleteness(compiled.Manifest, inst.HasHook))
-		report.Checks = append(report.Checks, dryRunStandardEndpoint(compiled.Manifest, inst.HasHook))
+		report.Checks = append(report.Checks, dryRunConflict(m))
+		return report
 	}
-	report.Checks = append(report.Checks, dryRunConflict(compiled.Manifest))
+	defer inst.Close()
+	pool := NewPluginPool(engine, compiled, opts)
+	defer pool.Close()
+	ctx := withDryRunMarker(context.Background())
+	has := inst.HasHook
 
-	if instErr == nil {
-		if route, ok := dryRunFirstDecodeRoute(compiled.Manifest); ok {
-			pool := NewPluginPool(engine, compiled, opts)
-			defer pool.Close()
-			ctx := withDryRunMarker(context.Background())
-			// 缺钩子的样例检查直接跳过（hooks 项已 fail，不重复报）
-			decodeHook := route.ResolveDecode()
-			var decoded *contract.DecodeResult
-			if inst.HasHook(decodeHook) {
-				var chk DryRunCheck
-				chk, decoded = dryRunSampleDecode(ctx, pool, route, compiled.Manifest, decodeHook)
-				report.Checks = append(report.Checks, chk)
-			}
-			if inst.HasHook("buildSubmitRequest") {
-				report.Checks = append(report.Checks, dryRunSampleBuild(ctx, pool, compiled.Manifest, decoded))
+	report.Checks = append(report.Checks, dryRunHookCompleteness(m, has))
+	report.Checks = append(report.Checks, dryRunStandardEndpoint(ctx, pool, m, has))
+	report.Checks = append(report.Checks, dryRunConflict(m))
+
+	// 样例执行：缺钩子的环节直接跳过（hooks 项已 fail，不重复报）
+	var taskData json.RawMessage
+	if route, ok := dryRunFirstDecodeRoute(m); ok {
+		decodeHook := route.ResolveDecode()
+		var decoded *contract.DecodeResult
+		if has(decodeHook) {
+			var chk DryRunCheck
+			chk, decoded = dryRunSampleDecode(ctx, pool, route, m, decodeHook)
+			report.Checks = append(report.Checks, chk)
+		}
+		// 下游环节的入参：decode 样例通过时用其结果，否则回退最小样例体
+		model, body := m.Models[0], dryRunSampleBody(m.Models[0])
+		if decoded != nil && decoded.Kind == "submit" {
+			model, body = decoded.Model, decoded.RequestBody
+		}
+		_, params := dryRunSamplePath(route)
+		if has("buildSubmitRequest") {
+			report.Checks = append(report.Checks, dryRunSampleBuild(ctx, pool, m, decoded))
+		}
+		if has("estimateUsage") {
+			report.Checks = append(report.Checks, dryRunSampleEstimate(ctx, pool, m, model, body, params))
+		}
+		if has("parseSubmitResponse") {
+			chk, ref, fromPlugin := dryRunSampleParseSubmit(ctx, pool, m, route, model, body)
+			report.Checks = append(report.Checks, chk)
+			if has("buildQueryRequest") && has("parseQueryResponse") {
+				var qchk DryRunCheck
+				qchk, taskData = dryRunSampleQuery(ctx, pool, m, model, ref, fromPlugin)
+				report.Checks = append(report.Checks, qchk)
 			}
 		}
+	}
+	if hooks, batch := dryRunRenderHooks(m, has); len(hooks) > 0 {
+		report.Checks = append(report.Checks, dryRunSampleRender(ctx, pool, m, hooks, batch, taskData))
 	}
 	return report
 }
@@ -223,14 +256,14 @@ func dryRunHookCompleteness(m *contract.Manifest, has func(string) bool) DryRunC
 //   - 未声明且 usageSchema 含 unit=second 字段 → warn：按秒计费疑似视频插件缺标准
 //     端点声明（音乐等按秒计费的非视频插件可忽略本提示）
 //   - 其余 → pass
-func dryRunStandardEndpoint(m *contract.Manifest, has func(string) bool) DryRunCheck {
+func dryRunStandardEndpoint(ctx context.Context, pool *PluginPool, m *contract.Manifest, has func(string) bool) DryRunCheck {
 	if m.StandardVideos != "" {
 		if !has(m.StandardVideos) {
 			return DryRunCheck{Name: "standard-endpoint", Status: dryRunFail,
 				Detail: fmt.Sprintf("meta.standardVideos 声明为 %q 但插件未导出该钩子（标准端点提交必失败）", m.StandardVideos)}
 		}
-		return DryRunCheck{Name: "standard-endpoint", Status: dryRunPass,
-			Detail: fmt.Sprintf("标准视频端点已支持：模型可经 /v1/videos 与 /v1/video/generations 提交（解码钩子 %s）", m.StandardVideos)}
+		// 声明且导出：以通用任务体样例实际执行解码钩子
+		return dryRunSampleStandard(ctx, pool, m)
 	}
 	for _, f := range m.UsageSchema {
 		if f.Unit == "second" {
@@ -375,14 +408,10 @@ func dryRunSampleBuild(ctx context.Context, pool *PluginPool, m *contract.Manife
 	return DryRunCheck{Name: "sample-build", Status: dryRunPass, Detail: detail}
 }
 
-// dryRunCallErrorCheck 样例执行的调用错误分档（引擎级失败 → fail，钩子抛错 → warn）。
+// dryRunCallErrorCheck 样例请求的调用错误分档（引擎级失败/编程错误 → fail，插件拒绝 → warn），
+// 规则见 dryRunClassifyCallError。
 func dryRunCallErrorCheck(name, hook string, err error) DryRunCheck {
-	msg := SanitizeHookMessage(err.Error())
-	if dryRunEngineLevelFailure(err) {
-		return DryRunCheck{Name: name, Status: dryRunFail, Detail: hook + " 样例执行失败：" + msg}
-	}
-	return DryRunCheck{Name: name, Status: dryRunWarn,
-		Detail: fmt.Sprintf("样例输入被 %s 拒绝（%s）：样例参数固定，可能未通过插件自身入参校验；请以真实请求验证返回契约", hook, msg)}
+	return dryRunClassifyCallError(name, hook, err, false)
 }
 
 // dryRunEngineLevelFailure 判定样例调用错误是否引擎级失败（fail 档）：实例创建失败

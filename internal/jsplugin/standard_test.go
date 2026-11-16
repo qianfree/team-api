@@ -122,6 +122,57 @@ func TestSynthesizeStandardPlan_Success(t *testing.T) {
 	}
 }
 
+// stdEchoModelSource 解码钩子原样回显 ctx.model 的插件（渠道模型映射场景的常见写法）
+const stdEchoModelSource = `export const meta = {
+  apiVersion: 1, key: "stdecho", name: "StdEcho", version: "1.0.0",
+  models: ["echo_model"], fetchMode: "per_task", standardVideos: "decodeStd",
+  routes: [{ method: "POST", path: "/submit", type: "submit" }],
+};
+export function decodeStd(ctx) {
+  const raw = ctx.body || {};
+  return { kind: "submit", model: raw.force_model || ctx.model, requestBody: { prompt: raw.prompt } };
+}
+export function decodeRequest(ctx) {
+  return { kind: "submit", model: "echo_model", requestBody: ctx.body || {} };
+}
+export function buildSubmitRequest() { return { url: "/s", method: "POST", body: {} }; }
+export function parseSubmitResponse() { return { taskId: "t" }; }
+export function buildQueryRequest() { return { url: "/q", method: "GET" }; }
+export function parseQueryResponse(ctx) {
+  return { items: [{ taskId: (ctx.tasks || [])[0].taskId, done: false }] };
+}`
+
+// TestSynthesizeStandardPlan_AliasModel 渠道显式绑定插件 + 模型映射：请求模型是平台
+// 侧别名（不在 meta.models），钩子回显 ctx.model 应放行；回显别的未声明模型仍拒绝，
+// 且放行不改写插件 manifest。
+func TestSynthesizeStandardPlan_AliasModel(t *testing.T) {
+	cleanup, err := PublishForTest(stdEchoModelSource)
+	if err != nil {
+		t.Fatalf("发布插件失败: %v", err)
+	}
+	t.Cleanup(cleanup)
+
+	plan, err := SynthesizeStandardPlan(context.Background(), "stdecho",
+		contract.SurfaceOpenAIVideos, "/v1/videos",
+		[]byte(`{"model":"alias_model","prompt":"a cat"}`), "alias_model")
+	if err != nil {
+		t.Fatalf("别名模型应放行: %v", err)
+	}
+	if plan == nil || plan.Decoded == nil || plan.Decoded.Model != "alias_model" {
+		t.Fatalf("解码结果异常: %+v", plan)
+	}
+	if plan.Plugin.Manifest.HasModel("alias_model") {
+		t.Fatalf("放行不应改写插件 manifest 的模型清单")
+	}
+
+	_, err = SynthesizeStandardPlan(context.Background(), "stdecho",
+		contract.SurfaceOpenAIVideos, "/v1/videos",
+		[]byte(`{"model":"alias_model","prompt":"a cat","force_model":"other_model"}`), "alias_model")
+	if err == nil || !strings.Contains(err.Error(), "other_model") {
+		t.Fatalf("回显请求外的未声明模型应被拒绝，得到 %v", err)
+	}
+}
+
 // TestSynthesizeStandardPlan_HookThrows 解码钩子抛错 → 错误透出（调用方 400）。
 func TestSynthesizeStandardPlan_HookThrows(t *testing.T) {
 	cleanup, err := PublishForTest(stdDeclareSource)

@@ -56,6 +56,167 @@ func dryRunFixturePlugin(key, model string) string {
 	`
 }
 
+// dryRunPatch 在夹具源码上做一次替换（替换目标不存在时测试直接失败，防夹具漂移后静默失效）。
+func dryRunPatch(t *testing.T, src, old, repl string) string {
+	t.Helper()
+	if !strings.Contains(src, old) {
+		t.Fatalf("夹具中不存在替换目标: %s", old)
+	}
+	return strings.Replace(src, old, repl, 1)
+}
+
+// TestDryRunBuiltinsFullChain 全部内置插件：调用链全量样例执行无 fail、静态检查全 pass
+// （新检查项不得对存量合格插件误报）。
+func TestDryRunBuiltinsFullChain(t *testing.T) {
+	entries, err := builtinFS.ReadDir("builtin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		data, err := builtinFS.ReadFile("builtin/" + entry.Name() + "/plugin.js")
+		if err != nil {
+			t.Fatal(err)
+		}
+		report := DryRun(string(data))
+		byName := dryRunChecksByName(t, report)
+		for _, c := range report.Checks {
+			if c.Status == dryRunFail {
+				t.Errorf("内置插件 %s 检查 %s 意外 fail: %s", entry.Name(), c.Name, c.Detail)
+			}
+		}
+		for _, name := range []string{"lint-host-api", "lint-module-state", "sample-parse-submit", "sample-query", "sample-render"} {
+			if c, ok := byName[name]; !ok || c.Status != dryRunPass {
+				t.Errorf("内置插件 %s 检查 %s 期望 pass，实际 %+v", entry.Name(), name, c)
+			}
+		}
+	}
+}
+
+// TestDryRunGoldenFullChain golden：后半段调用链（估算/标准端点/受理解析/轮询/渲染）全部 pass。
+func TestDryRunGoldenFullChain(t *testing.T) {
+	byName := dryRunChecksByName(t, DryRun(dryRunGoldenSource(t)))
+	for _, name := range []string{"standard-endpoint", "sample-estimate", "sample-parse-submit", "sample-query", "sample-render"} {
+		c, ok := byName[name]
+		if !ok || c.Status != dryRunPass {
+			t.Errorf("检查 %s 期望 pass，实际 %+v", name, c)
+		}
+	}
+	// 多模型插件逐个尝试：golden_music 被 decodeVideos 拒绝后 golden_video 通过
+	if !strings.Contains(byName["standard-endpoint"].Detail, "golden_video") {
+		t.Errorf("standard-endpoint 应以 golden_video 样例通过: %s", byName["standard-endpoint"].Detail)
+	}
+}
+
+// TestDryRunLintHostAPI 宿主 API 静态检查：AI 生成插件的高频错误写法一律 fail，合法写法与注释不误报。
+func TestDryRunLintHostAPI(t *testing.T) {
+	cases := []struct {
+		name, code string
+		fail       bool
+		want       string
+	}{
+		{"log 直调", `utils.log("x");`, true, "utils.log 是对象"},
+		{"fetch 字符串首参", `utils.fetch("/v1/x", { method: "GET" });`, true, "单个对象"},
+		{"fetch 两参", `utils.fetch(url, opts);`, true, "单个对象"},
+		{"不存在的成员", `utils.sleep(10);`, true, "utils.sleep 不存在"},
+		{"不存在的子成员", `utils.crypto.md5("a");`, true, "utils.crypto.md5 不存在"},
+		{"log 不存在的级别", `utils.log.debug("a");`, true, "utils.log.debug 不存在"},
+		{"合法写法", `utils.fetch({ url: "/v1/x" }); utils.log.info("a", {k: 1}); utils.config.get("k");
+			utils.crypto.hmacSHA256("m", "s"); utils.now(); utils.uuid();`, false, ""},
+		{"注释里的错误写法不计", "// utils.log(\"x\")\n/* utils.fetch(\"/a\", {}) */\nconst u = \"https://a.b\"; // utils.sleep()", false, ""},
+	}
+	for _, tc := range cases {
+		c := dryRunLintHostAPI("export function f(ctx) {\n" + tc.code + "\n}")
+		if tc.fail != (c.Status == dryRunFail) || (tc.want != "" && !strings.Contains(c.Detail, tc.want)) {
+			t.Errorf("%s: 期望 fail=%v 含 %q，实际 %s: %s", tc.name, tc.fail, tc.want, c.Status, c.Detail)
+		}
+	}
+}
+
+// TestDryRunLintModuleState 模块作用域可变状态：顶层 let/var 与空容器常量 warn，只读常量不报。
+func TestDryRunLintModuleState(t *testing.T) {
+	c := dryRunLintModuleState("let lastBody = null;\nconst cache = {};\nexport const meta = {};\nconst MAP = { a: 1 };\nfunction f() {\n  let local = 1;\n}")
+	if c.Status != dryRunWarn || !strings.Contains(c.Detail, "lastBody") || !strings.Contains(c.Detail, "cache") {
+		t.Errorf("期望 warn 并列出 lastBody/cache，实际 %s: %s", c.Status, c.Detail)
+	}
+	if strings.Contains(c.Detail, "MAP") || strings.Contains(c.Detail, "local") {
+		t.Errorf("只读常量与函数内局部变量不应报: %s", c.Detail)
+	}
+	if c := dryRunLintModuleState("const A = 1;\nfunction f() { let x = 2; }"); c.Status != dryRunPass {
+		t.Errorf("无可变状态期望 pass，实际 %s: %s", c.Status, c.Detail)
+	}
+}
+
+// TestDryRunProgrammingErrorFails 编程错误在任何环节都是 fail：构造响应环节（插件拒绝属预期）
+// 也不能掩盖 ReferenceError。
+func TestDryRunProgrammingErrorFails(t *testing.T) {
+	base := dryRunFixturePlugin("dryrun-prog", "dryrun_prog_model")
+	// 提交链：调用未定义函数
+	src := dryRunPatch(t, base, `return { url: "/v1/create", method: "POST", body: ctx.body || {} };`,
+		`return { url: buildUrl(), method: "POST" };`)
+	if c := dryRunChecksByName(t, DryRun(src))["sample-build"]; c.Status != dryRunFail || !strings.Contains(c.Detail, "编程错误") {
+		t.Errorf("sample-build 期望 fail(编程错误)，实际 %s: %s", c.Status, c.Detail)
+	}
+	// 轮询链：构造响应输入下的 ReferenceError
+	src = dryRunPatch(t, base, `return { items: [{ taskId: t.taskId, done: true }] };`,
+		`return { items: [{ taskId: t.taskId, done: mapStatus(ctx.responseBody) }] };`)
+	if c := dryRunChecksByName(t, DryRun(src))["sample-query"]; c.Status != dryRunFail || !strings.Contains(c.Detail, "ReferenceError") {
+		t.Errorf("sample-query 期望 fail(ReferenceError)，实际 %s: %s", c.Status, c.Detail)
+	}
+}
+
+// TestDryRunFabricatedRejectionPasses 插件拒绝构造的上游响应属预期：pass，且轮询链回退构造任务 ID 继续执行。
+func TestDryRunFabricatedRejectionPasses(t *testing.T) {
+	src := dryRunPatch(t, dryRunFixturePlugin("dryrun-reject", "dryrun_reject_model"),
+		`return { taskId: String((ctx.responseBody || {}).data || "t-1") };`,
+		`if (ctx.responseBody.vendor_code !== 0) throw new Error("submit rejected");
+		return { taskId: "x" };`)
+	report := DryRun(src)
+	byName := dryRunChecksByName(t, report)
+	if c := byName["sample-parse-submit"]; c.Status != dryRunPass || !strings.Contains(c.Detail, "属正常") {
+		t.Errorf("sample-parse-submit 期望 pass(拒绝属正常)，实际 %s: %s", c.Status, c.Detail)
+	}
+	if c := byName["sample-query"]; c.Status != dryRunPass {
+		t.Errorf("sample-query 应以构造任务 ID 继续执行并 pass，实际 %s: %s", c.Status, c.Detail)
+	}
+	if report.HasFail() {
+		t.Error("拒绝构造响应不应构成 fail")
+	}
+}
+
+// TestDryRunUsageAndArtifactContract 用量键未声明、inline 产物缺 mimeType → fail。
+func TestDryRunUsageAndArtifactContract(t *testing.T) {
+	base := dryRunFixturePlugin("dryrun-usage", "dryrun_usage_model")
+	withSchema := dryRunPatch(t, base, `routes: [{ method: "POST", path: "/create", type: "submit" }],`,
+		`routes: [{ method: "POST", path: "/create", type: "submit" }],
+		usageSchema: [{ key: "seconds", type: "number", unit: "second" }],`)
+
+	src := dryRunPatch(t, withSchema, `return { items: [{ taskId: t.taskId, done: true }] };`,
+		`return { items: [{ taskId: t.taskId, done: true, usage: { secs: 5 } }] };`)
+	if c := dryRunChecksByName(t, DryRun(src))["sample-query"]; c.Status != dryRunFail || !strings.Contains(c.Detail, "secs") {
+		t.Errorf("未声明用量键期望 sample-query fail，实际 %s: %s", c.Status, c.Detail)
+	}
+
+	src = dryRunPatch(t, withSchema, `return { items: [{ taskId: t.taskId, done: true }] };`,
+		`return { items: [{ taskId: t.taskId, done: true, artifacts: [{ key: "video", source: { type: "inline", path: "b64" } }] }] };`)
+	if c := dryRunChecksByName(t, DryRun(src))["sample-query"]; c.Status != dryRunFail || !strings.Contains(c.Detail, "mimeType") {
+		t.Errorf("inline 缺 mimeType 期望 sample-query fail，实际 %s: %s", c.Status, c.Detail)
+	}
+
+	src = withSchema + "\nexport function estimateUsage(ctx) { return { duration: 5 }; }\n"
+	if c := dryRunChecksByName(t, DryRun(src))["sample-estimate"]; c.Status != dryRunFail || !strings.Contains(c.Detail, "duration") {
+		t.Errorf("estimateUsage 未声明键期望 fail，实际 %s: %s", c.Status, c.Detail)
+	}
+}
+
+// TestDryRunAsyncHookFails 钩子写成 async（返回 Promise）→ 返回契约 fail（运行期必然失败）。
+func TestDryRunAsyncHookFails(t *testing.T) {
+	src := dryRunPatch(t, dryRunFixturePlugin("dryrun-async", "dryrun_async_model"),
+		"export function buildQueryRequest(ctx) {", "export async function buildQueryRequest(ctx) {")
+	if c := dryRunChecksByName(t, DryRun(src))["sample-query"]; c.Status != dryRunFail {
+		t.Errorf("async 钩子期望 sample-query fail，实际 %s: %s", c.Status, c.Detail)
+	}
+}
+
 // TestDryRunGolden golden 参考实现：核心检查项全部 pass 且无任何 fail。
 // 样例 decode 为 warn——golden 校验 action ∈ {MUSIC, LYRICS, VIDEO}，固定样例参数被拒属
 // 正常分支拒绝；同时证明 config 配置缺失不参与 decode/build（utils.config.get
