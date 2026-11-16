@@ -11,6 +11,8 @@ export interface PublicSettings {
 	site_description: string
 	demo_mode: boolean
 	demo_message: string
+	/** /v1/files 素材上传通道可用（云对象存储已配置），Playground 参考素材转 URL 引用 */
+	relay_files_upload_enabled: boolean
 	[key: string]: unknown
 }
 
@@ -26,6 +28,7 @@ const settings = ref<PublicSettings>({
 	demo_message: '',
 	turnstile_enabled: false,
 	turnstile_site_key: '',
+	relay_files_upload_enabled: false,
 })
 
 let fetchPromise: Promise<void> | null = null

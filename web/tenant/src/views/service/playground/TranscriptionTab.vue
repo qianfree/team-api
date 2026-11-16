@@ -132,8 +132,9 @@ async function transcribe() {
 
 	try {
 		const api = createPlaygroundApi(props.apiKey)
-		// Whisper 风格 multipart 表单：axios 检测到 FormData 会交由浏览器自动
-		// 生成含 boundary 的 Content-Type（实例默认的 JSON 头会被移除）
+		// Whisper 风格 multipart 表单：实例未设默认 Content-Type（见 playgroundApi.ts），
+		// FormData 由浏览器自动生成含 boundary 的 Content-Type——若实例默认带 JSON 头，
+		// axios 的 transformRequest 会把 FormData JSON 化导致上传失败
 		const form = new FormData()
 		form.append('file', file)
 		form.append('model', selectedModel.value)

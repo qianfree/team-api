@@ -13,7 +13,10 @@ export function createPlaygroundApi(apiKey: string): AxiosInstance {
 	const instance = axios.create({
 		timeout: 60_000,
 		headers: {
-			'Content-Type': 'application/json',
+			// 注意不要设默认 Content-Type：axios 对普通对象会自动按 JSON 序列化并设置头，
+			// 而 FormData（/v1/files 上传）须保持 multipart 由浏览器补 boundary——若显式设
+			// application/json，axios 的 transformRequest 会触发 formDataToJSON，把上传体
+			// 序列化成 {"file":{},"purpose":"..."}，后端收不到文件 part
 			'Authorization': `Bearer ${apiKey}`,
 		},
 	})
