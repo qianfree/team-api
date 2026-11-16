@@ -42,7 +42,9 @@ func RegisterJSDispatcher(server *ghttp.Server) {
 	})
 }
 
-// dispatchJSPlugin /pjs/{key}/{native...} → generation 匹配 → submit/query 分流。
+// dispatchJSPlugin /pjs/{key}/{native...} → 按 key 定位插件 → 插件内路由匹配 →
+// submit/query 分流。路由匹配限定在 URL key 指定的插件内（命名空间隔离），
+// 跨插件同名路由形态（各厂商兼容路径）互不遮蔽、可并存激活。
 func dispatchJSPlugin(r *ghttp.Request) {
 	trimmed := strings.TrimPrefix(r.URL.Path, jsDispatcherPrefix+"/")
 	key, native := trimmed, "/"
@@ -54,8 +56,8 @@ func dispatchJSPlugin(r *ghttp.Request) {
 		return
 	}
 
-	plugin, route, params, ok := jsplugin.CurrentGeneration().Match(strings.ToUpper(r.Method), native)
-	if !ok || plugin.Key != key {
+	plugin, route, params, ok := jsplugin.CurrentGeneration().Match(key, strings.ToUpper(r.Method), native)
+	if !ok {
 		writeJSNotFound(r)
 		return
 	}

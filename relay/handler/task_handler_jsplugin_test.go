@@ -159,6 +159,32 @@ export function parseQueryResponse(ctx) {
   return { items: [{ taskId: t.taskId, done: false }] };
 }`
 
+// noStdVideoPluginSource 不声明 standardVideos 的测试插件（NoDeclaration 分支夹具）：
+// 形态与 stdVideoPluginSource 一致，仅缺标准端点声明——golden 已示范视频双入口，
+// 不能再充当「未声明」样本。
+const noStdVideoPluginSource = `export const meta = {
+  apiVersion: 1, key: "nostdvideo", name: "NoStdVideo", version: "1.0.0",
+  models: ["nostd_model"], fetchMode: "per_task",
+  routes: [{ method: "POST", path: "/submit", type: "submit" }],
+};
+export function decodeRequest(ctx) {
+  return { kind: "submit", model: "nostd_model", requestBody: ctx.body || {} };
+}
+export function buildSubmitRequest(ctx) {
+  const b = ctx.body || {};
+  return { url: "/std/submit", method: "POST", body: { prompt: b.prompt } };
+}
+export function parseSubmitResponse(ctx) {
+  if (ctx.status !== 200) throw new Error("submit_http_" + ctx.status);
+  const resp = ctx.responseBody || {};
+  return { taskId: String(resp.id || "nostd-1"), taskData: resp };
+}
+export function buildQueryRequest(ctx) { const t = (ctx.tasks || [])[0] || {}; return { url: "/std/" + t.taskId, method: "GET" }; }
+export function parseQueryResponse(ctx) {
+  const t = (ctx.tasks || [])[0] || {};
+  return { items: [{ taskId: t.taskId, done: false }] };
+}`
+
 // jsSubmitPlan 构造分发器同构的解码计划并注入 ctx（jsbridge.ValidateRequest 消费）。
 func jsSubmitPlan(t *testing.T, pluginKey, model, prompt string) (context.Context, *jsplugin.SubmitPlan) {
 	t.Helper()
@@ -444,7 +470,7 @@ func TestHandleTaskSubmit_JSPlugin_StandardEntry_OpenAIVideosBody(t *testing.T) 
 // TestHandleTaskSubmit_JSPlugin_StandardEntry_NoDeclaration 插件未声明 standardVideos：
 // 400 明确提示（含声明指引），不触上游、不预扣。
 func TestHandleTaskSubmit_JSPlugin_StandardEntry_NoDeclaration(t *testing.T) {
-	publishJSPlugins(t, goldenTestSource(t))
+	publishJSPlugins(t, noStdVideoPluginSource)
 
 	vendorHits := 0
 	vendor := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -458,9 +484,9 @@ func TestHandleTaskSubmit_JSPlugin_StandardEntry_NoDeclaration(t *testing.T) {
 	billing := &jsBillingRecorder{}
 
 	HandleTaskSubmit(context.Background(),
-		[]byte(`{"model":"golden_music","prompt":"hello"}`),
+		[]byte(`{"model":"nostd_model","prompt":"hello"}`),
 		"/v1/videos", http.Header{}, rc, &stubVideosSubmitProvider{}, billing,
-		jsChannelMeta(vendor.URL, "golden", "golden_music"))
+		jsChannelMeta(vendor.URL, "nostdvideo", "nostd_model"))
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("期望 400，得到 %d body=%s", rec.Code, rec.Body.String())

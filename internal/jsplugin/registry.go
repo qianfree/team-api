@@ -904,17 +904,13 @@ func (r *Registry) hasActiveRow(ctx context.Context, key string) (bool, error) {
 	return count > 0, nil
 }
 
-// checkManifestConflict 两插件 manifest 冲突预检：路由形状冲突 + 模型名冲突。
+// checkManifestConflict 两插件 manifest 冲突预检：模型名冲突。
 // 模型同名在【双方都声明 sharedModels】时放行（同名多插件的合法形态：路由归属由
 // 渠道 plugin_key 决定），任一方未声明仍拒绝——防拼写意外撞名产生归属歧义。
+// 路由不做跨插件预检：/pjs/{key}/... 入口按 key 命名空间隔离（分发器先按 URL key
+// 定位插件、再在插件内匹配路由），各厂商兼容的同名路由形态（如 GET /videos/:task_id）
+// 可在不同插件中并存、互不遮蔽。插件内的路由形状唯一性由 Manifest.Validate 保证。
 func checkManifestConflict(keyA string, a *contract.Manifest, keyB string, b *contract.Manifest) error {
-	for _, ra := range a.Routes {
-		for _, rb := range b.Routes {
-			if ra.Method == rb.Method && routeShapeKey(ra.Path) == routeShapeKey(rb.Path) {
-				return pluginOpError("路由冲突：%s %s 与插件 %s 的 %s 形状重复（先禁用对方再激活）", ra.Method, ra.Path, keyB, rb.Path)
-			}
-		}
-	}
 	sharedOK := a.SharedModels && b.SharedModels
 	for _, ma := range a.Models {
 		for _, mb := range b.Models {
@@ -936,22 +932,6 @@ func checkManifestConflict(keyA string, a *contract.Manifest, keyB string, b *co
 		}
 	}
 	return nil
-}
-
-// routeShapeKey 路由的结构形状键：参数段归一为 ":"（:action 与 :kind 同形状），
-// 供冲突检测与 generation 匹配索引共用语义。
-func routeShapeKey(path string) string {
-	shape := contract.NormalizePathShape(path)
-	if shape == "/" {
-		return shape
-	}
-	segs := strings.Split(strings.TrimPrefix(shape, "/"), "/")
-	for i, s := range segs {
-		if strings.HasPrefix(s, ":") {
-			segs[i] = ":"
-		}
-	}
-	return strings.Join(segs, "/")
 }
 
 func sourceHash(source string) string {

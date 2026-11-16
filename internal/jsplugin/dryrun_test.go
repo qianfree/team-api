@@ -57,7 +57,7 @@ func dryRunFixturePlugin(key, model string) string {
 }
 
 // TestDryRunGolden golden 参考实现：核心检查项全部 pass 且无任何 fail。
-// 样例 decode 为 warn——golden 校验 action ∈ {MUSIC, LYRICS}，固定样例参数被拒属
+// 样例 decode 为 warn——golden 校验 action ∈ {MUSIC, LYRICS, VIDEO}，固定样例参数被拒属
 // 正常分支拒绝；同时证明 config 配置缺失不参与 decode/build（utils.config.get
 // 返回 undefined，golden 走默认值），不产生误报。
 func TestDryRunGolden(t *testing.T) {
@@ -216,5 +216,49 @@ func TestTemplateSource(t *testing.T) {
 	}
 	if DryRun(src).HasFail() {
 		t.Error("模板 dry-run 不应存在 fail 项")
+	}
+}
+
+// TestDryRunStandardEndpoint 标准视频端点能力检查三档：
+//   - 声明 + 导出钩子 → pass（golden 形态）
+//   - 声明但未导出钩子 → fail（标准端点提交必失败）
+//   - 未声明 + usageSchema 含按秒字段 → warn（疑似视频插件缺声明，AI 生成插件的高频缺陷）
+//   - 未声明且无按秒字段 → pass（与视频无关的插件零打扰）
+func TestDryRunStandardEndpoint(t *testing.T) {
+	// 声明 + 导出：在夹具上补齐 standardVideos 声明与钩子
+	declared := strings.Replace(dryRunFixturePlugin("dryrun-sv-ok", "dryrun_sv_ok_model"),
+		"routes: [{ method: \"POST\", path: \"/create\", type: \"submit\" }],",
+		"routes: [{ method: \"POST\", path: \"/create\", type: \"submit\" }],\n\tstandardVideos: \"decodeVideos\",", 1) +
+		"\nexport function decodeVideos(ctx) {\n" +
+		"\treturn { kind: \"submit\", model: \"dryrun_sv_ok_model\", requestBody: ctx.body || {} };\n}\n"
+	byName := dryRunChecksByName(t, DryRun(declared))
+	if c := byName["standard-endpoint"]; c.Status != dryRunPass {
+		t.Errorf("声明+导出期望 pass，实际 %s: %s", c.Status, c.Detail)
+	}
+
+	// 声明但未导出钩子 → fail
+	missingHook := strings.Replace(dryRunFixturePlugin("dryrun-sv-miss", "dryrun_sv_miss_model"),
+		"routes: [{ method: \"POST\", path: \"/create\", type: \"submit\" }],",
+		"routes: [{ method: \"POST\", path: \"/create\", type: \"submit\" }],\n\tstandardVideos: \"decodeVideos\",", 1)
+	byName = dryRunChecksByName(t, DryRun(missingHook))
+	c := byName["standard-endpoint"]
+	if c.Status != dryRunFail || !strings.Contains(c.Detail, "未导出") {
+		t.Errorf("声明缺钩子期望 fail，实际 %s: %s", c.Status, c.Detail)
+	}
+
+	// 未声明 + 按秒计费字段 → warn
+	seconds := strings.Replace(dryRunFixturePlugin("dryrun-sv-warn", "dryrun_sv_warn_model"),
+		"routes: [{ method: \"POST\", path: \"/create\", type: \"submit\" }],",
+		"routes: [{ method: \"POST\", path: \"/create\", type: \"submit\" }],\n\tusageSchema: [{ key: \"seconds\", type: \"number\", unit: \"second\" }],", 1)
+	byName = dryRunChecksByName(t, DryRun(seconds))
+	c = byName["standard-endpoint"]
+	if c.Status != dryRunWarn || !strings.Contains(c.Detail, "standardVideos") {
+		t.Errorf("疑似视频插件未声明期望 warn，实际 %s: %s", c.Status, c.Detail)
+	}
+
+	// 未声明且无按秒字段 → pass（夹具默认形态）
+	byName = dryRunChecksByName(t, DryRun(dryRunFixturePlugin("dryrun-sv-none", "dryrun_sv_none_model")))
+	if c := byName["standard-endpoint"]; c.Status != dryRunPass {
+		t.Errorf("非视频插件期望 pass，实际 %s: %s", c.Status, c.Detail)
 	}
 }

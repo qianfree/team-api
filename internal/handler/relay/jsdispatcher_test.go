@@ -148,6 +148,49 @@ func TestJSDispatch_KeyMismatch(t *testing.T) {
 	}
 }
 
+// sameShapeQueryPluginSource 与 golden 同形状路由（GET /fetch/:task_id）的插件：
+// 命名空间隔离测试夹具——无渲染钩子，query 走默认透传。
+const sameShapeQueryPluginSource = `export const meta = {
+  apiVersion: 1, key: "sameshape", name: "Same Shape", version: "1.0.0",
+  models: ["sameshape_model"], fetchMode: "per_task",
+  routes: [{ method: "GET", path: "/fetch/:task_id", type: "query" }],
+};`
+
+// TestJSDispatch_RouteNamespaceIsolation 跨插件同形状路由（golden 与 sameshape 均声明
+// GET /fetch/:task_id）按 /pjs/{key} 命名空间隔离：各自命中自己的路由与任务、互不遮蔽
+// （旧实现先全局扁平匹配再校验 key，同形状路由跨插件互相遮蔽，激活预检也被迫拒绝）。
+func TestJSDispatch_RouteNamespaceIsolation(t *testing.T) {
+	tasks := map[string]*relay_common.AsyncTask{
+		"task_gold": jsTaskFixture("task_gold", "js:golden", "SUCCESS", "100%", nil),
+		"task_same": jsTaskFixture("task_same", "js:sameshape", "SUCCESS", "100%", nil),
+	}
+	base := setupJSDispatcher(t, tasks)
+
+	// 以 golden + sameshape（同形状路由）重建 generation
+	cleanup, err := jsplugin.PublishForTest(goldenPluginSource(t), sameShapeQueryPluginSource)
+	if err != nil {
+		t.Fatalf("发布同形状插件失败: %v", err)
+	}
+	t.Cleanup(cleanup)
+
+	// 各自命名空间内命中自己的路由与任务
+	status, out := jsHTTPDo(t, http.MethodGet, base+"/pjs/golden/fetch/task_gold", nil)
+	if status != http.StatusOK || out["task_id"] != "task_gold" {
+		t.Fatalf("golden 命名空间应命中自己的任务: %d %v", status, out)
+	}
+	status, out = jsHTTPDo(t, http.MethodGet, base+"/pjs/sameshape/fetch/task_same", nil)
+	if status != http.StatusOK || out["task_id"] != "task_same" {
+		t.Fatalf("sameshape 命名空间应命中自己的任务（不应被 golden 遮蔽）: %d %v", status, out)
+	}
+	// 任务归属隔离：跨插件任务按不存在处理
+	if status, _ = jsHTTPDo(t, http.MethodGet, base+"/pjs/golden/fetch/task_same", nil); status != http.StatusNotFound {
+		t.Fatalf("跨插件任务应 404，得到 %d", status)
+	}
+	if status, _ = jsHTTPDo(t, http.MethodGet, base+"/pjs/sameshape/fetch/task_gold", nil); status != http.StatusNotFound {
+		t.Fatalf("跨插件任务应 404，得到 %d", status)
+	}
+}
+
 // TestJSDispatch_Query_RenderTask golden 导出 renderTask → 钩子输出替换默认视图。
 func TestJSDispatch_Query_RenderTask(t *testing.T) {
 	tasks := map[string]*relay_common.AsyncTask{

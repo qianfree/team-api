@@ -196,7 +196,7 @@ func HandleAiAssistantChat(r *ghttp.Request) {
 					Detail: fmt.Sprintf("输出达到 max_tokens 上限（%d），代码被截断，需续写后重新校验", maxTokens),
 				}}, report.Checks...)
 			}
-			writeSSE(r, report)
+			writeSSE(r, aiassistant.NewValidateEvent(report))
 		}
 	}
 

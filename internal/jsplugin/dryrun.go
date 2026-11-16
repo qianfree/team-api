@@ -17,6 +17,7 @@ import (
 // 检查项（按序执行，单项失败不阻断后续可执行的检查）：
 //   - compile         编译 + manifest 校验 + 加密配置类型限制（与 Upload 同口径）
 //   - hooks           钩子齐备性（必选钩子缺失 = fail；渲染钩子缺失 = warn 走默认透传）
+//   - standard-endpoint 标准视频端点能力（声明缺钩子 = fail；疑似视频插件未声明 = warn）
 //   - conflict        与当前在服务插件的跨插件路由/模型冲突预检（复用激活时的规则）
 //   - sample-decode   样例请求执行 decode 钩子并校验返回契约
 //   - sample-build    样例执行 buildSubmitRequest 并校验返回契约
@@ -44,7 +45,7 @@ type DryRunReport struct {
 
 // DryRunCheck 单项检查结果。
 type DryRunCheck struct {
-	Name   string `json:"name"`   // compile | hooks | conflict | sample-decode | sample-build | lint-fetch-url
+	Name   string `json:"name"`   // compile | hooks | standard-endpoint | conflict | sample-decode | sample-build | lint-fetch-url
 	Status string `json:"status"` // pass=通过 / warn=提示（不阻断上传） / fail=缺陷（不建议上传）
 	Detail string `json:"detail"` // 中文说明
 }
@@ -104,6 +105,7 @@ func DryRun(source string) *DryRunReport {
 	} else {
 		defer inst.Close()
 		report.Checks = append(report.Checks, dryRunHookCompleteness(compiled.Manifest, inst.HasHook))
+		report.Checks = append(report.Checks, dryRunStandardEndpoint(compiled.Manifest, inst.HasHook))
 	}
 	report.Checks = append(report.Checks, dryRunConflict(compiled.Manifest))
 
@@ -212,11 +214,41 @@ func dryRunHookCompleteness(m *contract.Manifest, has func(string) bool) DryRunC
 }
 
 // ---------------------------------------------------------------------------
+// 标准视频端点能力
+// ---------------------------------------------------------------------------
+
+// dryRunStandardEndpoint 标准视频端点能力检查（视频插件的常见缺陷：未声明
+// meta.standardVideos，模型无法经 /v1/videos 与 /v1/video/generations 提交）：
+//   - 声明 standardVideos 但钩子未导出 → fail：标准端点提交时调用必失败（声明即承诺）
+//   - 未声明且 usageSchema 含 unit=second 字段 → warn：按秒计费疑似视频插件缺标准
+//     端点声明（音乐等按秒计费的非视频插件可忽略本提示）
+//   - 其余 → pass
+func dryRunStandardEndpoint(m *contract.Manifest, has func(string) bool) DryRunCheck {
+	if m.StandardVideos != "" {
+		if !has(m.StandardVideos) {
+			return DryRunCheck{Name: "standard-endpoint", Status: dryRunFail,
+				Detail: fmt.Sprintf("meta.standardVideos 声明为 %q 但插件未导出该钩子（标准端点提交必失败）", m.StandardVideos)}
+		}
+		return DryRunCheck{Name: "standard-endpoint", Status: dryRunPass,
+			Detail: fmt.Sprintf("标准视频端点已支持：模型可经 /v1/videos 与 /v1/video/generations 提交（解码钩子 %s）", m.StandardVideos)}
+	}
+	for _, f := range m.UsageSchema {
+		if f.Unit == "second" {
+			return DryRunCheck{Name: "standard-endpoint", Status: dryRunWarn,
+				Detail: fmt.Sprintf("未声明 meta.standardVideos：若为视频生成插件，模型将无法经 /v1/videos 与 /v1/video/generations 提交（仅 /pjs 原生路由）；usageSchema.%s 按秒计费，疑似视频插件，请确认", f.Key)}
+		}
+	}
+	return DryRunCheck{Name: "standard-endpoint", Status: dryRunPass,
+		Detail: "无需标准视频端点支持（未声明 standardVideos 且无按秒计费字段）"}
+}
+
+// ---------------------------------------------------------------------------
 // 跨插件冲突预检
 // ---------------------------------------------------------------------------
 
-// dryRunConflict 与当前 generation 内其他插件比路由形状与模型名（复用 Activate 事务
-// 内的 checkManifestConflict 同一规则）。命中即 fail——激活会被拒绝，提前告知。
+// dryRunConflict 与当前 generation 内其他插件比模型名（复用 Activate 事务内的
+// checkManifestConflict 同一规则；路由按 /pjs/{key} 命名空间隔离，不做跨插件预检）。
+// 命中即 fail——激活会被拒绝，提前告知。
 // 只比对在服务插件：禁用插件的冲突由激活时的事务内预检兜底，试运行不读 DB。
 func dryRunConflict(m *contract.Manifest) DryRunCheck {
 	others := 0

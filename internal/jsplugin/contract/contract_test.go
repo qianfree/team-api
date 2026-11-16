@@ -375,3 +375,17 @@ func TestReferenceRolesManifest(t *testing.T) {
 		t.Fatal("声明后应按声明判定")
 	}
 }
+
+// TestReferenceRolesValidate file/link 角色可声明（网关已支持，文档承诺），未知角色拒绝。
+func TestReferenceRolesValidate(t *testing.T) {
+	base := func(roles ...string) *Manifest {
+		return &Manifest{APIVersion: 1, Key: "demo", Name: "d", Version: "1.0.0", Models: []string{"m"},
+			Routes: []Route{{Method: "POST", Path: "/submit", Type: RouteTypeSubmit}}, ReferenceRoles: roles}
+	}
+	if err := base("first_frame", "file", "link").Validate(); err != nil {
+		t.Fatalf("file/link 应可声明: %v", err)
+	}
+	if err := base("mask").Validate(); err == nil {
+		t.Fatal("未知角色应被拒绝")
+	}
+}
