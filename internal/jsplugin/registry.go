@@ -577,6 +577,68 @@ func (r *Registry) fallbackActivateBuiltin(ctx context.Context, key string) erro
 	return gerror.Wrap(err, "回落内置版本失败")
 }
 
+// PluginDeleteCheck 整删预检结果。
+type PluginDeleteCheck struct {
+	Allowed      bool
+	Reason       string // 不允许时的中文原因（可直接透出给确认弹窗）
+	VersionCount int
+}
+
+// checkDeletePluginRows 整删预检纯逻辑（无 DB 依赖，可单测）：
+// key 不存在 / 含内置版本（平台基座，随启动 seed 会复活）/ 启用中 → 拒绝。
+func checkDeletePluginRows(rows []PluginVersionRow) PluginDeleteCheck {
+	if len(rows) == 0 {
+		return PluginDeleteCheck{Allowed: false, Reason: "插件不存在或已删除"}
+	}
+	for i := range rows {
+		if rows[i].Origin == "builtin" {
+			return PluginDeleteCheck{Allowed: false,
+				Reason: "该插件标识存在内置版本（平台基座），不可整删，请在版本历史中逐个删除上传版本"}
+		}
+		if rows[i].Active && rows[i].Enabled {
+			return PluginDeleteCheck{Allowed: false, Reason: "插件启用中，请先禁用再删除"}
+		}
+	}
+	return PluginDeleteCheck{Allowed: true, VersionCount: len(rows)}
+}
+
+// CheckDeletePlugin 整删预检（删除确认弹窗数据源，与 DeletePlugin 共用同一判定）。
+func (r *Registry) CheckDeletePlugin(ctx context.Context, key string) (*PluginDeleteCheck, error) {
+	rows, err := r.loadKeyRows(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	check := checkDeletePluginRows(rows)
+	return &check, nil
+}
+
+// DeletePlugin 删除整个上传插件：全部版本行 + sys_options 的 plugin.{key}.* 配置键。
+// 配置键必须连带清理——seedConfigDefaults「已存在的键不动」，残留键会让同 key
+// 重新上传的新插件静默继承旧配置值（含加密密钥）。在途任务不阻断删除：轮询遇
+// 插件缺席保持非终态等回归，由 30 分钟超时网（handleTimedOutTasks → 失败 + 退款）
+// 兜底；历史任务 / 计费 / 用量 / 产物记录保留，不受影响。
+func (r *Registry) DeletePlugin(ctx context.Context, key string) error {
+	rows, err := r.loadKeyRows(ctx, key)
+	if err != nil {
+		return err
+	}
+	if check := checkDeletePluginRows(rows); !check.Allowed {
+		return pluginOpError("%s", check.Reason)
+	}
+	// 版本行先删：配置键清理失败不回滚（残留键惰性无害，无人读取），告警留痕
+	if _, err := g.DB().Model(tableName).Ctx(ctx).Where("plugin_key", key).Delete(); err != nil {
+		return gerror.Wrap(err, "删除插件版本失败")
+	}
+	if err := deletePluginConfigKeys(ctx, key); err != nil {
+		glog.Warningf(ctx, "jsplugin 整删 %s：配置键清理失败（版本已删除，残留键惰性无害）: %v", key, err)
+	}
+	_, rbErr := r.rebuildGeneration(ctx)
+	if rbErr == nil {
+		r.PublishInvalidate(ctx) // 本实例已重建，广播其余实例
+	}
+	return rbErr
+}
+
 // ---------------------------------------------------------------------------
 // 内部
 // ---------------------------------------------------------------------------
@@ -711,6 +773,16 @@ func (r *Registry) loadRow(ctx context.Context, key, version string) (*PluginVer
 	return &row, nil
 }
 
+// loadKeyRows 取某 key 的全部版本行（整删预检 / 整删用）。
+func (r *Registry) loadKeyRows(ctx context.Context, key string) ([]PluginVersionRow, error) {
+	var rows []PluginVersionRow
+	if err := g.DB().Model(tableName).Ctx(ctx).
+		Where("plugin_key", key).Scan(&rows); err != nil {
+		return nil, gerror.Wrap(err, "读取插件版本失败")
+	}
+	return rows, nil
+}
+
 func (r *Registry) loadActiveRows(ctx context.Context) ([]PluginVersionRow, error) {
 	var rows []PluginVersionRow
 	err := g.DB().Model(tableName).Ctx(ctx).Where("active", true).Scan(&rows)
@@ -832,17 +904,13 @@ func (r *Registry) hasActiveRow(ctx context.Context, key string) (bool, error) {
 	return count > 0, nil
 }
 
-// checkManifestConflict 两插件 manifest 冲突预检：路由形状冲突 + 模型名冲突。
+// checkManifestConflict 两插件 manifest 冲突预检：模型名冲突。
 // 模型同名在【双方都声明 sharedModels】时放行（同名多插件的合法形态：路由归属由
 // 渠道 plugin_key 决定），任一方未声明仍拒绝——防拼写意外撞名产生归属歧义。
+// 路由不做跨插件预检：/pjs/{key}/... 入口按 key 命名空间隔离（分发器先按 URL key
+// 定位插件、再在插件内匹配路由），各厂商兼容的同名路由形态（如 GET /videos/:task_id）
+// 可在不同插件中并存、互不遮蔽。插件内的路由形状唯一性由 Manifest.Validate 保证。
 func checkManifestConflict(keyA string, a *contract.Manifest, keyB string, b *contract.Manifest) error {
-	for _, ra := range a.Routes {
-		for _, rb := range b.Routes {
-			if ra.Method == rb.Method && routeShapeKey(ra.Path) == routeShapeKey(rb.Path) {
-				return pluginOpError("路由冲突：%s %s 与插件 %s 的 %s 形状重复（先禁用对方再激活）", ra.Method, ra.Path, keyB, rb.Path)
-			}
-		}
-	}
 	sharedOK := a.SharedModels && b.SharedModels
 	for _, ma := range a.Models {
 		for _, mb := range b.Models {
@@ -864,22 +932,6 @@ func checkManifestConflict(keyA string, a *contract.Manifest, keyB string, b *co
 		}
 	}
 	return nil
-}
-
-// routeShapeKey 路由的结构形状键：参数段归一为 ":"（:action 与 :kind 同形状），
-// 供冲突检测与 generation 匹配索引共用语义。
-func routeShapeKey(path string) string {
-	shape := contract.NormalizePathShape(path)
-	if shape == "/" {
-		return shape
-	}
-	segs := strings.Split(strings.TrimPrefix(shape, "/"), "/")
-	for i, s := range segs {
-		if strings.HasPrefix(s, ":") {
-			segs[i] = ":"
-		}
-	}
-	return strings.Join(segs, "/")
 }
 
 func sourceHash(source string) string {

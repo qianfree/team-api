@@ -132,6 +132,30 @@ type JSPluginDeleteReq struct {
 
 type JSPluginDeleteRes struct{}
 
+// JSPluginDeleteCheckReq 整删预检：删除整个插件前取确认弹窗数据
+// （是否允许 + 原因 + 版本数 + 在途任务数）
+type JSPluginDeleteCheckReq struct {
+	g.Meta `path:"/js-plugins/{key}/delete-check" method:"get" mime:"json" tags:"管理后台-JS插件" summary:"JS插件整删预检"`
+	Key    string `json:"key" in:"path" v:"required" dc:"插件标识"`
+}
+
+type JSPluginDeleteCheckRes struct {
+	Allowed      bool   `json:"allowed"       dc:"是否允许整删"`
+	Reason       string `json:"reason"        dc:"不允许时的原因（中文提示，可直接展示）"`
+	VersionCount int    `json:"version_count" dc:"将被删除的版本数"`
+	PendingTasks int64  `json:"pending_tasks" dc:"在途任务数（非终态，整删后将由超时网判失败并退款）"`
+}
+
+// JSPluginPurgeReq 删除整个上传插件：全部版本行 + sys_options 配置键一并清除。
+// 仅纯上传 key 可整删（含内置版本的 key 只能删上传版本）；启用中需先禁用。
+// 历史任务 / 计费 / 用量记录保留，不受影响。
+type JSPluginPurgeReq struct {
+	g.Meta `path:"/js-plugins/{key}" method:"delete" mime:"json" tags:"管理后台-JS插件" summary:"删除整个JS插件"`
+	Key    string `json:"key" in:"path" v:"required" dc:"插件标识"`
+}
+
+type JSPluginPurgeRes struct{}
+
 // JSPluginSourceReq 查看插件版本源码
 type JSPluginSourceReq struct {
 	g.Meta  `path:"/js-plugins/{key}/versions/{version}/source" method:"get" mime:"json" tags:"管理后台-JS插件" summary:"查看JS插件源码"`

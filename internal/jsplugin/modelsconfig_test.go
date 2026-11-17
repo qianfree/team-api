@@ -96,7 +96,7 @@ func TestCheckModelSetConflict(t *testing.T) {
 }
 
 // TestCheckManifestConflictShared 激活预检的共享放行：双方 sharedModels 同名不报错、
-// 单方报错；路由形状冲突不受 sharedModels 影响。
+// 单方报错；路由按 /pjs/{key} 命名空间隔离，跨插件同形状不构成冲突（与 sharedModels 无关）。
 func TestCheckManifestConflictShared(t *testing.T) {
 	newM := func(routePath string, models []string, shared bool) *contract.Manifest {
 		return &contract.Manifest{Models: models, SharedModels: shared,
@@ -110,8 +110,8 @@ func TestCheckManifestConflictShared(t *testing.T) {
 	if err := checkManifestConflict("a", newM("/a/submit", []string{"m-1"}, true), "b", newM("/b/submit", []string{"m-1"}, false)); err == nil {
 		t.Fatal("单边 sharedModels 同名应拒绝")
 	}
-	// 路由形状冲突：即使双方 sharedModels 也拒绝（/pjs 路由表硬约束）
-	if err := checkManifestConflict("a", newM("/same/submit", []string{"m-1"}, true), "b", newM("/same/submit", []string{"m-2"}, true)); err == nil {
-		t.Fatal("路由形状冲突应拒绝")
+	// 跨插件同形状路由：不冲突（命名空间隔离，与 sharedModels 无关）
+	if err := checkManifestConflict("a", newM("/same/submit", []string{"m-1"}, false), "b", newM("/same/submit", []string{"m-2"}, false)); err != nil {
+		t.Fatalf("跨插件同形状路由不应冲突: %v", err)
 	}
 }

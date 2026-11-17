@@ -84,6 +84,11 @@ func (a *openaiAdaptor) ConvertRequest(ctx context.Context, info *common.RelayIn
 	case constant.RelayModeAudioTranscription:
 		return bytes.NewReader(helper.RewriteAudioMultipartModel(requestBody, info)), nil
 	}
+	if mode == constant.RelayModeImagesGenerations {
+		// 系统多图参考字段 images[] → Ark 原生 image 对象数组（Ark 不认 images，
+		// 透传会静默丢垫图）；单图 image 约定与 Ark 原生形态透传不受影响
+		requestBody = normalizeArkReferenceImages(requestBody)
+	}
 	result := mapModelIfNeeded(requestBody, info)
 	if mode != constant.RelayModeImagesGenerations && mode != constant.RelayModeImagesEdits {
 		result = openai.InjectStreamOptions(result, info)

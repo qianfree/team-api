@@ -57,7 +57,7 @@ func StreamScannerHandler(
 	resetChan := make(chan struct{}, resetChanSize) // scanner 每读一行通知主协程重置超时
 	var writeMutex sync.Mutex
 	var wg sync.WaitGroup
-	streamTimeout := getStreamTimeout(info)
+	streamTimeout := StreamIdleTimeout(info)
 
 	// 确保 resp.Body 最终被关闭，解锁被 scanner.Scan() 阻塞的协程
 	defer func() {
@@ -245,9 +245,10 @@ shutdown:
 	}
 }
 
-// getStreamTimeout 获取流式空闲超时时间（两个 chunk 之间的最大间隔）。
+// StreamIdleTimeout 获取流式空闲超时时间（两个 chunk 之间的最大间隔）。
+// 供 StreamScannerHandler 与 relaykit 桥接 / Responses 直连透传的 IdleTimeoutReader 共用。
 // 优先级：渠道自定义（须大于全局值才生效）> 全局配置（系统设置 streaming_timeout_seconds）> 内置默认。
-func getStreamTimeout(info *common.RelayInfo) time.Duration {
+func StreamIdleTimeout(info *common.RelayInfo) time.Duration {
 	global := time.Duration(common.GlobalStreamIdleTimeoutSeconds()) * time.Second
 	if info.ChannelMeta != nil && info.ChannelMeta.Settings.TimeoutSeconds > 0 {
 		t := time.Duration(info.ChannelMeta.Settings.TimeoutSeconds) * time.Second

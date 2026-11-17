@@ -36,8 +36,11 @@ func TestCompileGoldenManifest(t *testing.T) {
 	if m.Key != "golden" || m.Version == "" {
 		t.Fatalf("manifest 解析异常: %+v", m)
 	}
-	if len(m.Models) != 1 || m.Models[0] != "golden_music" {
+	if len(m.Models) != 2 || m.Models[0] != "golden_music" || m.Models[1] != "golden_video" {
 		t.Fatalf("models 解析异常: %v", m.Models)
+	}
+	if m.StandardVideos != "decodeVideos" {
+		t.Fatalf("standardVideos 解析异常: %q", m.StandardVideos)
 	}
 	if len(m.Routes) != 2 || m.Routes[0].Type != contract.RouteTypeSubmit || m.Routes[1].Type != contract.RouteTypeQuery {
 		t.Fatalf("routes 解析异常: %+v", m.Routes)
@@ -171,6 +174,84 @@ func TestGoldenHookFlow(t *testing.T) {
 	}
 	if !strings.Contains(string(rend.Body), "task_pub1") {
 		t.Fatalf("renderTask 输出异常: %s", rend.Body)
+	}
+}
+
+// TestGoldenStandardVideos golden 视频模型的标准端点解码（meta.standardVideos 示范）：
+// /v1/videos 与 /v1/video/generations 两入口的归一通用任务体均映射为原生 requestBody，
+// estimateUsage / buildSubmitRequest 下游无感复用（时长/首尾帧正确进入上游请求）。
+func TestGoldenStandardVideos(t *testing.T) {
+	compiled := mustCompile(t, goldenSource(t))
+	inst, err := NewGojaEngine().NewInstance(compiled, InstanceOptions{CallTimeout: 2 * time.Second})
+	if err != nil {
+		t.Fatalf("创建实例失败: %v", err)
+	}
+	defer inst.Close()
+
+	// /v1/videos 形态：metadata.duration/size + references[]（唯一权威来源）
+	var decodedRaw map[string]json.RawMessage
+	_ = json.Unmarshal(callHook(t, inst, "decodeVideos", contract.StandardEntryContext{
+		Surface: contract.SurfaceOpenAIVideos, Path: "/v1/videos", Model: "golden_video",
+		Body: json.RawMessage(`{"model":"golden_video","prompt":"a cat","seconds":"8",` +
+			`"references":[{"role":"first_frame","url":"https://cdn/f.png"},{"role":"last_frame","url":"https://cdn/l.png"}],` +
+			`"metadata":{"duration":8,"size":"1280x720"}}`),
+	}), &decodedRaw)
+	decoded, err := contract.ValidateDecoded(decodedRaw, compiled.Manifest, false)
+	if err != nil {
+		t.Fatalf("decodeVideos 契约校验失败: %v", err)
+	}
+	var reqBody map[string]any
+	_ = json.Unmarshal(decoded.RequestBody, &reqBody)
+	if reqBody["seconds"] != float64(8) || reqBody["size"] != "1280x720" ||
+		reqBody["first_frame"] != "https://cdn/f.png" || reqBody["last_frame"] != "https://cdn/l.png" {
+		t.Fatalf("通用任务体映射异常: %v", reqBody)
+	}
+
+	// /v1/video/generations 形态：顶层 seconds、兼容字段首帧（metadata.image）
+	_ = json.Unmarshal(callHook(t, inst, "decodeVideos", contract.StandardEntryContext{
+		Surface: contract.SurfaceVideoGenerations, Path: "/v1/video/generations", Model: "golden_video",
+		Body: json.RawMessage(`{"model":"golden_video","prompt":"a dog","seconds":5,"metadata":{"image":"https://cdn/d.png"}}`),
+	}), &decodedRaw)
+	decoded, err = contract.ValidateDecoded(decodedRaw, compiled.Manifest, false)
+	if err != nil {
+		t.Fatalf("decodeVideos（通用端点形态）契约校验失败: %v", err)
+	}
+	_ = json.Unmarshal(decoded.RequestBody, &reqBody)
+	if reqBody["seconds"] != float64(5) || reqBody["first_frame"] != "https://cdn/d.png" {
+		t.Fatalf("顶层秒数/兼容首帧映射异常: %v", reqBody)
+	}
+
+	// estimateUsage 视频按秒预扣
+	var estRaw map[string]json.RawMessage
+	_ = json.Unmarshal(callHook(t, inst, "estimateUsage", contract.EstimateUsageContext{
+		Body: decoded.RequestBody, Model: decoded.Model,
+	}), &estRaw)
+	facts, err := contract.ValidateUsageFacts(estRaw, compiled.Manifest)
+	if err != nil || facts["seconds"] != 5 {
+		t.Fatalf("视频用量估算异常: %v err=%v", facts, err)
+	}
+
+	// buildSubmitRequest 携带映射后的参数
+	var builtRaw map[string]json.RawMessage
+	_ = json.Unmarshal(callHook(t, inst, "buildSubmitRequest", contract.BuildSubmitContext{
+		Body: decoded.RequestBody, Model: decoded.Model, ChannelBaseURL: "https://up.example.com",
+	}), &builtRaw)
+	built, err := contract.ValidateBuiltRequest(builtRaw)
+	if err != nil {
+		t.Fatalf("buildSubmitRequest 契约校验失败: %v", err)
+	}
+	var submitBody map[string]any
+	_ = json.Unmarshal(built.Body, &submitBody)
+	if submitBody["seconds"] != float64(5) || submitBody["first_frame"] != "https://cdn/d.png" {
+		t.Fatalf("上游请求应携带映射后的参数: %v", submitBody)
+	}
+
+	// 缺 prompt：标准端点同样拒绝
+	if _, err := inst.Call(context.Background(), "decodeVideos", mustJSON(t, contract.StandardEntryContext{
+		Surface: contract.SurfaceOpenAIVideos, Path: "/v1/videos", Model: "golden_video",
+		Body: json.RawMessage(`{"model":"golden_video"}`),
+	})); err == nil {
+		t.Fatal("缺 prompt 应抛错")
 	}
 }
 

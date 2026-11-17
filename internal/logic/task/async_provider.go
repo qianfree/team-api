@@ -164,6 +164,20 @@ func (p *AsyncProvider) UpdateTask(ctx context.Context, task *common.AsyncTask) 
 	return nil
 }
 
+// UpdateTaskPrivateData 覆盖任务私有数据（仅 private_data 列，不触碰状态/计费字段）
+func (p *AsyncProvider) UpdateTaskPrivateData(ctx context.Context, id int64, privateData []byte) error {
+	_, err := dao.TskModelTasks.Ctx(ctx).
+		Where("id", id).
+		Update(map[string]any{
+			"private_data": json.RawMessage(privateData),
+			"updated_at":   time.Now(),
+		})
+	if err != nil {
+		return gerror.Wrapf(err, "update async task private data failed: id=%d", id)
+	}
+	return nil
+}
+
 // UpdateTaskCAS CAS 状态更新
 func (p *AsyncProvider) UpdateTaskCAS(ctx context.Context, task *common.AsyncTask, oldStatus string) error {
 	result, err := dao.TskModelTasks.Ctx(ctx).

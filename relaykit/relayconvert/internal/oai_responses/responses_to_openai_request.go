@@ -94,9 +94,10 @@ func (c *ResponsesToOpenAIRequestConverter) ConvertRequest(
 	}
 	chatReq.Temperature = req.Temperature
 	chatReq.TopP = req.TopP
+	// max_output_tokens → 按上游模型选字段：GPT-5 / o 系列只接受 max_completion_tokens
+	//（codex 客户端经网关调官方推理模型，落 max_tokens 会直接 400）
 	if req.MaxOutputTokens != nil {
-		maxTokens := int(*req.MaxOutputTokens)
-		chatReq.MaxTokens = &maxTokens
+		shared.SetChatMaxTokens(chatReq, int(*req.MaxOutputTokens))
 	}
 	if req.Logprobs != nil {
 		logprobs := true

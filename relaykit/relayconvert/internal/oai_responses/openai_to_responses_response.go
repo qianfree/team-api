@@ -90,6 +90,13 @@ func chatCompletionToResponsesResponse(chatResp *dto.ChatCompletionResponse, inf
 	}
 	echo := extractResponsesRequestEcho(info)
 
+	// 终止态按首个 choice 的 finish_reason 映射（length / content_filter → incomplete）
+	finishReason := ""
+	if len(chatResp.Choices) > 0 {
+		finishReason = chatResp.Choices[0].FinishReason
+	}
+	_, status, itemStatus := responsesTerminalState(finishReason)
+
 	// 构建 output
 	output := make([]dto.ResponsesOutput, 0)
 	for _, choice := range chatResp.Choices {
@@ -125,7 +132,7 @@ func chatCompletionToResponsesResponse(chatResp *dto.ChatCompletionResponse, inf
 		msgOutput := dto.ResponsesOutput{
 			Type:    "message",
 			ID:      fmt.Sprintf("msg_%s", chatResp.ID),
-			Status:  "completed",
+			Status:  itemStatus,
 			Role:    "assistant",
 			Content: content,
 		}
@@ -176,9 +183,9 @@ func chatCompletionToResponsesResponse(chatResp *dto.ChatCompletionResponse, inf
 		Object:             "response",
 		CreatedAt:          int(chatResp.Created),
 		CompletedAt:        int(chatResp.Created) + 1,
-		Status:             json.RawMessage(`"completed"`),
+		Status:             json.RawMessage(`"` + status + `"`),
 		Error:              nil,
-		IncompleteDetails:  nil,
+		IncompleteDetails:  responsesIncompleteDetailsMap(finishReason),
 		Instructions:       echo.instructions,
 		MaxOutputTokens:    echo.maxOutputTokens,
 		Model:              modelName,
@@ -209,4 +216,33 @@ func chatCompletionToResponsesResponse(chatResp *dto.ChatCompletionResponse, inf
 // float64Ptr 返回 float64 的指针
 func float64Ptr(v float64) *float64 {
 	return &v
+}
+
+// responsesTerminalState 把 chat 的 finish_reason 映射为 Responses 的终止态三元组：
+// 终止事件名（流式）、response.status、message 输出项 status。
+//
+// length / content_filter 都是「模型没说完」：Responses 协议用 status=incomplete +
+// incomplete_details.reason 表达（max_output_tokens / content_filter），Codex 等客户端据此
+// 提示截断或续写。此前一律 completed，被 max_tokens 截断的回答在客户端看来是完整答案。
+// 其余（stop / tool_calls / 上游省略）为 completed。
+func responsesTerminalState(finishReason string) (event string, status string, itemStatus string) {
+	switch finishReason {
+	case "length", "content_filter":
+		return "response.incomplete", "incomplete", "incomplete"
+	default:
+		return "response.completed", "completed", "completed"
+	}
+}
+
+// responsesIncompleteDetailsMap 构建 incomplete_details 字段：仅 incomplete 终止态非 nil。
+// 返回 map 而非结构体，便于流式路径直接嵌入 map 负载、测试按 map 断言。
+func responsesIncompleteDetailsMap(finishReason string) any {
+	switch finishReason {
+	case "length":
+		return map[string]any{"reason": "max_output_tokens"}
+	case "content_filter":
+		return map[string]any{"reason": "content_filter"}
+	default:
+		return nil
+	}
 }

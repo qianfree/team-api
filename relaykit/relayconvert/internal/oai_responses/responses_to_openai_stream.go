@@ -64,6 +64,8 @@ func (c *ResponsesToOpenAIStreamConverter) ConvertStreamResponse(
 		usageText, outputText strings.Builder
 		sentStart, sentStop   bool
 		sawToolCall           bool
+		sawTerminal           bool // 收到过终止态事件（completed / incomplete）
+		sawDone               bool // 收到 [DONE] 哨兵（Responses 协议本无此哨兵，部分兼容上游会发）
 	)
 
 	toolCallIndexByID := make(map[string]int)
@@ -110,12 +112,14 @@ func (c *ResponsesToOpenAIStreamConverter) ConvertStreamResponse(
 			continue
 		}
 		if data == "[DONE]" {
+			sawDone = true
 			break
 		}
 
 		var streamResp dto.ResponsesStreamResponse
 		if err := json.Unmarshal([]byte(data), &streamResp); err != nil {
-			// 解析失败视为软错误跳过该行（与旧实现的 sr.Error 行为一致：流继续处理）
+			// 解析失败视为软错误跳过该行（流继续处理），经宿主能力接口留痕供排障
+			convmeta.RecordSoftError(info, "skip unparsable responses event: %v (data=%.200s)", err, data)
 			continue
 		}
 
@@ -219,7 +223,10 @@ func (c *ResponsesToOpenAIStreamConverter) ConvertStreamResponse(
 			sawToolCall = true
 			usageText.WriteString(streamResp.Delta)
 
-		case "response.completed":
+		case "response.completed", "response.incomplete":
+			// incomplete（max_output_tokens / content_filter 截断）与 completed 同样是终止态，
+			// 同样携带 usage；此前不处理 incomplete，截断响应既无 finish_reason=length 也丢用量
+			sawTerminal = true
 			if streamResp.Response != nil {
 				// 模型映射时不回填上游模型名，避免泄漏给客户端
 				if streamResp.Response.Model != "" && !isModelMapped(info) {
@@ -242,6 +249,10 @@ func (c *ResponsesToOpenAIStreamConverter) ConvertStreamResponse(
 				finishReason := "stop"
 				if sawToolCall && outputText.Len() == 0 {
 					finishReason = "tool_calls"
+				}
+				// 截断态优先：客户端据 length / content_filter 提示截断或续写
+				if truncated := streamResp.Response.TruncatedFinishReason(); truncated != "" {
+					finishReason = truncated
 				}
 				fr := finishReason
 				stopChunk := &dto.ChatCompletionStreamResponse{
@@ -267,6 +278,24 @@ func (c *ResponsesToOpenAIStreamConverter) ConvertStreamResponse(
 
 	if err := scanner.Err(); err != nil && err != io.EOF {
 		return fmt.Errorf("stream scanner error: %w", err)
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	// 既无终止态事件也无 [DONE] 即 EOF：流被掐断（上游崩溃 / 代理切断 / 聚合器静默失败）。
+	// 此前这里合成 finish_reason=stop + usage 假装正常——客户端把半截回答当完整答案、宿主按
+	// 成功记账。现改为：已拿到的用量经侧信道（Data 为空的 StreamEvent）上报，以
+	// ErrUpstreamStreamTruncated 返回，宿主据此向客户端补发 error chunk 并按流中断处理。
+	if !sawTerminal && !sawDone {
+		if totalUsage.PromptTokens > 0 || totalUsage.CompletionTokens > 0 {
+			truncatedUsage := totalUsage
+			if err := chunkWriter(&relayconvert.StreamEvent{Usage: &truncatedUsage}); err != nil {
+				return err
+			}
+		}
+		return fmt.Errorf("responses stream closed before response.completed (text=%d bytes, tool_calls=%d): %w",
+			outputText.Len(), len(toolCallIndexByID), relayconvert.ErrUpstreamStreamTruncated)
 	}
 
 	// 上游未返回 usage 时按累计文本估算（4 字符/token；流中断兜底由宿主处理）

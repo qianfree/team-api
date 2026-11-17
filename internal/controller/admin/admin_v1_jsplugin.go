@@ -49,3 +49,9 @@ func (c *ControllerV1) JSPluginTemplate(ctx context.Context, req *v1.JSPluginTem
 func (c *ControllerV1) JSPluginOpsStats(ctx context.Context, req *v1.JSPluginOpsStatsReq) (res *v1.JSPluginOpsStatsRes, err error) {
 	return service.Admin().JSPluginOpsStats(ctx, req)
 }
+func (c *ControllerV1) JSPluginDeleteCheck(ctx context.Context, req *v1.JSPluginDeleteCheckReq) (res *v1.JSPluginDeleteCheckRes, err error) {
+	return service.Admin().JSPluginDeleteCheck(ctx, req)
+}
+func (c *ControllerV1) JSPluginPurge(ctx context.Context, req *v1.JSPluginPurgeReq) (res *v1.JSPluginPurgeRes, err error) {
+	return service.Admin().JSPluginPurge(ctx, req)
+}

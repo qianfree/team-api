@@ -2,6 +2,7 @@ package aiassistant
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -39,17 +40,17 @@ func TestChatStreamDeltas(t *testing.T) {
 	})
 
 	var got strings.Builder
-	usage, err := client.ChatStream(context.Background(), []ChatMessage{{Role: "user", Content: "hi"}}, 100, 0.5, func(delta string) {
+	res, err := client.ChatStream(context.Background(), []ChatMessage{{Role: "user", Content: "hi"}}, 100, 0.5, func(delta string) {
 		got.WriteString(delta)
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("ChatStream: %v", err)
 	}
 	if got.String() != "你好" {
 		t.Fatalf("增量不符: %q", got.String())
 	}
-	if usage.TotalTokens != 12 {
-		t.Fatalf("usage 不符: %+v", usage)
+	if res.Usage.TotalTokens != 12 {
+		t.Fatalf("usage 不符: %+v", res.Usage)
 	}
 }
 
@@ -59,7 +60,7 @@ func TestChatStreamNoDoneFlag(t *testing.T) {
 		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n"))
 	})
 	var got strings.Builder
-	if _, err := client.ChatStream(context.Background(), []ChatMessage{{Role: "user", Content: "hi"}}, 0, 0, func(s string) { got.WriteString(s) }); err != nil {
+	if _, err := client.ChatStream(context.Background(), []ChatMessage{{Role: "user", Content: "hi"}}, 0, 0, func(s string) { got.WriteString(s) }, nil); err != nil {
 		t.Fatalf("ChatStream: %v", err)
 	}
 	if got.String() != "ok" {
@@ -73,7 +74,7 @@ func TestChatStreamHTTPError(t *testing.T) {
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = w.Write([]byte(`{"error":{"message":"invalid api key"}}`))
 	})
-	_, err := client.ChatStream(context.Background(), []ChatMessage{{Role: "user", Content: "hi"}}, 0, 0, nil)
+	_, err := client.ChatStream(context.Background(), []ChatMessage{{Role: "user", Content: "hi"}}, 0, 0, nil, nil)
 	if err == nil {
 		t.Fatal("应报错")
 	}
@@ -94,7 +95,7 @@ func TestClientFullEndpointMode(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.BaseURL = srv.URL + "/custom/path"
 	cfg.EndpointMode = EndpointModeFull
-	_, err := NewClient(cfg).ChatStream(context.Background(), []ChatMessage{{Role: "user", Content: "hi"}}, 0, 0, nil)
+	_, err := NewClient(cfg).ChatStream(context.Background(), []ChatMessage{{Role: "user", Content: "hi"}}, 0, 0, nil, nil)
 	if err != nil {
 		t.Fatalf("ChatStream: %v", err)
 	}
@@ -108,5 +109,66 @@ func TestTestConnection(t *testing.T) {
 	res := client.TestConnection(context.Background())
 	if !res.OK || res.Reply != "ok" || res.TokensUsed != 8 {
 		t.Fatalf("结果不符: %+v", res)
+	}
+}
+
+// TestChatStreamReasoning 推理型模型：思考内容走 onReasoning，正文走 onDelta，
+// 两条通道互不混入（前端据此渲染「思考过程」折叠块）。
+func TestChatStreamReasoning(t *testing.T) {
+	client := newTestClient(t, EndpointModeBase, "", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"先看契约\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"reasoning\":\"再动手\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"好了\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	})
+
+	var think, body strings.Builder
+	_, err := client.ChatStream(context.Background(), []ChatMessage{{Role: "user", Content: "hi"}}, 100, 0.5,
+		func(s string) { body.WriteString(s) }, func(s string) { think.WriteString(s) })
+	if err != nil {
+		t.Fatalf("ChatStream: %v", err)
+	}
+	if think.String() != "先看契约再动手" {
+		t.Fatalf("思考增量不符: %q", think.String())
+	}
+	if body.String() != "好了" {
+		t.Fatalf("正文增量不符: %q", body.String())
+	}
+}
+
+// TestChatStreamFinishReason 截断信号：finish_reason=length 必须被采集，
+// 上层据此发 truncated 事件（否则截断的代码会被当成完整代码校验/展示）。
+func TestChatStreamFinishReason(t *testing.T) {
+	client := newTestClient(t, EndpointModeBase, "", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"const a =\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	})
+	res, err := client.ChatStream(context.Background(), []ChatMessage{{Role: "user", Content: "hi"}}, 4096, 0.2, func(string) {}, nil)
+	if err != nil {
+		t.Fatalf("ChatStream: %v", err)
+	}
+	if !res.Truncated() {
+		t.Fatalf("应识别为截断，finish_reason=%q", res.FinishReason)
+	}
+}
+
+// TestIsMaxTokensRejected 上游拒绝 max_tokens 的识别（用于回退重试）。
+func TestIsMaxTokensRejected(t *testing.T) {
+	cases := map[string]bool{
+		"AI 助手端点返回非成功状态（HTTP 400）: max_tokens is too large":                     true,
+		"AI 助手端点返回非成功状态（HTTP 400）: This model's maximum context length is 8192": true,
+		"AI 助手端点返回非成功状态（HTTP 401）: invalid api key":                             false,
+		"context canceled": false,
+	}
+	for msg, want := range cases {
+		if got := IsMaxTokensRejected(errors.New(msg)); got != want {
+			t.Fatalf("%q => %v, want %v", msg, got, want)
+		}
+	}
+	if IsMaxTokensRejected(nil) {
+		t.Fatal("nil 不应判定为拒绝")
 	}
 }

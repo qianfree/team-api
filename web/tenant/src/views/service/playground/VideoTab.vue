@@ -10,6 +10,9 @@ import AttachmentBar from './AttachmentBar.vue'
 import PromptInput from './PromptInput.vue'
 import { useAttachments, formatBytes } from './useAttachments'
 import { compileVideoPrompt } from './attachmentParts'
+import { uploadVideoAttachments } from './relayFileUpload'
+import { usePublicSettings } from '@/composables/usePublicSettings'
+import { toast } from '@/utils/toast'
 
 interface ModelItem {
 	model_id: string
@@ -48,8 +51,10 @@ const aspectRatioOptions = [
 
 // ── 参考素材 ──
 // 全部素材随请求经 references[] 发出（compileVideoPrompt 决定角色）：单图走 first_frame
-// 首帧（全模型兼容），多图/含音频走 reference_* 多模态参考（仅多模态参考模型承接，
-// 不支持时上游明确 400）；视频附件暂不发（上游普遍不收 base64，待接入 /v1/files 上传后解开）。
+// 首帧（全模型兼容），多图/含音频/含视频走 reference_* 多模态参考（仅多模态参考模型
+// 承接，不支持时上游明确 400）。素材引用形态由上传通道可用性决定（见 submitTask）：
+// 云存储已配置时先经 /v1/files 上传换 file_id（网关解析为对象存储签名 URL 发上游），
+// 否则/失败回退 base64 内联（视频素材无法内联，未上传成功则不发并明确提示）。
 const {
 	list: attachmentList,
 	totalBytes: attachmentBytes,
@@ -60,6 +65,11 @@ const {
 	clear: clearAttachments,
 } = useAttachments({ kinds: ['image', 'video', 'audio'], max: 6 })
 
+// /v1/files 上传通道可用性（全局单例 + 30s 缓存，无需每次提交重新拉取）
+const { settings: publicSettings, fetchSettings: fetchPublicSettings } = usePublicSettings()
+const uploadEnabled = computed(() => publicSettings.value.relay_files_upload_enabled === true)
+fetchPublicSettings()
+
 const promptInput = ref<InstanceType<typeof PromptInput> | null>(null)
 // bare 变体的附件片不自带上传入口，文件选择器由输入区的「素材」按钮通过 ref 触发
 const attachmentBar = ref<InstanceType<typeof AttachmentBar> | null>(null)
@@ -67,6 +77,12 @@ const attachmentBar = ref<InstanceType<typeof AttachmentBar> | null>(null)
 const dragging = ref(false)
 // 提交时未能随请求发出的素材名，用于结果区提示
 const deferredNames = ref<string[]>([])
+// deferred 提示文案：区分「上传通道未启用」与「通道可用但上传失败」两种成因
+const deferredNotice = computed(() =>
+	uploadEnabled.value
+		? '视频素材需先上传对象存储后以 URL 引用，本次上传失败（或类型未被服务端允许），未随请求发送'
+		: '视频素材需以 URL 引用，当前服务端未启用对象存储上传通道，未随请求发送',
+)
 
 function insertMention(name: string) {
 	promptInput.value?.insertMention(name)
@@ -181,9 +197,13 @@ function applyResolutionPreset(val: string) {
 	resolution.value = val
 }
 
+// 提交阶段（上传素材 → 提交任务），驱动进度占位卡与操作按钮文案
+const submitPhase = ref<'idle' | 'uploading' | 'submitting'>('idle')
+
 async function submitTask() {
 	if (!prompt.value.trim() || !selectedModel.value) return
 	submitting.value = true
+	submitPhase.value = 'uploading'
 	genStartAt.value = Date.now()
 	currentTask.value = null
 	deferredNames.value = []
@@ -192,8 +212,20 @@ async function submitTask() {
 
 	try {
 		const api = createPlaygroundApi(props.apiKey)
+
+		// 上传通道可用时参考素材先上传换 file_id（同一附件多次提交复用 att.fileId 缓存）；
+		// 失败不阻断提交——图片/音频在编译阶段自动回退 base64 内联，视频进 deferred
+		let fileIds: Map<number, string> | undefined
+		if (attachmentList.value.length && uploadEnabled.value) {
+			fileIds = await uploadVideoAttachments(api, attachmentList.value)
+			if (fileIds.size < attachmentList.value.length) {
+				toast.warning('部分素材上传对象存储失败，图片/音频将以内联方式发送')
+			}
+		}
+		submitPhase.value = 'submitting'
+
 		// 正文里的 [@图片1] 换成纯文字标签；首帧参考图取第一张图片附件
-		const compiled = compileVideoPrompt(prompt.value, attachmentList.value)
+		const compiled = compileVideoPrompt(prompt.value, attachmentList.value, fileIds)
 		deferredNames.value = compiled.deferred.map(a => a.name)
 
 		// OpenAI Videos 协议：size 承载分辨率（像素串或命名档位如 768P/2K），seconds 承载时长；
@@ -245,6 +277,7 @@ async function submitTask() {
 		}
 	} finally {
 		submitting.value = false
+		submitPhase.value = 'idle'
 	}
 }
 
@@ -447,7 +480,7 @@ function downloadVideo() {
 								<span class="text-sm font-medium">部分素材未随本次请求发送</span>
 							</div>
 							<p class="mt-1 text-xs text-amber-600">
-								{{ deferredNames.join('、') }} — 视频素材需以 URL 引用（暂不支持直接上传），本次未发送
+								{{ deferredNames.join('、') }} — {{ deferredNotice }}
 							</p>
 						</div>
 
@@ -457,7 +490,9 @@ function downloadVideo() {
 							kind="video"
 							compact
 							:progress="submitting ? '' : currentTask?.progress"
-							:label="submitting ? '正在提交生成任务...' : (statusLabel[currentTask!.status] || currentTask!.status)"
+							:label="submitting
+								? (submitPhase === 'uploading' ? '正在上传参考素材...' : '正在提交生成任务...')
+								: (statusLabel[currentTask!.status] || currentTask!.status)"
 							:sublabel="!submitting && currentTask?.id ? 'task_id: ' + currentTask.id : ''"
 							:since="genStartAt"
 						/>
@@ -569,7 +604,7 @@ function downloadVideo() {
 									</button>
 									<button class="btn btn-primary btn-sm px-4" :disabled="submitting || polling || !prompt.trim()" @click="submitTask">
 										<Icon name="play" size="xs" />
-										{{ submitting ? '提交中...' : polling ? '生成中...' : '生成视频' }}
+										{{ submitting ? (submitPhase === 'uploading' ? '上传素材中...' : '提交中...') : polling ? '生成中...' : '生成视频' }}
 									</button>
 								</div>
 							</div>

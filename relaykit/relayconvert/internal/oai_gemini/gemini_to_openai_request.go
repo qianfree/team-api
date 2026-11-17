@@ -62,8 +62,8 @@ func (c *GeminiToOpenAIRequestConverter) ConvertRequest(
 			openaiReq.TopK = &v
 		}
 		if gc.MaxOutputTokens != nil {
-			v := int(*gc.MaxOutputTokens)
-			openaiReq.MaxTokens = &v
+			// 按上游模型选字段：GPT-5 / o 系列只接受 max_completion_tokens
+			shared.SetChatMaxTokens(openaiReq, int(*gc.MaxOutputTokens))
 		}
 		if len(gc.StopSequences) > 0 {
 			openaiReq.Stop = gc.StopSequences

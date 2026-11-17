@@ -17,6 +17,10 @@ const (
 	StreamEndReasonPingFail    StreamEndReason = "ping_fail"    // ping 写入失败
 	StreamEndReasonScannerErr  StreamEndReason = "scanner_err"  // bufio.Scanner 错误
 	StreamEndReasonEOF         StreamEndReason = "eof"          // scanner EOF 未收到 [DONE]
+	// StreamEndReasonUpstreamTruncated 上游流在未给出任何完成信号（finish_reason / [DONE] /
+	// response.completed / message_stop）的情况下 EOF：上游崩溃、代理切断长连接、聚合器静默失败。
+	// 属流中断：客户端只拿到半截回答，按已转发部分结算并按上游故障上报调度。
+	StreamEndReasonUpstreamTruncated StreamEndReason = "upstream_truncated"
 )
 
 const maxStreamErrors = 20
@@ -80,7 +84,22 @@ func (s *StreamStatus) IsPartialStreamEnd() bool {
 	r := s.GetEndReason()
 	return r == StreamEndReasonClientGone || r == StreamEndReasonScannerErr ||
 		r == StreamEndReasonTimeout || r == StreamEndReasonPingFail ||
-		r == StreamEndReasonHandlerStop
+		r == StreamEndReasonHandlerStop || r == StreamEndReasonUpstreamTruncated
+}
+
+// RefineEOF 把 scanner 记下的笼统 eof 细化为更具体的原因（如 upstream_truncated）。
+// SetEndReason 是 first-writer-wins：StreamScannerHandler 的 scanner 协程在 EOF 时总是先于
+// handler 层写入 eof，handler 层事后判定「EOF 之前根本没收到完成信号」时需要本方法升级原因。
+// 只有当前原因恰为 eof 时生效，返回是否已细化。
+func (s *StreamStatus) RefineEOF(reason StreamEndReason, err error) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.reason != StreamEndReasonEOF {
+		return false
+	}
+	s.reason = reason
+	s.err = err
+	return true
 }
 
 // IsNormalEnd 是否正常结束（handler_stop 属异常终止，不算正常结束）

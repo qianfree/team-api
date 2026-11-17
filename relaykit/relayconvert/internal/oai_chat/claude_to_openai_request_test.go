@@ -459,3 +459,40 @@ func TestClaudeToOpenAIRequestConverter_BuiltinOnlyToolsDropsToolChoice(t *testi
 		t.Error("WebSearchOptions is nil, web search capability lost")
 	}
 }
+
+// TestClaudeToOpenAIRequestConverter_ReasoningModelMaxCompletionTokens 上游为 OpenAI 推理模型族
+// （GPT-5 / o 系列）时 max_tokens 必须落到 max_completion_tokens：官方 chat 端点对这些模型
+// 拒绝 max_tokens（400），Claude Code 经网关调 GPT-5 会直接失败。
+func TestClaudeToOpenAIRequestConverter_ReasoningModelMaxCompletionTokens(t *testing.T) {
+	converter := &ClaudeToOpenAIRequestConverter{}
+	maxTokens := uint(8000)
+	req := &dto.ClaudeRequest{
+		Model:     "claude-sonnet-4",
+		MaxTokens: &maxTokens,
+		Messages:  []dto.ClaudeMessage{{Role: "user", Content: "hi"}},
+	}
+	info := &convmeta.Values{OriginModelName: "claude-sonnet-4", UpstreamModelName: "gpt-5", ChannelMetaAttached: true}
+
+	out, err := converter.ConvertRequest(context.Background(), info, req)
+	if err != nil {
+		t.Fatalf("ConvertRequest: %v", err)
+	}
+	openaiReq := out.(*dto.GeneralOpenAIRequest)
+	if openaiReq.MaxTokens != nil {
+		t.Errorf("MaxTokens = %d, want nil for reasoning model", *openaiReq.MaxTokens)
+	}
+	if openaiReq.MaxCompletionTokens == nil || *openaiReq.MaxCompletionTokens != 8000 {
+		t.Errorf("MaxCompletionTokens = %v, want 8000", openaiReq.MaxCompletionTokens)
+	}
+
+	// 缺省 max_tokens 时默认值同样走 max_completion_tokens
+	req.MaxTokens = nil
+	out, err = converter.ConvertRequest(context.Background(), info, req)
+	if err != nil {
+		t.Fatalf("ConvertRequest: %v", err)
+	}
+	openaiReq = out.(*dto.GeneralOpenAIRequest)
+	if openaiReq.MaxCompletionTokens == nil || *openaiReq.MaxCompletionTokens != 4096 {
+		t.Errorf("default MaxCompletionTokens = %v, want 4096", openaiReq.MaxCompletionTokens)
+	}
+}

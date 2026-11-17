@@ -1024,6 +1024,10 @@ func ResponsesResponseToChatCompletions(resp *dto.OpenAIResponsesResponse, id st
 	if len(toolCalls) > 0 && text == "" {
 		finishReason = "tool_calls"
 	}
+	// status=incomplete（max_output_tokens / content_filter 截断）→ length / content_filter
+	if truncated := resp.TruncatedFinishReason(); truncated != "" {
+		finishReason = truncated
+	}
 	if text != "" || len(toolCalls) == 0 {
 		content = text
 	}
@@ -1136,6 +1140,7 @@ func HandleResponsesStreamToChat(ctx context.Context, resp *http.Response, info 
 		usageText, outputText strings.Builder
 		sentStart, sentStop   bool
 		sawToolCall           bool
+		sawTerminal           bool // 收到过终止态事件（completed / incomplete）
 	)
 
 	toolCallIndexByID := make(map[string]int)
@@ -1282,7 +1287,9 @@ func HandleResponsesStreamToChat(ctx context.Context, resp *http.Response, info 
 			sawToolCall = true
 			usageText.WriteString(streamResp.Delta)
 
-		case "response.completed":
+		case "response.completed", "response.incomplete":
+			// incomplete（max_output_tokens / content_filter 截断）与 completed 同为终止态且携带 usage
+			sawTerminal = true
 			if streamResp.Response != nil {
 				if streamResp.Response.Model != "" {
 					model = streamResp.Response.Model
@@ -1308,6 +1315,10 @@ func HandleResponsesStreamToChat(ctx context.Context, resp *http.Response, info 
 				if sawToolCall && outputText.Len() == 0 {
 					finishReason = "tool_calls"
 				}
+				// 截断态优先：客户端据 length / content_filter 提示截断或续写
+				if truncated := streamResp.Response.TruncatedFinishReason(); truncated != "" {
+					finishReason = truncated
+				}
 				fr := finishReason
 				stopChunk := &dto.ChatCompletionStreamResponse{
 					ID: responseID, Object: "chat.completion.chunk", Created: createAt, Model: model,
@@ -1331,6 +1342,28 @@ func HandleResponsesStreamToChat(ctx context.Context, resp *http.Response, info 
 			return
 		}
 	})
+
+	// 上游既未发终止态事件（completed / incomplete）也未发 [DONE] 即 EOF：流被掐断。
+	// scanner 协程先行记下笼统的 eof，此处细化为 upstream_truncated（属流中断：按已转发部分
+	// 结算）；向客户端发 error chunk 而非此前的假 finish_reason=stop，并以 502 上报调度。
+	if !sawTerminal && info.StreamStatus.GetEndReason() == common.StreamEndReasonEOF {
+		truncErr := fmt.Errorf("responses stream closed before response.completed (text=%d bytes, tool_calls=%d)",
+			outputText.Len(), len(toolCallIndexByID))
+		info.StreamStatus.RefineEOF(common.StreamEndReasonUpstreamTruncated, truncErr)
+		helper.ApplyInterruptedUsageFallback(info, &totalUsage, usageText.Len())
+		totalUsage.CacheIncludedInPrompt = true
+		_ = helper.WriteSSEDataJSON(writer, map[string]any{
+			"error": map[string]any{
+				"message": truncErr.Error(),
+				"type":    "upstream_error",
+				"code":    "upstream_truncated",
+			},
+		})
+		helper.WriteSSEData(writer, "[DONE]")
+		upErr := constant.NewUpstreamError(http.StatusBadGateway, truncErr.Error(), truncErr)
+		upErr.ResponseWritten = true
+		return &totalUsage, upErr
+	}
 
 	// 上游未返回 usage 时按累计文本估算（正常结束 4 字符/token，中断 2 字符/token）
 	if totalUsage.TotalTokens == 0 && usageText.Len() > 0 {

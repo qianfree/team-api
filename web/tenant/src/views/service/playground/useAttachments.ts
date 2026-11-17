@@ -4,9 +4,11 @@ import { toast } from '@/utils/toast'
 /**
  * Playground 附件管理
  *
- * 附件全部以 base64 data URL 内联进请求体（对话走 content parts，视频走 references[]），
- * 不落对象存储。因此体积是硬约束：后端 GoFrame server 默认 ClientMaxBodySize 为 8MB，
+ * 附件默认以 base64 data URL 内联进请求体（对话走 content parts），不落对象存储。
+ * 因此体积是硬约束：后端 GoFrame server 默认 ClientMaxBodySize 为 8MB，
  * base64 还要膨胀 4/3，这里按 6MB 的安全水位做单个与合计两道闸门。
+ * 例外：视频 Tab 的参考素材在网关配置了云存储时优先经 /v1/files 上传转 URL 引用
+ * （见 relayFileUpload.ts），但闸门仍按内联口径收紧——dataUrl 始终生成（预览 + 回退双用途）。
  */
 
 export type AttachmentKind = 'image' | 'audio' | 'video'
@@ -25,6 +27,11 @@ export interface Attachment {
 	mimeType: string
 	/** data URL 的字节长度，用于体积闸门 */
 	bytes: number
+	/** 实际发送用的二进制内容（压缩后），供 /v1/files 上传通道使用（不含 base64 膨胀） */
+	blob: Blob
+	/** 经 /v1/files 上传成功后的 file_id（file-xxx）；未上传或失败时为空。
+	 *  缓存在附件上，同一附件多次提交不重复上传 */
+	fileId?: string
 }
 
 /** 单个附件上限：图片 5MB（超限先压缩），音视频 4MB（不压缩，超限直接拒绝） */
@@ -182,6 +189,7 @@ export function useAttachments(options: UseAttachmentsOptions) {
 			previewUrl: URL.createObjectURL(source),
 			mimeType,
 			bytes,
+			blob: source,
 		})
 	}
 

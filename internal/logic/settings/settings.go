@@ -51,6 +51,10 @@ func (s *sSettings) PublicSettingsGet(ctx context.Context, _ *v1.PublicSettingsG
 	}
 	settings["demo_message"] = demoMsg
 
+	// /v1/files 上传通道可用性（云对象存储已配置才可用）：动态计算不落库，
+	// 前端据此决定参考素材走「上传转 URL 引用」还是 base64 内联
+	settings["relay_files_upload_enabled"] = common.IsCloudStorageConfigured(ctx)
+
 	return &v1.PublicSettingsGetRes{Settings: settings}, nil
 }
 

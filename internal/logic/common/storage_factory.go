@@ -61,11 +61,26 @@ func NewStorageProvider(cfg *StorageConfig) (StorageProvider, error) {
 	}
 }
 
+// CloudStorageProviders 支持签名 URL 的云对象存储 provider 集合（local 不在其中：
+// 其 PresignedURL 直接报错）。relay 文件上传门禁与公开设置标志共用，避免两处口径漂移。
+var CloudStorageProviders = map[string]struct{}{
+	"s3": {}, "minio": {}, "r2": {}, "oss": {}, "cos": {},
+}
+
 // IsStorageConfigured 轻量判断对象存储是否已配置（provider + bucket 齐全）。
 // 只读配置、不构造 provider、不产生网络调用，供提交阶段的 fast-fail 使用。
 func IsStorageConfigured(ctx context.Context) bool {
 	cfg := GetStorageConfig(ctx)
 	return cfg.Provider != "" && cfg.Bucket != ""
+}
+
+// IsCloudStorageConfigured 判断云对象存储（可签发 URL）是否已配置。
+// 与 IsStorageConfigured 的区别：provider=local 不算——local 无法提供签名 URL，
+// /v1/files 上传通道（base64 素材转存对象存储再以 URL 引用）依赖该能力。
+func IsCloudStorageConfigured(ctx context.Context) bool {
+	cfg := GetStorageConfig(ctx)
+	_, ok := CloudStorageProviders[cfg.Provider]
+	return ok && cfg.Bucket != ""
 }
 
 // NewFileServiceFromConfig 使用配置服务（数据库设置）中的存储配置创建一个 FileService。

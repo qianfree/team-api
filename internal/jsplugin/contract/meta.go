@@ -325,7 +325,7 @@ func (m *Manifest) Validate() error {
 	}
 	for _, role := range m.ReferenceRoles {
 		if !isReferenceRole(role) {
-			return gerror.Newf("referenceRoles 含非法角色 %q（可选 first_frame/last_frame/reference_image/reference_video/reference_audio）", role)
+			return gerror.Newf("referenceRoles 含非法角色 %q（可选 first_frame/last_frame/reference_image/reference_video/reference_audio/file/link）", role)
 		}
 	}
 	if err := m.validateModelsFromConfig(); err != nil {
@@ -543,9 +543,11 @@ func (m *Manifest) OutputSecondsFact(facts map[string]float64) float64 {
 	return 0
 }
 
-// referenceRoleSet 标准端点参考素材角色全集（与 relay/common RefRole* 同词汇）
+// referenceRoleSet 标准端点参考素材角色全集（与 relay/common RefRole* 同词汇；
+// file/link 为文档文件与网页链接参考，网关已支持，插件按上游能力声明承接）
 var referenceRoleSet = map[string]struct{}{
 	"first_frame": {}, "last_frame": {}, "reference_image": {}, "reference_video": {}, "reference_audio": {},
+	"file": {}, "link": {},
 }
 
 func isReferenceRole(role string) bool {

@@ -115,6 +115,18 @@ func FilterSkillKeys(keys []string) []string {
 	return out
 }
 
+// ValidateEvent 技能校验报告的 SSE 事件负载：报告字段平铺 + type=validate
+// （前端按 type 分发事件，缺 type 的帧会被静默忽略）。
+type ValidateEvent struct {
+	Type string `json:"type"`
+	*skills.Report
+}
+
+// NewValidateEvent 把技能校验报告包装为 SSE validate 事件。
+func NewValidateEvent(report *skills.Report) ValidateEvent {
+	return ValidateEvent{Type: "validate", Report: report}
+}
+
 // RateLimitKey 每管理员限流键。
 func RateLimitKey(adminID int64) string {
 	return fmt.Sprintf("ai_assistant:rl:%d", adminID)

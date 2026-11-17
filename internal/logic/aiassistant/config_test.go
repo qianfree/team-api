@@ -68,3 +68,19 @@ func TestConfigValidate(t *testing.T) {
 		t.Fatalf("配置齐全不应报错: %v", err)
 	}
 }
+
+// TestGenerationParams 代码生成模式必须给足输出预算、压低温度，且不改写更严格的配置。
+func TestGenerationParams(t *testing.T) {
+	// 默认配置（4096 / 0.7）在代码模式下被抬到 16384 / 0.2
+	if mt, temp := GenerationParams(4096, 0.7, true); mt != CodeGenMaxTokens || temp != CodeGenTemperature {
+		t.Fatalf("代码模式参数不符: %d / %v", mt, temp)
+	}
+	// 管理员配得更大/更低时沿用其值
+	if mt, temp := GenerationParams(32768, 0.05, true); mt != 32768 || temp != 0.05 {
+		t.Fatalf("不应覆盖更严格的配置: %d / %v", mt, temp)
+	}
+	// 非代码模式原样返回
+	if mt, temp := GenerationParams(4096, 0.7, false); mt != 4096 || temp != 0.7 {
+		t.Fatalf("非代码模式不应改动参数: %d / %v", mt, temp)
+	}
+}

@@ -31,10 +31,12 @@ export interface CompiledChat {
 	previews: AttachmentPreview[]
 }
 
-/** references[] 素材项（/v1/videos 参考素材唯一通道） */
+/** references[] 素材项（/v1/videos 参考素材唯一通道）。url 与 file_id 二选一：
+ *  file_id 为 /v1/files 上传后的引用（网关解析为对象存储签名 URL），url 为 base64 内联回退 */
 export interface VideoReferenceItem {
-	role: 'first_frame' | 'reference_image' | 'reference_audio'
-	url: string
+	role: 'first_frame' | 'reference_image' | 'reference_video' | 'reference_audio'
+	url?: string
+	file_id?: string
 }
 
 export interface CompiledVideo {
@@ -42,7 +44,7 @@ export interface CompiledVideo {
 	prompt: string
 	/** 全部素材经 references[] 发出（单图→first_frame 首帧；多素材→reference_* 多模态参考） */
 	references: VideoReferenceItem[]
-	/** 未随请求发出的素材（视频：上游普遍不收 base64，待接入 /v1/files 上传通道） */
+	/** 未随请求发出的素材（视频：上传通道不可用/失败，上游普遍不收 base64） */
 	deferred: Attachment[]
 }
 
@@ -119,22 +121,40 @@ export function compileChatParts(text: string, attachments: Attachment[]): Compi
  * compileVideoPrompt 把「正文 + 附件」编译成 /v1/videos 请求载荷。
  *
  * 参考素材统一经 references[] 发出（协议层首帧与 reference_* 互斥，不可混发）：
- * - 恰好一张图且无音频 → 首帧模式：role first_frame（全模型兼容，含只认首帧的模型）；
- * - 多图 / 含音频 → 参考模式：role reference_image / reference_audio（仅支持多模态
- *   参考的模型承接——Seedance 2.x / wan3.0 / MiniMax H3；只认首帧的模型会收到明确 400）。
- * 视频附件一律不发：上游普遍不收 base64 视频（Seedance 明确拒绝），归入 deferred 提示。
+ * - 恰好一张图且无音频/视频 → 首帧模式：role first_frame（全模型兼容，含只认首帧的模型）；
+ * - 多图 / 含音频 / 含视频 → 参考模式：role reference_image / reference_audio /
+ *   reference_video（仅支持多模态参考的模型承接——Seedance 2.x / wan3.0 / MiniMax H3；
+ *   只认首帧的模型会收到明确 400）。
+ *
+ * 素材引用形态（fileIds 参数）：
+ * - 经 /v1/files 上传成功的附件以 file_id 引用（网关解析为对象存储签名 URL 发上游）；
+ * - 未上传/失败的图片与音频回退 base64 data URL 内联；
+ * - 视频素材上游普遍不收 base64（Seedance 明确拒绝）：无 file_id 时归入 deferred 提示。
  */
-export function compileVideoPrompt(text: string, attachments: Attachment[]): CompiledVideo {
+export function compileVideoPrompt(
+	text: string,
+	attachments: Attachment[],
+	fileIds?: Map<number, string>,
+): CompiledVideo {
 	const images = attachments.filter(a => a.kind === 'image')
 	const audios = attachments.filter(a => a.kind === 'audio')
-	const deferred = attachments.filter(a => a.kind === 'video')
+	const videos = attachments.filter(a => a.kind === 'video')
+	const sentVideos = videos.filter(v => fileIds?.has(v.id))
+	const deferred = videos.filter(v => !fileIds?.has(v.id))
+
+	// 引用形态：有 file_id 用上传引用，否则 base64 内联（仅图片/音频可内联）
+	const refOf = (att: Attachment): Pick<VideoReferenceItem, 'url' | 'file_id'> => {
+		const fileId = fileIds?.get(att.id)
+		return fileId ? { file_id: fileId } : { url: att.dataUrl }
+	}
 
 	const references: VideoReferenceItem[] = []
-	if (images.length === 1 && audios.length === 0) {
-		references.push({ role: 'first_frame', url: images[0].dataUrl })
+	if (sentVideos.length === 0 && images.length === 1 && audios.length === 0) {
+		references.push({ role: 'first_frame', ...refOf(images[0]) })
 	} else {
-		for (const img of images) references.push({ role: 'reference_image', url: img.dataUrl })
-		for (const au of audios) references.push({ role: 'reference_audio', url: au.dataUrl })
+		for (const img of images) references.push({ role: 'reference_image', ...refOf(img) })
+		for (const au of audios) references.push({ role: 'reference_audio', ...refOf(au) })
+		for (const vd of sentVideos) references.push({ role: 'reference_video', ...refOf(vd) })
 	}
 	return { prompt: stripMentions(text), references, deferred }
 }

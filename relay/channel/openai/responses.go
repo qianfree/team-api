@@ -346,7 +346,12 @@ func (a *Adaptor) handleResponsesUpstreamStream(ctx context.Context, resp *http.
 	writer = helper.NewSafeWriter(writer)
 	defer helper.PingTicker(writer, 15*time.Second)()
 
-	scanner := bufio.NewScanner(resp.Body)
+	// 上游空闲超时：直连透传直接 scanner.Scan() 读 body，此前没有任何超时保护，
+	// 上游假死时 codex 会被 ping 维持着无限挂起
+	idleBody := helper.NewIdleTimeoutReader(resp.Body, helper.StreamIdleTimeout(info))
+	defer idleBody.Stop()
+
+	scanner := bufio.NewScanner(idleBody)
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 10*1024*1024)
 
@@ -357,6 +362,8 @@ func (a *Adaptor) handleResponsesUpstreamStream(ctx context.Context, resp *http.
 
 	var usage common.Usage
 	var contentBuilder strings.Builder
+	sawTerminal := false // 收到过终止态事件（completed / incomplete / failed）
+	sawDone := false     // 收到 [DONE] 哨兵
 
 	// onWriteFail 写客户端失败：客户端已不可达，按流中断结算
 	onWriteFail := func(writeErr error) (*common.Usage, error) {
@@ -408,7 +415,11 @@ func (a *Adaptor) handleResponsesUpstreamStream(ctx context.Context, resp *http.
 			var streamResp dto.ResponsesStreamResponse
 			if err := json.Unmarshal([]byte(data), &streamResp); err == nil {
 				switch streamResp.Type {
-				case "response.created", "response.completed", "response.done":
+				case "response.created", "response.completed", "response.incomplete", "response.done":
+					// incomplete（截断）与 completed 同为终止态且携带 usage，此前漏掉导致截断响应用量只能估算
+					if streamResp.Type != "response.created" {
+						sawTerminal = true
+					}
 					if r := streamResp.Response; r != nil {
 						// 路由记录：created 即记录使 cancel 尽早可用，completed/done 刷新 TTL（SET 幂等）
 						recordResponseRoute(ctx, info, r.ID)
@@ -424,6 +435,8 @@ func (a *Adaptor) handleResponsesUpstreamStream(ctx context.Context, resp *http.
 					}
 				case "response.output_text.delta":
 					contentBuilder.WriteString(streamResp.Delta)
+				case "response.failed", "response.error":
+					sawTerminal = true
 				}
 			}
 		}
@@ -440,6 +453,7 @@ func (a *Adaptor) handleResponsesUpstreamStream(ctx context.Context, resp *http.
 		}
 
 		if data == "[DONE]" {
+			sawDone = true
 			// 补上帧分隔空行再收尾：只写 data 行会把 [DONE] 留在缓冲里发不出去，
 			// 客户端也拿不到完整的终止帧
 			if err := frame.WriteLine("\n"); err != nil {
@@ -447,6 +461,30 @@ func (a *Adaptor) handleResponsesUpstreamStream(ctx context.Context, resp *http.
 			}
 			break
 		}
+	}
+
+	// 上游空闲超时：半帧残留直接丢弃，补发 response.failed 让客户端立刻拿到终止态
+	// （而非一直等 response.completed），按流中断（timeout）结算已转发部分并按上游超时上报调度
+	if err := scanner.Err(); errors.Is(err, helper.ErrStreamIdleTimeout) && ctx.Err() == nil {
+		frame.Discard()
+		info.StreamStatus.SetEndReason(common.StreamEndReasonTimeout, err)
+		_ = helper.WriteSSEEventJSON(writer, "response.failed", map[string]any{
+			"type": "response.failed",
+			"response": map[string]any{
+				"id":     fmt.Sprintf("resp_%s", info.RequestID),
+				"object": "response",
+				"status": "failed",
+				"error": map[string]any{
+					"code":    "upstream_timeout",
+					"message": err.Error(),
+				},
+			},
+		})
+		helper.ApplyInterruptedUsageFallback(info, &usage, contentBuilder.Len())
+		usage.CacheIncludedInPrompt = true
+		upErr := constant.NewUpstreamError(http.StatusGatewayTimeout, err.Error(), err)
+		upErr.ResponseWritten = true
+		return &usage, upErr
 	}
 
 	// 上游未以空行结尾时冲刷残留，避免丢掉最后一帧
@@ -459,6 +497,31 @@ func (a *Adaptor) handleResponsesUpstreamStream(ctx context.Context, resp *http.
 			info.StreamStatus.SetEndReason(common.StreamEndReasonError, err)
 			return &usage, fmt.Errorf("stream scanner error: %w", err)
 		}
+	}
+
+	// 既无终止态事件也无 [DONE] 即 EOF：流被掐断。此前原样关流、记 done、按成功计费——codex 报
+	// "stream closed before completed" 而运营侧完全不可见。现补发 response.failed、记
+	// upstream_truncated（属流中断：按已转发部分结算）、以 502 上报调度。
+	if !sawTerminal && !sawDone && ctx.Err() == nil && info.StreamStatus.GetEndReason() == "" {
+		truncErr := fmt.Errorf("responses stream closed before a terminal event (text=%d bytes)", contentBuilder.Len())
+		info.StreamStatus.SetEndReason(common.StreamEndReasonUpstreamTruncated, truncErr)
+		_ = helper.WriteSSEEventJSON(writer, "response.failed", map[string]any{
+			"type": "response.failed",
+			"response": map[string]any{
+				"id":     fmt.Sprintf("resp_%s", info.RequestID),
+				"object": "response",
+				"status": "failed",
+				"error": map[string]any{
+					"code":    "upstream_truncated",
+					"message": truncErr.Error(),
+				},
+			},
+		})
+		helper.ApplyInterruptedUsageFallback(info, &usage, contentBuilder.Len())
+		usage.CacheIncludedInPrompt = true
+		upErr := constant.NewUpstreamError(http.StatusBadGateway, truncErr.Error(), truncErr)
+		upErr.ResponseWritten = true
+		return &usage, upErr
 	}
 
 	// 估算 usage（正常结束 4 字符/token；异常部分传输 2 字符/token）

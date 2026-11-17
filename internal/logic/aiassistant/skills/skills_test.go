@@ -45,7 +45,9 @@ func TestBillingFormulaValidate(t *testing.T) {
 	}
 }
 
-// TestJSPluginReferenceTemplate js_plugin 参考注入含完整 golden 模板。
+// TestJSPluginReferenceTemplate js_plugin 参考注入含完整 golden 模板，
+// 且标准视频端点契约（standardVideos/decodeVideos）在提示词中有说明——
+// 缺失会导致 AI 生成的视频插件不支持 /v1/videos 等标准端点。
 func TestJSPluginReferenceTemplate(t *testing.T) {
 	ref := JSPluginSkill{}.Reference()
 	if !strings.Contains(ref, "export const meta") {
@@ -53,6 +55,11 @@ func TestJSPluginReferenceTemplate(t *testing.T) {
 	}
 	if !strings.Contains(ref, jsplugin.TemplateSource()) {
 		t.Fatal("golden 模板应全量注入")
+	}
+	for _, want := range []string{"standardVideos", "decodeVideos", "referenceRoles", "upstreamModel", "平台模型名", "failReason", "tasks[].state"} {
+		if !strings.Contains(ref, want) {
+			t.Fatalf("参考缺少 %q 的契约说明", want)
+		}
 	}
 }
 

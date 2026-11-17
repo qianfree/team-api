@@ -402,6 +402,17 @@ func (info *RelayInfo) StashedResponsesRequest() *dto.OpenAIResponsesRequest {
 	return info.ResponsesRequest
 }
 
+// convmeta.SoftErrorRecorder 能力接口实现：转换器跳过的无法解析行等软错误落到 StreamStatus，
+// 随流结束摘要一同可见（此前这类行被静默 continue，排障只能靠逐帧对照调试日志）。
+var _ convmeta.SoftErrorRecorder = (*RelayInfo)(nil)
+
+func (info *RelayInfo) RecordConvertSoftError(msg string) {
+	if info == nil || info.StreamStatus == nil {
+		return
+	}
+	info.StreamStatus.RecordError("convert: " + msg)
+}
+
 func (info *RelayInfo) ConvOptions() *convmeta.Options {
 	if info == nil {
 		return &convmeta.Options{}

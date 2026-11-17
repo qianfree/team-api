@@ -374,7 +374,9 @@ onUnmounted(() => {
 	window.removeEventListener('keydown', onZoomKeydown)
 })
 
-// 组装请求体：提示词 + 参考图（data URL 列表）+ 标准字段 + 自定义参数（同步/异步共用）
+// 组装请求体：提示词 + 参考图（data URL）+ 标准字段 + 自定义参数（同步/异步共用）。
+// 参考图走系统 OpenAI 协议约定字段：单张 image（string），多张 images（string[] 数组）——
+// 网关各图片适配器按此归一，透传渠道（如豆包 Ark）由适配器转换
 function buildBody(promptText: string, refImages: string[]): Record<string, any> {
 	const body: Record<string, any> = {
 		model: selectedModel.value,
@@ -383,7 +385,7 @@ function buildBody(promptText: string, refImages: string[]): Record<string, any>
 	if (refImages.length === 1) {
 		body.image = refImages[0]
 	} else if (refImages.length > 1) {
-		body.image = refImages
+		body.images = refImages
 	}
 	// 标准字段：留空不发送；自定义参数后写、可覆盖标准字段（透传语义）
 	if (size.value) body.size = size.value

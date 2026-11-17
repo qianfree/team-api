@@ -109,20 +109,27 @@ type genRoute struct {
 
 // Generation 不可变路由快照：启用/禁用/换版本时整体重建、原子指针发布，读侧无锁。
 type Generation struct {
-	plugins   map[string]*ActivePlugin
-	routes    []genRoute        // 参数少（字面量多）者优先
-	models    map[string]string // 模型名(小写) → pluginKey（冲突预检与渠道选择辅助）
-	createdAt time.Time
+	plugins        map[string]*ActivePlugin
+	routesByPlugin map[string][]genRoute // pluginKey → 该插件路由（参数少者优先，插件内排序）
+	models         map[string]string     // 模型名(小写) → pluginKey（冲突预检与渠道选择辅助）
+	createdAt      time.Time
 }
 
-// Match 按 method+path 匹配插件路由，返回插件、路由声明与路径参数。
-func (g *Generation) Match(method, path string) (*ActivePlugin, contract.Route, map[string]string, bool) {
+// Match 在指定插件（URL key 决定）的路由内按 method+path 匹配：/pjs/{key}/... 入口
+// 天然按 key 命名空间隔离，跨插件同名路由形态（如各厂商兼容的 GET /videos/:task_id）
+// 互不干扰——不在此做全局扁平匹配（历史实现先全局匹配再校验 key，导致同形状路由
+// 跨插件互相遮蔽、激活预检被迫拒绝同形状路由）。插件不存在或路由未命中返回 ok=false。
+func (g *Generation) Match(pluginKey, method, path string) (*ActivePlugin, contract.Route, map[string]string, bool) {
+	routes, ok := g.routesByPlugin[pluginKey]
+	if !ok {
+		return nil, contract.Route{}, nil, false
+	}
 	shape := contract.NormalizePathShape(path)
 	var segs []string
 	if shape != "/" {
 		segs = strings.Split(strings.TrimPrefix(shape, "/"), "/")
 	}
-	for _, gr := range g.routes {
+	for _, gr := range routes {
 		if gr.method != method || len(gr.segments) != len(segs) {
 			continue
 		}
@@ -192,9 +199,10 @@ func publishGeneration(g *Generation) {
 // buildGeneration 由激活插件集合构建 generation。
 func buildGeneration(plugins []*ActivePlugin) *Generation {
 	g := &Generation{
-		plugins:   make(map[string]*ActivePlugin, len(plugins)),
-		models:    make(map[string]string, len(plugins)),
-		createdAt: time.Now(),
+		plugins:        make(map[string]*ActivePlugin, len(plugins)),
+		routesByPlugin: make(map[string][]genRoute, len(plugins)),
+		models:         make(map[string]string, len(plugins)),
+		createdAt:      time.Now(),
 	}
 	for _, p := range plugins {
 		g.plugins[p.Key] = p
@@ -208,6 +216,7 @@ func buildGeneration(plugins []*ActivePlugin) *Generation {
 			}
 			g.models[lower] = p.Key
 		}
+		routes := make([]genRoute, 0, len(p.Manifest.Routes))
 		for _, route := range p.Manifest.Routes {
 			shape := contract.NormalizePathShape(route.Path)
 			var segs []string
@@ -220,7 +229,7 @@ func buildGeneration(plugins []*ActivePlugin) *Generation {
 					params++
 				}
 			}
-			g.routes = append(g.routes, genRoute{
+			routes = append(routes, genRoute{
 				method:   route.Method,
 				segments: segs,
 				params:   params,
@@ -228,9 +237,11 @@ func buildGeneration(plugins []*ActivePlugin) *Generation {
 				route:    route,
 			})
 		}
+		// 插件内排序：参数少的（更具体的）优先；同级保持声明顺序（sort.Stable）。
+		// 跨插件不做排序与冲突约束——路由按 /pjs/{key} 命名空间隔离
+		stableSortRoutes(routes)
+		g.routesByPlugin[p.Key] = routes
 	}
-	// 稳定排序：参数少的（更具体的）优先；同级保持声明顺序（sort.Stable）
-	stableSortRoutes(g.routes)
 	return g
 }
 

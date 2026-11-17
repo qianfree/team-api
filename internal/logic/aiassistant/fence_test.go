@@ -151,3 +151,29 @@ func TestExtractCodeFallback(t *testing.T) {
 		t.Fatal("无代码应返回 false")
 	}
 }
+
+// TestFenceImplicitClose 模型没写闭栏时，Finish 补的 CodeEnd 必须带 Implicit 标记，
+// 前端据此区分「完整代码」与「可能被截断」。
+func TestFenceImplicitClose(t *testing.T) {
+	s := NewFenceSplitter()
+	events := s.Feed("说明\n````js\nconst a = 1\n")
+	events = append(events, s.Finish()...)
+	last := events[len(events)-1]
+	if last.Kind != FenceCodeEnd || !last.Implicit {
+		t.Fatalf("应产生隐式闭栏，得到 %+v", last)
+	}
+
+	// 正常闭栏不应带隐式标记
+	s2 := NewFenceSplitter()
+	events = s2.Feed("````js\nconst a = 1\n````\n")
+	events = append(events, s2.Finish()...)
+	for _, ev := range events {
+		if ev.Kind == FenceCodeEnd {
+			if ev.Implicit {
+				t.Fatalf("显式闭栏不应标 implicit: %+v", ev)
+			}
+			return
+		}
+	}
+	t.Fatal("未产生闭栏事件")
+}

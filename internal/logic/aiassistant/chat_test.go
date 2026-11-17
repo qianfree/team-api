@@ -1,9 +1,33 @@
 package aiassistant
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/qianfree/team-api/internal/logic/aiassistant/skills"
 )
+
+// TestValidateEventCarriesType 校验报告事件必须带 type=validate 且报告字段平铺
+// （前端按 payload.type 分发，缺 type 的帧被静默忽略——历史缺陷）。
+func TestValidateEventCarriesType(t *testing.T) {
+	ev := NewValidateEvent(&skills.Report{Skill: skills.KeyJSPlugin, OK: true,
+		Checks: []skills.Check{{Name: "compile", Status: "pass"}}})
+	data, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got["type"] != "validate" || got["skill"] != skills.KeyJSPlugin || got["ok"] != true {
+		t.Fatalf("事件形态不符: %s", data)
+	}
+	if checks, ok := got["checks"].([]any); !ok || len(checks) != 1 {
+		t.Fatalf("checks 未平铺: %s", data)
+	}
+}
 
 // TestSanitizeAndBuildDropsSystem 客户端携带的 system 消息一律丢弃（注入面为零）。
 func TestSanitizeAndBuildDropsSystem(t *testing.T) {

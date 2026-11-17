@@ -26,9 +26,9 @@ const (
 
 // 输入防御上限（chat 请求校验用）。
 const (
-	MaxMessageBytes = 32 << 10 // 单条消息 32KB 上限
-	MaxMessages     = 200      // 单次请求携带消息数硬上限
-	MaxSystemPrompt = 16000    // 自定义系统提示词长度上限（字符）
+	MaxMessageBytes = 256 << 10 // 单条消息 256KB 上限（插件生成工作台会注入附件文档全文）
+	MaxMessages     = 200       // 单次请求携带消息数硬上限
+	MaxSystemPrompt = 16000     // 自定义系统提示词长度上限（字符）
 )
 
 // Config 运行配置（类型化视图，密钥已解密）。
@@ -56,6 +56,30 @@ func defaultConfig() *Config {
 		HistoryLimit:    20,
 		RateLimitPerMin: 30,
 	}
+}
+
+// 代码生成场景的输出预算。真实内置插件（400 行 / 21KB ≈ 6–8k tokens）在默认
+// max_tokens=4096 下必然被截断，因此技能激活时按以下下限/上限收紧参数。
+const (
+	CodeGenMaxTokens   = 16384 // 代码模式 max_tokens 下限（管理员配得更大则沿用）
+	CodeGenTemperature = 0.2   // 代码模式温度上限（管理员配得更低则沿用）
+)
+
+// GenerationParams 按「是否激活技能」决定本次调用的生成参数。
+// 只抬不降、只降不升：管理员显式配置的更严格取值不会被这里反向覆盖。
+func GenerationParams(cfgMaxTokens int, cfgTemperature float64, codeMode bool) (int, float64) {
+	if !codeMode {
+		return cfgMaxTokens, cfgTemperature
+	}
+	maxTokens := cfgMaxTokens
+	if maxTokens < CodeGenMaxTokens {
+		maxTokens = CodeGenMaxTokens
+	}
+	temperature := cfgTemperature
+	if temperature > CodeGenTemperature {
+		temperature = CodeGenTemperature
+	}
+	return maxTokens, temperature
 }
 
 // LoadConfig 读取配置并应用默认值（缺失键回落注册表默认值，密钥项已解密）。

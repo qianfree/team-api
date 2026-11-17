@@ -479,3 +479,25 @@ func TestResponsesToOpenAIRequest_WebSearchOptionsAlwaysEmitted(t *testing.T) {
 		}
 	}
 }
+
+// TestResponsesToOpenAIRequest_ReasoningModelMaxCompletionTokens codex 调 GPT-5 / o 系列：
+// max_output_tokens 必须落到 max_completion_tokens，官方 chat 端点对推理模型拒绝 max_tokens。
+func TestResponsesToOpenAIRequest_ReasoningModelMaxCompletionTokens(t *testing.T) {
+	info := &convmeta.Values{OriginModelName: "gpt-5-codex", UpstreamModelName: "gpt-5-codex", ChannelMetaAttached: true}
+	m := convertResponsesBody(t, info, `{"model":"gpt-5-codex","input":"hi","max_output_tokens":4000}`)
+	if _, has := m["max_tokens"]; has {
+		t.Errorf("max_tokens = %v, want absent for reasoning model", m["max_tokens"])
+	}
+	if m["max_completion_tokens"] != float64(4000) {
+		t.Errorf("max_completion_tokens = %v, want 4000", m["max_completion_tokens"])
+	}
+
+	// 普通模型仍走 max_tokens（与 ParamMapping 用例一致）
+	m = convertResponsesBody(t, &convmeta.Values{}, `{"model":"gpt-4o","input":"hi","max_output_tokens":256}`)
+	if m["max_tokens"] != float64(256) {
+		t.Errorf("max_tokens = %v, want 256", m["max_tokens"])
+	}
+	if _, has := m["max_completion_tokens"]; has {
+		t.Errorf("max_completion_tokens should be absent for plain model, got %v", m["max_completion_tokens"])
+	}
+}

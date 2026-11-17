@@ -9,6 +9,7 @@ import (
 	v1 "github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/jsplugin"
 	"github.com/qianfree/team-api/internal/jsplugin/contract"
+	relaycommon "github.com/qianfree/team-api/relay/common"
 )
 
 // JS 插件管理：logic 薄转发到 jsplugin 注册中心（生命周期与 generation 见 registry.go）。
@@ -127,6 +128,44 @@ func (s *sAdmin) JSPluginDelete(ctx context.Context, req *v1.JSPluginDeleteReq) 
 		return nil, err
 	}
 	return &v1.JSPluginDeleteRes{}, nil
+}
+
+// JSPluginDeleteCheck 整删预检：注册中心判定（内置 / 启用中拒绝）+ 在途任务计数。
+// 在途 = platform=js:{key} 的非终态任务（SUCCESS/FAILURE 之外）——整删后轮询等不到
+// 插件回归，由 30 分钟超时网判失败并退款，确认弹窗必须让管理员看到这个数。
+func (s *sAdmin) JSPluginDeleteCheck(ctx context.Context, req *v1.JSPluginDeleteCheckReq) (*v1.JSPluginDeleteCheckRes, error) {
+	check, err := jsplugin.DefaultRegistry().CheckDeletePlugin(ctx, req.Key)
+	if err != nil {
+		return nil, err
+	}
+	res := &v1.JSPluginDeleteCheckRes{
+		Allowed:      check.Allowed,
+		Reason:       check.Reason,
+		VersionCount: check.VersionCount,
+	}
+	if !check.Allowed {
+		return res, nil
+	}
+	pending, err := g.DB().Model("tsk_model_tasks").Ctx(ctx).
+		Where("platform", "js:"+req.Key).
+		WhereNotIn("status", g.Slice{
+			string(relaycommon.TaskStatusSuccess),
+			string(relaycommon.TaskStatusFailure),
+		}).
+		Count()
+	if err != nil {
+		return nil, err
+	}
+	res.PendingTasks = int64(pending)
+	return res, nil
+}
+
+// JSPluginPurge 删除整个上传插件（全部版本 + 配置键），预检拒绝条件同 DeletePlugin。
+func (s *sAdmin) JSPluginPurge(ctx context.Context, req *v1.JSPluginPurgeReq) (*v1.JSPluginPurgeRes, error) {
+	if err := jsplugin.DefaultRegistry().DeletePlugin(ctx, req.Key); err != nil {
+		return nil, err
+	}
+	return &v1.JSPluginPurgeRes{}, nil
 }
 
 // JSPluginSource 查看指定版本源码（只读，内置/上传版本均可）。

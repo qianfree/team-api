@@ -57,10 +57,9 @@ var allowedRelayFilePurposes = map[string]struct{}{
 	"evals":       {},
 }
 
-// cloudStorageProviders 支持签名 URL 的对象存储 provider 集合（local 不在其中）。
-var cloudStorageProviders = map[string]struct{}{
-	"s3": {}, "minio": {}, "r2": {}, "oss": {}, "cos": {},
-}
+// cloudStorageProviders 支持签名 URL 的对象存储 provider 集合（local 不在其中），
+// 统一取 common 导出的集合（与公开设置标志 relay_files_upload_enabled 同口径）。
+var cloudStorageProviders = common.CloudStorageProviders
 
 // RelayFileObject OpenAI File 对象（含 url/url_expires_at 网关扩展字段）。
 // url 在出口处现场签发；签名失败降级省略（文件本身可用，file_id 引用不受影响）。
