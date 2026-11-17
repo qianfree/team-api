@@ -85,7 +85,7 @@ type BatchTaskRef struct {
 	Platform string // 任务平台（js:{key}；批量分组键）
 	TaskID   string // 上游任务 ID
 	TaskData []byte // 任务最新上游快照（可空）
-	State    []byte // 插件状态（可空；JS 插件 v1 未持久化 state）
+	State    []byte // 插件状态（可空；任务私有数据 plugin_state，JS 插件跨轮透传容器）
 }
 
 // TaskInfo 异步任务查询结果
@@ -118,6 +118,10 @@ type TaskInfo struct {
 	// 内的取值路径（上游 URL 或 base64 字段）。字节永不进 JS，转存由宿主产物流水线
 	// 完成（internal/logic/task/artifact）；空 = 无产物需要转存
 	Artifacts []TaskArtifact
+
+	// PluginState JS 任务插件本轮返回的状态（parseQueryResponse 的 items[].state）：
+	// 非空时轮询链覆盖任务私有数据中的 plugin_state，下一轮回带给插件；空 = 保持原值
+	PluginState []byte
 }
 
 // TaskUsageSummary 任务终态用量摘要（查询端点展示用）：各视频渠道官方 usage 的归一并集。

@@ -340,6 +340,10 @@ func (a *Adaptor) DoResponse(ctx context.Context, resp *http.Response, _ *common
 	if result.Im != nil && a.plan != nil {
 		a.plan.Immediate = result.Im
 	}
+	// 插件状态回填解码计划：任务管线落任务私有数据，轮询时经 tasks[].state 回带
+	if a.plan != nil {
+		a.plan.State = normalizeRawJSON(result.State)
+	}
 	return result.TaskID, taskData, nil
 }
 
@@ -371,6 +375,9 @@ func (a *Adaptor) FetchTask(ctx context.Context, baseURL, apiKey string, taskDat
 		Platform string `json:"platform"`
 		UseProxy bool   `json:"use_proxy"`
 		Model    string `json:"model"`
+		// 轮询循环随行携带的任务上下文：最新上游快照与插件状态（回带给钩子的 tasks[]）
+		Snapshot    json.RawMessage `json:"snapshot"`
+		PluginState json.RawMessage `json:"plugin_state"`
 	}
 	if err := json.Unmarshal(taskData, &td); err != nil {
 		return nil, fmt.Errorf("jsbridge: parse task data: %w", err)
@@ -390,7 +397,11 @@ func (a *Adaptor) FetchTask(ctx context.Context, baseURL, apiKey string, taskDat
 	a.lastAllowedHosts = append([]string{hostOf(baseURL)}, plugin.Manifest.AllowedHosts...)
 	a.lastBaseURL = baseURL
 
-	taskRef := contract.QueryTaskRef{TaskID: td.TaskID}
+	taskRef := contract.QueryTaskRef{
+		TaskID:   td.TaskID,
+		TaskData: normalizeRawJSON(td.Snapshot),
+		State:    normalizeRawJSON(td.PluginState),
+	}
 	a.lastQueryTasks = []contract.QueryTaskRef{taskRef}
 
 	// 调用插件的 buildQueryRequest
@@ -497,6 +508,8 @@ func taskInfoFromQueryItem(plugin *jsplugin.ActivePlugin, item contract.QueryIte
 	} else {
 		info.Data = fallbackBody
 	}
+	// 插件状态：本轮返回即覆盖持久化值，省略 = 保持原值
+	info.PluginState = normalizeRawJSON(item.State)
 
 	// 终态成功：结算用量事实（items[].usage 内联，键 ∈ usageSchema）+ 产物声明
 	if item.Done && item.Error == nil {
@@ -581,6 +594,7 @@ func (a *Adaptor) FetchBatchTasks(ctx context.Context, baseURL, apiKey string, r
 		a.lastQueryTasks = append(a.lastQueryTasks, contract.QueryTaskRef{
 			TaskID:   ref.TaskID,
 			TaskData: normalizeRawJSON(ref.TaskData),
+			State:    normalizeRawJSON(ref.State),
 		})
 	}
 

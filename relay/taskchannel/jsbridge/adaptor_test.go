@@ -187,6 +187,85 @@ func TestPollFlow(t *testing.T) {
 	}
 }
 
+// TestSubmitStateBackfill 提交链：parseSubmitResponse 返回的 state 回填解码计划
+// （任务管线据此落任务私有数据，轮询时回带）。
+func TestSubmitStateBackfill(t *testing.T) {
+	plugin := publishGolden(t)
+	pollCount := 0
+	vendor := mockVendor(t, &pollCount)
+
+	plan := &jsplugin.SubmitPlan{
+		Plugin:     plugin,
+		Params:     map[string]string{"action": "music"},
+		NativePath: "/submit/music",
+		Decoded: &contract.DecodeResult{
+			Kind: "submit", Model: "golden_music",
+			RequestBody: json.RawMessage(`{"prompt":"hello","action":"MUSIC"}`),
+		},
+	}
+	ctx := jsplugin.WithSubmitPlan(context.Background(), plan)
+	adaptor := &Adaptor{}
+	info := relayInfo(vendor.URL)
+	adaptor.Init(info)
+	if taskErr := adaptor.ValidateRequest(ctx, info, nil); taskErr != nil {
+		t.Fatalf("ValidateRequest 失败: %s", taskErr.Message)
+	}
+	body, _ := adaptor.BuildRequestBody(ctx, info, nil)
+	resp, err := adaptor.DoRequest(ctx, info, body)
+	if err != nil {
+		t.Fatalf("DoRequest 失败: %v", err)
+	}
+	if _, _, taskErr := adaptor.DoResponse(ctx, resp, info); taskErr != nil {
+		t.Fatalf("DoResponse 失败: %s", taskErr.Message)
+	}
+	var state map[string]any
+	if err := json.Unmarshal(plan.State, &state); err != nil || state["kind"] != "music" {
+		t.Fatalf("state 应回填解码计划: %s (err=%v)", plan.State, err)
+	}
+}
+
+// TestPollStateRoundTrip 轮询链：taskData 携带的 plugin_state 回带给钩子（tasks[].state），
+// 钩子据此分流终态用量/产物；钩子返回的新 state 经 TaskInfo.PluginState 交回轮询链持久化。
+func TestPollStateRoundTrip(t *testing.T) {
+	publishGolden(t)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/golden/fetch", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"success","seconds":6,"data":{"video_url":"https://oss.example.com/v.mp4"}}`))
+	})
+	vendor := httptest.NewServer(mux)
+	t.Cleanup(vendor.Close)
+
+	adaptor := &Adaptor{}
+	taskData, _ := json.Marshal(map[string]any{
+		"task_id": "task-42", "platform": "js:golden", "model": "golden_video",
+		"plugin_state": json.RawMessage(`{"polls":3,"kind":"video"}`),
+	})
+	resp, err := adaptor.FetchTask(context.Background(), vendor.URL, "sk-test", taskData)
+	if err != nil {
+		t.Fatalf("FetchTask 失败: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	result, err := adaptor.ParseTaskResult(body)
+	if err != nil {
+		t.Fatalf("ParseTaskResult 失败: %v", err)
+	}
+	if result.Status != common.TaskStatusSuccess {
+		t.Fatalf("应 SUCCESS，得到 %v", result.Status)
+	}
+	// state.kind=video 生效：按视频分流（时长事实 + video 产物），而非回落音乐分支
+	if result.MaterialUsage == nil || result.MaterialUsage.OutputSeconds != 6 {
+		t.Fatalf("应按视频上报时长 6 秒: %+v", result.MaterialUsage)
+	}
+	if len(result.Artifacts) != 1 || result.Artifacts[0].Key != "video" {
+		t.Fatalf("应声明 video 产物: %+v", result.Artifacts)
+	}
+	var state map[string]any
+	if err := json.Unmarshal(result.PluginState, &state); err != nil || state["polls"] != float64(4) || state["kind"] != "video" {
+		t.Fatalf("新 state 应交回轮询链（polls 累加、kind 保留）: %s (err=%v)", result.PluginState, err)
+	}
+}
+
 // TestPollFailure 上游 failed → FAILURE + FailReason。
 func TestPollFailure(t *testing.T) {
 	publishGolden(t)

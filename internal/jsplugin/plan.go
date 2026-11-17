@@ -18,6 +18,9 @@ type SubmitPlan struct {
 	// Immediate 同步即完成（parseSubmitResponse 返回 immediate 时由任务桥回填）：
 	// 提交成功后分发器立即终态化任务（结算/产物与轮询终态同口径）。
 	Immediate *contract.ImmediateResult
+	// State 插件状态（parseSubmitResponse 返回 state 时由任务桥回填）：任务管线随
+	// 任务私有数据持久化，轮询时经 tasks[].state 回带给插件。
+	State []byte
 	// Files multipart 上传的文件载荷（ref → 内容），任务桥发送前内联占位符。
 	Files map[string]FilePayload
 }

@@ -1,11 +1,13 @@
 package task
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -465,6 +467,49 @@ type privateData struct {
 		ModelName string         `json:"model_name"`
 		PreDeduct float64        `json:"pre_deduct"`
 	} `json:"billing_context"`
+	// PluginState JS 任务插件状态（跨轮透传容器，提交/轮询钩子返回 state 时写入）
+	PluginState json.RawMessage `json:"plugin_state,omitempty"`
+}
+
+// jsPollContext 逐任务轮询随 taskData 携带给 JS 任务插件桥的任务上下文：最新上游
+// 快照与插件状态（回带给钩子的 tasks[]）。非 JS 平台不携带（其余适配器用不到）；
+// 快照非法 JSON 时省略，避免整个 taskData 序列化失败。
+func jsPollContext(task *common.AsyncTask, pd privateData) (snapshot, state json.RawMessage) {
+	if !strings.HasPrefix(task.Platform, "js:") {
+		return nil, nil
+	}
+	if len(task.Data) > 0 && json.Valid(task.Data) {
+		snapshot = json.RawMessage(task.Data)
+	}
+	if len(pd.PluginState) > 0 && json.Valid(pd.PluginState) {
+		state = pd.PluginState
+	}
+	return snapshot, state
+}
+
+// persistPluginState 把插件本轮返回的状态写回任务私有数据（仅 plugin_state 键，
+// 其余键原样保留）。私有数据创建后只有轮询链写入，读改写无并发竞争。
+// 失败仅告警：状态丢一轮不影响终态判定，下一轮插件拿到的是上一次持久化值。
+func persistPluginState(ctx context.Context, task *common.AsyncTask, state []byte) {
+	var pdMap map[string]json.RawMessage
+	if err := json.Unmarshal(task.PrivateData, &pdMap); err != nil {
+		g.Log().Warningf(ctx, "poll: persist plugin state for task %s: invalid private data: %v", task.PublicTaskID, err)
+		return
+	}
+	if bytes.Equal(pdMap["plugin_state"], state) {
+		return
+	}
+	pdMap["plugin_state"] = json.RawMessage(state)
+	merged, err := json.Marshal(pdMap)
+	if err != nil {
+		g.Log().Warningf(ctx, "poll: persist plugin state for task %s: %v", task.PublicTaskID, err)
+		return
+	}
+	if err := DefaultAsyncProvider.UpdateTaskPrivateData(ctx, task.ID, merged); err != nil {
+		g.Log().Warningf(ctx, "poll: persist plugin state for task %s: %v", task.PublicTaskID, err)
+		return
+	}
+	task.PrivateData = merged
 }
 
 // pollSingleTask 轮询单个任务
@@ -482,14 +527,24 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 	if upstreamModel == "" {
 		upstreamModel = task.ModelName
 	}
-	taskData, _ := json.Marshal(map[string]any{
+	taskDataMap := map[string]any{
 		"task_id":   pd.UpstreamTaskID,
 		"use_proxy": parseChannelUseProxy(channel.Settings),
 		"model":     upstreamModel,
 		// platform 供 JS 任务插件桥（taskchannel/jsbridge）从 taskData 路由到具体插件池
 		//（FetchTask 签名不携带渠道信息；其余适配器按结构体解析自动忽略未知键）
 		"platform": task.Platform,
-	})
+	}
+	// JS 任务插件：上游快照与插件状态随行，桥回带给钩子的 tasks[].taskData / state
+	if snapshot, state := jsPollContext(task, pd); snapshot != nil || state != nil {
+		if snapshot != nil {
+			taskDataMap["snapshot"] = snapshot
+		}
+		if state != nil {
+			taskDataMap["plugin_state"] = state
+		}
+	}
+	taskData, _ := json.Marshal(taskDataMap)
 
 	// 渠道调试日志（轮询记录，仅段2/段3——后台轮询无客户端交互）：
 	// 节流规则 = 只在「状态/进度相对上一次轮询发生变化」时落库（任务行 CAS 前的值即上一次
@@ -607,6 +662,11 @@ func applyTaskPollResult(
 	if err := DefaultAsyncProvider.UpdateTaskCAS(ctx, task, oldStatus); err != nil {
 		g.Log().Debugf(ctx, "poll: CAS conflict for task %s (status changed by another process): %v", task.PublicTaskID, err)
 		return
+	}
+
+	// JS 任务插件状态：本轮返回即覆盖（省略 = 保持原值），下一轮回带给插件
+	if len(taskInfo.PluginState) > 0 {
+		persistPluginState(ctx, task, taskInfo.PluginState)
 	}
 
 	if taskInfo.Status.IsTerminal() {
@@ -790,6 +850,7 @@ func pollBatchTasks(ctx context.Context, batcher common.BatchTaskPoller, channel
 				Platform: platform,
 				TaskID:   w.pd.UpstreamTaskID,
 				TaskData: w.task.Data,
+				State:    w.pd.PluginState,
 			})
 		}
 

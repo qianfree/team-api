@@ -36,6 +36,8 @@ func (JSPluginSkill) Reference() string {
 - name / description / author / website（website 需 https）
 - version：semver（如 1.0.0）
 - models：接管的模型名数组（非空；模型跨插件独占，除非双方都声明 sharedModels）
+- modelsFromConfig（可选）：扩展模型承载配置键名（该键须在 config 中声明，type 为 text/string/json，
+  不可 encrypted）；其配置值（换行/逗号分隔或 JSON 数组）运行时并入模型清单，上游新增模型改配置即可
 - fetchMode：batch | per_task（缺省 per_task）
 - routes：[{method, path, type}]，method 大写，path 支持 :param 段，type ∈ submit | query | dynamic
   （dynamic 一型两用：解码结果定查询或提交）；可选 decode/render 字段声明钩子别名
@@ -62,25 +64,44 @@ func (JSPluginSkill) Reference() string {
   requestBody，返回与 decodeRequest 同形态 {kind:"submit", model, requestBody}；references[]
   是参考素材唯一权威来源（存在时不再读 images/metadata.image 等兼容字段），时长读顶层
   seconds 或 metadata.duration。下游 estimateUsage/buildSubmitRequest/轮询链与原生路由入口完全复用。
-  ⚠️ 模型名分工：ctx.model 是【平台标准模型名】（即 meta.models 声明的名字），网关已保证它
-  ∈ 插件清单，直接回显到返回值 model 即可——禁止用上游模型名做白名单/校验（渠道配了
-  平台名→上游名映射时上游名只在 buildSubmitRequest 阶段出现）；需要按型号分支参数时，
-  分支键也用 meta.models 的平台名
+  ⚠️ 模型名分工：ctx.model 是客户端请求的【平台模型名】，原样回显到返回值 model 即可，
+  禁止对它做任何白名单/校验——它通常是 meta.models 里的名字，但渠道显式绑定本插件并配了
+  模型映射时是平台侧别名（不在 meta.models，网关放行回显）；也禁止用上游模型名做校验
+  （上游名只在 buildSubmitRequest 阶段经 ctx.upstreamModel 出现）。需要按型号分支参数时
+  必须有默认分支兜住别名；同一插件兼有非视频模型（如音乐）时用排除法拒绝这些已知模型名，不要用白名单；提交形态（如视频/音乐）的判定写进 requestBody 的字段，不依赖模型名
 - estimateUsage(ctx)：预扣口径的用量估算，返回 usageSchema 声明的键值对象
-- buildSubmitRequest(ctx)：构造上游请求 {url, method, headers, body}；url 相对路径会拼接到渠道 baseUrl；
+- buildSubmitRequest(ctx)：构造上游请求 {url, method, headers, body}；入参 ctx={body, params?, model,
+  upstreamModel?, channelBaseUrl, apiKey?}；url 相对路径会拼接到渠道 baseUrl；
   上游模型名用 ctx.upstreamModel || ctx.model（渠道模型映射后的上游名，网关注入——
-  平台名与上游名不同时必须用 upstreamModel 发给上游）
-- parseSubmitResponse(ctx)：解析提交响应 {taskId, taskData?, state?}，taskId 必填；taskData 每轮被查询结果整体覆盖，
-  跨轮要保留的数据放 state（省略 = 保持原值）。同步即出结果的上游可额外返回
+  平台名与上游名不同时必须用 upstreamModel 发给上游）。
+  鉴权：build*Request 不声明 Authorization 头时网关自动注入 "Bearer <渠道密钥>"（提交与轮询同理），
+  普通 Bearer 鉴权的上游不要声明该头、也不要为密钥另设 config 项；仅签名类厂商（JWT/HMAC）
+  才用 ctx.apiKey 经 utils.crypto 计算后声明 Authorization 覆盖默认值
+- parseSubmitResponse(ctx)：解析提交响应 {taskId, taskData?, state?}，taskId 必填；入参 ctx={status,
+  responseBody, body, model?, path?, params?}（body 为 decode 返回的 requestBody）。
+  网关只在上游返回 HTTP 200 时调用本钩子（非 200 由网关直接按上游错误处理），不要写 ctx.status 判断；
+  taskData 每轮被查询结果整体覆盖，跨轮要保留的数据（如请求时长、提交形态）放 state——
+  网关持久化 state 并在轮询时经 ctx.tasks[].state 回带（省略 = 保持原值）。同步即出结果的上游可额外返回
   immediate: {status: "SUCCESS"|"FAILURE", taskData?, usage?, artifacts?, failReason?}，任务免轮询直达终态
-- buildQueryRequest(ctx)：构造轮询请求；入参 ctx.tasks（per_task 恒单元素，batch 为整批）
+- buildQueryRequest(ctx)：构造轮询请求；入参 ctx.tasks=[{taskId, taskData?, state?}]（per_task 恒单元素，
+  batch 为整批；taskId 是上游任务 ID，taskData 是上一轮快照，state 是上次返回的状态）
 - parseQueryResponse(ctx)：解析轮询响应 {items: [{taskId, done, taskData?, state?, usage?, artifacts?, error?}]}；
-  items[].taskId 必须在本次 ctx.tasks 内；done:true 且带 error:{code, message} = 失败
+  items[].taskId 必须在本次 ctx.tasks 内；done:true 且带 error:{code, message} = 失败。
+  ctx.status 恒为 200（网关不透传轮询的 HTTP 状态码），不要按 404/5xx 写分支——终态一律按
+  ctx.responseBody 的内容判定，无法识别的响应返回 done:false（网关的任务超时兜底）。
+  终态 usage 优先读上游响应里的实际计量；上游不返回时才读 state 里保存的请求值
 - usage（estimateUsage 返回值与终态 items[].usage）：键必须全部 ∈ meta.usageSchema，出现未声明键整体被拒；number 型取非负数值
 - artifacts 产物声明：[{key, mimeType?, source: {type: "url"|"inline", path, auth?}}]，path 是 taskData 内的取值路径
   （如 "data.video_url"）；type="inline"（base64 字段）时 mimeType 必填；需渠道密钥下载的上游内容端点声明
   auth: "channel-bearer"。插件只指路不碰字节，由平台下载转存对象存储
-- renderSubmit / renderTask：面向客户端的响应渲染 {status?, body}（可选，缺省透传）
+- renderSubmit / renderTask：面向客户端的响应渲染 {status?, body}（可选，缺省透传）；入参 ctx.task 只有
+  这些字段：publicTaskId（平台任务 ID）、taskId（上游任务 ID）、model、status、progress、failReason、
+  data、contentUrl——没有 error 字段，失败原因读 task.failReason。status 是平台状态枚举
+  SUBMITTED / IN_PROGRESS / SUCCESS / FAILURE（不是上游状态词）；要对外呈现 OpenAI/厂商状态词
+  （queued / in_progress / completed / failed 等）必须在渲染钩子里显式映射。progress 是百分比
+  字符串（如 "50%"，可能为空），需要数字时 parseInt。data 是最新上游快照，成功任务里 artifacts
+  声明路径的值已替换为平台内容链接；contentUrl 为主产物链接。renderSubmit 只收到
+  publicTaskId / model / status / contentUrl
 - 通用：抛 Error = 插件级失败（转 4xx/502 透出给调用方）；返回对象出现契约外的顶层字段会被拒绝；
   requestBody/body ≤ 50MiB，taskData/state ≤ 1MiB
 
@@ -89,7 +110,7 @@ func (JSPluginSkill) Reference() string {
   不是 (url, options)；同步阻塞；method 仅 GET/HEAD/POST；responseType 为 "json"(缺省)/"text"/"bytes"；
   每次钩子调用 ≤4 次、单次 15s、总 30s、响应 ≤1MiB；不跟随重定向；url 可为相对路径（拼渠道 baseUrl，
   decode/render 等无渠道上下文的钩子内不可用）或绝对 URL（host 须 ∈ 渠道 host ∪ meta.allowedHosts）；
-  Authorization 头由平台注入渠道密钥，插件设置无效
+  utils.fetch 的 Authorization 头由平台注入渠道密钥，插件设置无效（与 build*Request 的可覆盖语义不同）
 - utils.log.info(message, fields?) / utils.log.warn(...) / utils.log.error(...)：utils.log 是对象，
   不能直接调用 utils.log(...)
 - utils.config.get(key)：读 meta.config 声明的配置值（encrypted 字段已解密；未声明键返回 undefined）

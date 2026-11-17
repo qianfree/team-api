@@ -56,7 +56,7 @@ func TestJSPluginReferenceTemplate(t *testing.T) {
 	if !strings.Contains(ref, jsplugin.TemplateSource()) {
 		t.Fatal("golden 模板应全量注入")
 	}
-	for _, want := range []string{"standardVideos", "decodeVideos", "referenceRoles", "upstreamModel", "平台标准模型名"} {
+	for _, want := range []string{"standardVideos", "decodeVideos", "referenceRoles", "upstreamModel", "平台模型名", "failReason", "tasks[].state"} {
 		if !strings.Contains(ref, want) {
 			t.Fatalf("参考缺少 %q 的契约说明", want)
 		}

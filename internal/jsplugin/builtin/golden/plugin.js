@@ -12,7 +12,7 @@ export const meta = {
   apiVersion: 1,
   key: "golden",
   name: "Golden 示例插件",
-  version: "1.2.0",
+  version: "1.3.0",
   description: "契约 v1 参考实现：音乐/视频双模型、原生路由 + 标准视频端点双入口、计费事实、产物声明、配置项",
   icon: "text",
   author: "qianfree",
@@ -67,15 +67,16 @@ export function decodeRequest(ctx) {
 // ...}, extra?}——本钩子把它映射为插件原生 requestBody，下游 estimateUsage /
 // buildSubmitRequest / 轮询链与原生路由入口完全复用。返回与 decodeRequest 同形态。
 //
-// 模型名分工（重要）：ctx.model 恒为【平台标准模型名】（meta.models 声明的名字），
-// 网关已保证 ∈ 插件清单——回显即可，不要用上游模型名做白名单校验；上游名的
-// 差异由 buildSubmitRequest 阶段的 ctx.upstreamModel 注入（渠道模型映射）。
+// 模型名分工（重要）：ctx.model 是客户端请求的【平台模型名】，原样回显即可，不要做
+// 白名单校验——它通常是 meta.models 里的名字，但渠道显式绑定本插件并配了模型映射时
+// 是平台侧别名（不在 meta.models，宿主放行）。发给上游的名字由 buildSubmitRequest
+// 阶段的 ctx.upstreamModel 注入（渠道模型映射）。按型号分支参数时要有默认分支兜住别名。
 export function decodeVideos(ctx) {
   const raw = ctx.body && typeof ctx.body === "object" && !Array.isArray(ctx.body) ? ctx.body : {};
   const metadata = raw.metadata && typeof raw.metadata === "object" && !Array.isArray(raw.metadata) ? raw.metadata : {};
-  // 平台名回显（宿主已校验 ∈ meta.models）；多型号插件在此按平台名分支
   const model = String(ctx.model || raw.model || "").trim() || "golden_video";
-  if (model !== "golden_video") throw new Error("model must be golden_video");
+  // 多形态插件用排除法挡住已知的非视频模型（白名单会误拒平台别名）
+  if (model === "golden_music") throw new Error("model golden_music does not support video endpoints");
   if (!String(raw.prompt || "").trim()) throw new Error("field prompt is required");
 
   const body = { action: "VIDEO", model: model, prompt: String(raw.prompt) };
@@ -113,8 +114,9 @@ export function decodeVideos(ctx) {
 
 export function estimateUsage(ctx) {
   const body = ctx.body || {};
-  // 视频按秒预扣（时长信号同时进 spec.duration）；音乐按段
-  if (String(ctx.model || body.model || "") === "golden_video" || body.action === "VIDEO") {
+  // 视频按秒预扣（时长信号同时进 spec.duration）；音乐按段。
+  // 形态判定读归一后的 body（decode 阶段写入的 action），不依赖模型名——模型可能是平台别名
+  if (body.action === "VIDEO") {
     let seconds = Number(body.seconds || 4);
     if (!Number.isFinite(seconds) || seconds <= 0) seconds = 4;
     return { seconds: Math.min(seconds, 60) };
@@ -141,6 +143,8 @@ export function buildSubmitRequest(ctx) {
   } else {
     upstream.clips = body.clips || 1;
   }
+  // 鉴权：不声明 Authorization 时宿主自动注入 "Bearer <渠道密钥>"（提交与轮询同理），
+  // 无需为密钥另设配置项；签名类厂商才需要用 ctx.apiKey 自行计算并声明该头覆盖默认值
   return {
     url: "/v1/golden/submit",
     method: "POST",
@@ -149,13 +153,15 @@ export function buildSubmitRequest(ctx) {
   };
 }
 
+// 宿主只在上游返回 HTTP 200 时调用本钩子（非 200 已由宿主按上游错误处理），
+// 无需判断 ctx.status；业务层的拒绝（200 + 错误码）在此抛错。
 export function parseSubmitResponse(ctx) {
-  if (ctx.status !== 200) throw new Error("submit_http_" + ctx.status);
   const resp = ctx.responseBody || {};
   if (resp.code !== "success" || !resp.data) throw new Error("submit_rejected");
-  // state 跨轮存活：kind 标记提交形态（视频/音乐），轮询链 usage/artifacts 按形态分流
+  // state 跨轮存活（宿主持久化，轮询时经 tasks[].state 回带）：kind 标记提交形态
+  // （视频/音乐），轮询链 usage/artifacts 按形态分流。taskData 每轮被整体覆盖，放不住
   const body = ctx.body && typeof ctx.body === "object" && !Array.isArray(ctx.body) ? ctx.body : {};
-  const kind = String(ctx.model || body.model || "") === "golden_video" || body.action === "VIDEO" ? "video" : "music";
+  const kind = body.action === "VIDEO" ? "video" : "music";
   return { taskId: String(resp.data), taskData: resp, state: { polls: 0, kind: kind } };
 }
 
@@ -169,6 +175,8 @@ export function buildQueryRequest(ctx) {
   };
 }
 
+// ctx.status 恒为 200（宿主不透传轮询的 HTTP 状态码），终态一律按响应体内容判定；
+// 无法识别的响应按进行中返回，由宿主的任务超时兜底。
 export function parseQueryResponse(ctx) {
   const t = (ctx.tasks || [])[0] || {};
   const resp = ctx.responseBody || {};
@@ -206,6 +214,13 @@ export function parseQueryResponse(ctx) {
 }
 
 // ── 渲染（面向客户端）─────────────────────────────────────
+// 入参 ctx.task 字段（仅这些，没有 error 字段）：
+//   publicTaskId 平台任务 ID；taskId 上游任务 ID；model 平台模型名；
+//   status 平台状态枚举 SUBMITTED / IN_PROGRESS / SUCCESS / FAILURE（不是上游状态词，
+//     要对外呈现厂商/OpenAI 状态词时在此自行映射）；
+//   progress 百分比字符串（如 "50%"，可能为空）；failReason 失败原因（仅失败时非空）；
+//   data 最新上游快照（成功任务的产物路径值已替换为平台内容链接）；contentUrl 主产物链接。
+// renderSubmit 只收到 publicTaskId / model / status / contentUrl。
 
 export function renderSubmit(ctx) {
   const task = ctx.task || {};
@@ -221,6 +236,7 @@ export function renderTask(ctx) {
     progress: task.progress || "",
     audio_url: data.audio_url || null,
   };
-  if (task.model === "golden_video") body.video_url = data.video_url || null;
+  if (task.model === "golden_video" || data.video_url !== undefined) body.video_url = data.video_url || null;
+  if (task.failReason) body.fail_reason = task.failReason;
   return { status: 200, body };
 }

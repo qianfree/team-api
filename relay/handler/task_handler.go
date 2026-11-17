@@ -460,6 +460,11 @@ func HandleTaskSubmit(
 	if rc.RequestEcho != nil {
 		privateDataMap["request_echo"] = rc.RequestEcho
 	}
+	// JS 任务插件状态（parseSubmitResponse 返回的 state，任务桥回填解码计划）：
+	// 随私有数据持久化，轮询时回带给插件；不进 data（data 对客户端可见）
+	if plan := jsplugin.SubmitPlanFromContext(ctx); plan != nil && len(plan.State) > 0 {
+		privateDataMap["plugin_state"] = json.RawMessage(plan.State)
+	}
 	privateData, _ := json.Marshal(privateDataMap)
 
 	task := &common.AsyncTask{
