@@ -34,7 +34,7 @@ RUN if [ "$VERSION" = "dev" ]; then \
     cd ../tenant && VITE_APP_VERSION=$VERSION bun run build
 
 # Stage 2: Go build
-FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
 
 ARG GOPROXY=https://goproxy.cn,direct
 ENV GOPROXY=${GOPROXY}
