@@ -354,3 +354,25 @@ func TestGeminiToOpenAIRequestConverter_InvalidRequestType(t *testing.T) {
 		t.Error("Expected error for invalid request type, got nil")
 	}
 }
+
+// TestGeminiToOpenAIRequestConverter_ReasoningModelMaxCompletionTokens 上游为 OpenAI 推理模型族时
+// maxOutputTokens 落到 max_completion_tokens（官方 chat 端点对 GPT-5 / o 系列拒绝 max_tokens）。
+func TestGeminiToOpenAIRequestConverter_ReasoningModelMaxCompletionTokens(t *testing.T) {
+	converter := &GeminiToOpenAIRequestConverter{}
+	maxTokens := uint(2048)
+	geminiReq := &dto.GeminiChatRequest{
+		Contents:         []dto.GeminiContent{{Role: "user", Parts: []dto.GeminiPart{{Text: "Hello"}}}},
+		GenerationConfig: &dto.GeminiGenerationConfig{MaxOutputTokens: &maxTokens},
+	}
+	out, err := converter.ConvertRequest(context.Background(), &convmeta.Values{UpstreamModelName: "o3-mini", ChannelMetaAttached: true}, geminiReq)
+	if err != nil {
+		t.Fatalf("ConvertRequest: %v", err)
+	}
+	openaiReq := out.(*dto.GeneralOpenAIRequest)
+	if openaiReq.MaxTokens != nil {
+		t.Errorf("MaxTokens = %d, want nil for reasoning model", *openaiReq.MaxTokens)
+	}
+	if openaiReq.MaxCompletionTokens == nil || *openaiReq.MaxCompletionTokens != 2048 {
+		t.Errorf("MaxCompletionTokens = %v, want 2048", openaiReq.MaxCompletionTokens)
+	}
+}

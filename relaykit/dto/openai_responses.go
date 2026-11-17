@@ -293,3 +293,64 @@ func (r *OpenAIResponsesResponse) HasError() bool {
 	}
 	return true
 }
+
+// StatusString 返回 response.status 的字符串值。Status 以 RawMessage 承载（上游可能给 null /
+// 缺省），这里把带引号的 JSON 字符串解出来，解析失败返回空串。
+func (r *OpenAIResponsesResponse) StatusString() string {
+	if r == nil || len(r.Status) == 0 {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(r.Status, &s); err != nil {
+		return ""
+	}
+	return s
+}
+
+// IncompleteReason 返回 incomplete_details.reason（max_output_tokens / content_filter），
+// 兼容 JSON 解码后的 map 形态与 Go 侧构造的 IncompleteDetails 结构体形态；无则返回空串。
+func (r *OpenAIResponsesResponse) IncompleteReason() string {
+	if r == nil || r.IncompleteDetails == nil {
+		return ""
+	}
+	switch d := r.IncompleteDetails.(type) {
+	case IncompleteDetails:
+		return d.Reason
+	case *IncompleteDetails:
+		if d != nil {
+			return d.Reason
+		}
+		return ""
+	case map[string]any:
+		reason, _ := d["reason"].(string)
+		return reason
+	}
+	raw, err := json.Marshal(r.IncompleteDetails)
+	if err != nil {
+		return ""
+	}
+	var d IncompleteDetails
+	if err := json.Unmarshal(raw, &d); err != nil {
+		return ""
+	}
+	return d.Reason
+}
+
+// TruncatedFinishReason 把 Responses 的 incomplete 终止态映射为 chat 的 finish_reason：
+// max_output_tokens → length、content_filter → content_filter；status 非 incomplete 返回空串
+// （调用方沿用 stop / tool_calls 判定）。incomplete 但 reason 缺失时按 length 处理——
+// 这是 incomplete 的绝对主因，比假装 stop 更接近真相。
+//
+// 此前 Responses 上游 → chat 客户端的两条路径一律发 finish_reason=stop，被 max_output_tokens
+// 截断的回答在客户端看来是完整答案。
+func (r *OpenAIResponsesResponse) TruncatedFinishReason() string {
+	if r.StatusString() != "incomplete" {
+		return ""
+	}
+	switch r.IncompleteReason() {
+	case "content_filter":
+		return "content_filter"
+	default:
+		return "length"
+	}
+}

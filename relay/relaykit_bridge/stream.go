@@ -67,7 +67,8 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 	//     官方 SDK（@google/genai）对每个 data 帧做 JSON.parse，写 [DONE] 会直接抛
 	//     SyntaxError 导致客户端报错（gemini 原生透传路径也从不写 [DONE]，口径一致）；
 	//   - Claude / Responses 客户端：终止语义由事件本身承载（message_stop /
-	//     response.completed），不写 [DONE]，补帧也无意义。
+	//     response.completed），不写 [DONE]，补帧也无意义；转换失败时分别补发
+	//     error 事件 / response.failed（见错误分支）。
 	needsDone := clientFormat == constant.RelayFormatOpenAI
 	needsTerminalChunk := clientFormat == constant.RelayFormatOpenAI
 
@@ -82,7 +83,8 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 	capturedUsage := &common.Usage{CacheIncludedInPrompt: true}
 	var (
 		gotFinish           bool // 转换器是否已产出带 finish_reason 的结束 chunk
-		gotResponseTerminal bool // Responses 客户端方向：转换器是否已产出终止态事件（completed/failed）
+		gotResponseTerminal bool // Responses 客户端方向：转换器是否已产出终止态事件（completed/incomplete/failed）
+		gotClaudeTerminal   bool // Claude 客户端方向：转换器是否已产出 message_stop
 		firstChunk          bool
 		writeFailed         bool // 写客户端已失败（连接不可达），客户端断开的可靠信号
 		transferredTextLen  int  // 已转发的文本/思考内容长度，供流中断输出估算
@@ -140,7 +142,12 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 			if c == nil {
 				return nil
 			}
+			// 侧信道捕获先于 Data==nil 早退：转换器会发 Data 为空的纯侧信道事件
+			//（服务端工具调用计数；流被掐断时已拿到的 usage），这些事件不写出但必须记账
 			captureToolCalls(capturedUsage, c.ToolCalls)
+			if c.Usage != nil {
+				captureDtoUsage(capturedUsage, c.Usage)
+			}
 			if c.Data == nil {
 				return nil
 			}
@@ -148,12 +155,15 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 				firstChunk = true
 				info.SetFirstResponseTime()
 			}
-			if c.Usage != nil {
-				captureDtoUsage(capturedUsage, c.Usage)
-			}
-			if c.Event == "response.failed" || c.Event == "response.completed" {
+			switch c.Event {
+			case "response.failed", "response.completed", "response.incomplete":
 				gotResponseTerminal = true
+			case "message_stop":
+				gotClaudeTerminal = true
 			}
+			// 中断估算所需的已转发文本长度：此前只在 OpenAI chunk 路径累计，Claude / Responses
+			// 客户端方向流中断时输出一律按 0 估算、只计输入
+			transferredTextLen += streamEventTextLen(c)
 			var err error
 			if c.Event != "" {
 				err = helper.WriteSSEEventJSON(safeWriter, c.Event, c.Data)
@@ -190,6 +200,15 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 		}
 	}
 
+	// 上游空闲超时：转换器用 bufio.Scanner 阻塞读 body，无法被打断；用 IdleTimeoutReader 在
+	// 两帧间隔超过 streaming_timeout_seconds 时关闭 body 解锁读取。此前本路径没有任何超时
+	//（流式 http.Client 无 Timeout、请求 ctx 无 deadline），上游假死时客户端被 ping 维持着无限挂起。
+	if rc, ok := upstreamBody.(io.ReadCloser); ok {
+		idle := helper.NewIdleTimeoutReader(rc, helper.StreamIdleTimeout(info))
+		defer idle.Stop()
+		upstreamBody = idle
+	}
+
 	start := time.Now()
 	err := fn(ctx, info, upstreamBody, chunkWriter)
 	duration := time.Since(start)
@@ -212,31 +231,65 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 			return capturedUsage, true, common.ErrStreamInterrupted
 		}
 		g.Log().Warningf(ctx, "[relaykit] convert stream failed (converter=%s): %v", converterID, err)
-		if needsTerminalChunk && !gotFinish {
-			writeTerminal()
+		// 结束原因按错误性质区分：上游空闲超时记 timeout（属流中断，按已转发部分结算）；
+		// 其余（上游 error 事件 / 流被掐断 / 畸形流）记 error
+		switch {
+		case errors.Is(err, helper.ErrStreamIdleTimeout):
+			setEndReason(common.StreamEndReasonTimeout, err)
+			helper.ApplyInterruptedUsageFallback(info, capturedUsage, transferredTextLen)
+		case errors.Is(err, relayconvert.ErrUpstreamStreamTruncated):
+			// 上游未发完成信号即 EOF：客户端已收到部分输出，属流中断，按已转发部分结算
+			setEndReason(common.StreamEndReasonUpstreamTruncated, err)
+			helper.ApplyInterruptedUsageFallback(info, capturedUsage, transferredTextLen)
+		default:
+			setEndReason(common.StreamEndReasonError, err)
 		}
-		if needsDone {
-			_ = helper.WriteSSEData(safeWriter, "[DONE]")
-		}
-		// Responses 客户端：协议要求每个 response 以终止态事件收尾（completed/failed）。
-		// 转换器以错误退出且未产出任何终止态事件时必须补发 failed，否则 200 SSE 静默
-		// 结束、客户端（codex 等）会一直等待终止态而挂起；转换器已自行收尾的
-		//（如 Gemini 安全拦截发 completed 拒答）不得追加第二终止事件。
-		if clientFormat == constant.RelayFormatResponses && !gotResponseTerminal {
-			_ = helper.WriteSSEEventJSON(safeWriter, "response.failed", map[string]any{
-				"type": "response.failed",
-				"response": map[string]any{
-					"id":     fmt.Sprintf("resp_%s", info.RequestID),
-					"object": "response",
-					"status": "failed",
+		// 向客户端补发协议原生的终止事件。HTTP 200 + SSE 头早已提交，这是客户端能收到的
+		// 唯一失败信号；缺了它，客户端要么把半截回答当完整答案（Claude Code 无 error 事件
+		// 即视作连接自然结束），要么一直等终止态而挂起（codex）。
+		switch clientFormat {
+		case constant.RelayFormatOpenAI:
+			// chat 流式协议没有独立的错误事件，约定是 data 行携带 error 对象（OpenAI 官方中途失败
+			// 即如此，各语言 SDK 据此抛错）。此前补发 finish_reason=stop 的终止 chunk 等于假装正常结束。
+			if !gotFinish {
+				_ = helper.WriteSSEDataJSON(safeWriter, map[string]any{
 					"error": map[string]any{
-						"code":    "upstream_error",
+						"message": err.Error(),
+						"type":    "upstream_error",
+						"code":    chatStreamErrorCode(err),
+					},
+				})
+			}
+			_ = helper.WriteSSEData(safeWriter, "[DONE]")
+		case constant.RelayFormatResponses:
+			// 转换器已自行收尾的（如 Gemini 安全拦截发 completed 拒答）不得追加第二终止事件
+			if !gotResponseTerminal {
+				_ = helper.WriteSSEEventJSON(safeWriter, "response.failed", map[string]any{
+					"type": "response.failed",
+					"response": map[string]any{
+						"id":     fmt.Sprintf("resp_%s", info.RequestID),
+						"object": "response",
+						"status": "failed",
+						"error": map[string]any{
+							"code":    "upstream_error",
+							"message": err.Error(),
+						},
+					},
+				})
+			}
+		case constant.RelayFormatClaude:
+			// Anthropic 流式协议的错误事件：{"type":"error","error":{"type":...,"message":...}}。
+			// 此前 Claude 客户端方向在转换失败时什么都不补，连接直接关闭。
+			if !gotClaudeTerminal {
+				_ = helper.WriteSSEEventJSON(safeWriter, "error", map[string]any{
+					"type": "error",
+					"error": map[string]any{
+						"type":    claudeStreamErrorType(err),
 						"message": err.Error(),
 					},
-				},
-			})
+				})
+			}
 		}
-		setEndReason(common.StreamEndReasonError, err)
 		return capturedUsage, true, streamConvertError(err)
 	}
 
@@ -258,16 +311,72 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 // 分类依据是错误性质而非状态码方便性：
 //   - 内容安全拦截（ErrContentBlocked）是客户端提示词问题，映射为请求类错误，
 //     避免正常渠道因用户违规内容被扣健康分/熔断；
-//   - 其余（上游 error 事件、上游流畸形等）是上游故障，按 502 上游错误上报调度 FSM。
+//   - 上游空闲超时映射为 504，调度 FSM 按超时类故障处理；
+//   - 其余（上游 error 事件、流被掐断、上游流畸形等）是上游故障，按 502 上游错误上报调度 FSM。
 func streamConvertError(err error) error {
 	if errors.Is(err, relayconvert.ErrContentBlocked) {
 		reqErr := constant.NewRequestError(err.Error(), err)
 		reqErr.ResponseWritten = true
 		return reqErr
 	}
-	upErr := constant.NewUpstreamError(http.StatusBadGateway, err.Error(), err)
+	status := http.StatusBadGateway
+	if errors.Is(err, helper.ErrStreamIdleTimeout) {
+		status = http.StatusGatewayTimeout
+	}
+	upErr := constant.NewUpstreamError(status, err.Error(), err)
 	upErr.ResponseWritten = true
 	return upErr
+}
+
+// chatStreamErrorCode 转换中途失败时补发给 OpenAI chat 客户端的 error.code，便于客户端/排障区分成因。
+func chatStreamErrorCode(err error) string {
+	switch {
+	case errors.Is(err, relayconvert.ErrUpstreamStreamTruncated):
+		return "upstream_truncated"
+	case errors.Is(err, helper.ErrStreamIdleTimeout):
+		return "upstream_timeout"
+	case errors.Is(err, relayconvert.ErrContentBlocked):
+		return "content_filter"
+	default:
+		return "upstream_error"
+	}
+}
+
+// claudeStreamErrorType 转换中途失败时补发给 Claude 客户端的 error.type。
+// Anthropic SDK 按该字段分类与重试：内容拦截是请求问题（invalid_request_error），
+// 其余上游故障用 api_error（SDK 视为服务端错误，可重试）。
+func claudeStreamErrorType(err error) string {
+	if errors.Is(err, relayconvert.ErrContentBlocked) {
+		return "invalid_request_error"
+	}
+	return "api_error"
+}
+
+// streamEventTextLen 提取一帧 StreamEvent 中已转发给客户端的文本/思考增量长度，供流中断时
+// 按 2 字符/token 估算输出用量。只认增量事件：Responses 的 output_text / reasoning_summary_text
+// delta（map 负载）与 Claude 的 content_block_delta（text_delta / thinking_delta）；
+// done / 终止事件携带的是全文重复，不计入。
+func streamEventTextLen(c *relayconvert.StreamEvent) int {
+	switch c.Event {
+	case "response.output_text.delta", "response.reasoning_summary_text.delta":
+		if m, ok := c.Data.(map[string]any); ok {
+			if delta, ok := m["delta"].(string); ok {
+				return len(delta)
+			}
+		}
+	case "content_block_delta":
+		if resp, ok := c.Data.(*dto.ClaudeResponse); ok && resp.Delta != nil {
+			n := 0
+			if resp.Delta.Text != nil {
+				n += len(*resp.Delta.Text)
+			}
+			if resp.Delta.Thinking != nil {
+				n += len(*resp.Delta.Thinking)
+			}
+			return n
+		}
+	}
+	return 0
 }
 
 // captureDtoUsage 把 StreamEvent 携带的带明细 Usage 累计进宿主 Usage（后到覆盖先到）。

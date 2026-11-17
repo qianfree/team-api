@@ -46,13 +46,13 @@ func (c *ClaudeToOpenAIRequestConverter) ConvertRequest(
 		Messages: make([]dto.Message, 0),
 	}
 
+	// 输出上限：Claude 必填 max_tokens，缺省 4096；目标为 OpenAI 推理模型族（GPT-5 / o 系列）时
+	// 须写 max_completion_tokens——官方 chat 端点对这些模型拒绝 max_tokens（400）
+	maxTokens := 4096
 	if claudeReq.MaxTokens != nil {
-		v := int(*claudeReq.MaxTokens)
-		openaiReq.MaxTokens = &v
-	} else {
-		v := 4096
-		openaiReq.MaxTokens = &v
+		maxTokens = int(*claudeReq.MaxTokens)
 	}
+	shared.SetChatMaxTokens(openaiReq, maxTokens)
 
 	openaiReq.Temperature = claudeReq.Temperature
 	openaiReq.TopP = claudeReq.TopP

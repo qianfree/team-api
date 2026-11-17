@@ -23,3 +23,13 @@ var ErrStatefulResponsesUnsupported = errors.New("previous_response_id requires 
 // 由 internal/{claude_gemini,native_responses,oai_gemini} 的 Gemini 出站转换器
 // wrap 返回（流式与非流式各 3 处）；宿主用 errors.Is 识别。
 var ErrContentBlocked = errors.New("content blocked by upstream safety policy")
+
+// ErrUpstreamStreamTruncated 上游 SSE 流在未给出任何完成信号（chat 的 finish_reason /
+// [DONE] 哨兵、Claude 的 message_stop 等）的情况下就 EOF：上游崩溃、代理/负载均衡切断
+// 长连接、聚合器静默失败都会表现为此。
+//
+// 这是**上游故障**而非正常结束：此前 chat 上游方向的流式转换器会在此处合成
+// message_stop / response.completed 假装正常收尾，客户端（Claude Code / Codex）把半截
+// 回答当完整答案、宿主按成功记账，截断对运营完全不可见。转换器现以本哨兵 wrap 返回，
+// 宿主据此向客户端补发协议原生的错误事件，并按上游故障记账与上报调度。
+var ErrUpstreamStreamTruncated = errors.New("upstream stream ended without a completion signal")

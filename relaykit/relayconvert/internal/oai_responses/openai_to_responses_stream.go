@@ -2,7 +2,6 @@ package oai_responses
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -70,8 +69,11 @@ func (c *OpenAIToResponsesStreamConverter) ConvertStreamResponse(
 	sentTextDone := false
 	parsedChunks := 0
 	sawChoices := false
-	outputIndex := 0 // message 项固定占用 0，文本事件始终挂在这里
-	itemIdx := 1     // 后续输出项（reasoning / tool call）的索引分配器
+	finishReason := "" // 首个非空 finish_reason：length / content_filter 决定终止态为 incomplete
+	sawDone := false   // 收到 [DONE] 哨兵
+	finalized := false // 输出项已收口（finalizeOutput 幂等标志）
+	outputIndex := 0   // message 项固定占用 0，文本事件始终挂在这里
+	itemIdx := 1       // 后续输出项（reasoning / tool call）的索引分配器
 	contentIndex := 0
 	toolCallIndexByID := make(map[string]int)
 	toolCallArgsByID := make(map[string]string)
@@ -146,6 +148,52 @@ func (c *OpenAIToResponsesStreamConverter) ConvertStreamResponse(
 		return nil
 	}
 
+	// finalizeOutput 收口全部进行中的输出项：reasoning 项、文本 content part、各工具调用的
+	// arguments.done / output_item.done。幂等：finish_reason 到达与流末尾兜底（上游只发 [DONE]
+	// 不发 finish_reason）两处都会调用；上游重复发 finish_reason（n>1 / 某些聚合器）时不得
+	// 重复发 done 事件，否则客户端状态机对已收口的 item 再次 done 会崩。
+	finalizeOutput := func() error {
+		if finalized {
+			return nil
+		}
+		finalized = true
+		if err := closeReasoningItem(); err != nil {
+			return err
+		}
+		_, _, itemStatus := responsesTerminalState(finishReason)
+		if !sentTextDone {
+			if err := emitTextDoneEvents(emit, msgID, outputIndex, contentIndex, contentBuilder.String(), itemStatus); err != nil {
+				return err
+			}
+			sentTextDone = true
+		}
+		for tcID, tcIdx := range toolCallIndexByID {
+			if err := emit("response.function_call_arguments.done", map[string]any{
+				"type":         "response.function_call_arguments.done",
+				"item_id":      tcID,
+				"output_index": tcIdx,
+				"arguments":    toolCallArgsByID[tcID],
+			}, nil); err != nil {
+				return err
+			}
+			if err := emit("response.output_item.done", map[string]any{
+				"type":         "response.output_item.done",
+				"output_index": tcIdx,
+				"item": map[string]any{
+					"type":      "function_call",
+					"id":        tcID,
+					"call_id":   tcID,
+					"name":      toolCallNameByID[tcID],
+					"arguments": toolCallArgsByID[tcID],
+					"status":    "completed",
+				},
+			}, nil); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
 	for scanner.Scan() {
 		select {
 		case <-ctx.Done():
@@ -166,6 +214,7 @@ func (c *OpenAIToResponsesStreamConverter) ConvertStreamResponse(
 
 		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 		if data == "[DONE]" {
+			sawDone = true
 			break
 		}
 		if data == "" {
@@ -176,13 +225,14 @@ func (c *OpenAIToResponsesStreamConverter) ConvertStreamResponse(
 		// 错误信息夹在 data 行里（{"error":{...}}）。不识别会被当作解析失败静默丢弃，
 		// 最终合成空的 response.completed（客户端表现为"成功但无内容"）。
 		// 错误的透传/回写由宿主负责，此处直接终止转换。
-		if errBody, ok := extractStreamEmbeddedError([]byte(data)); ok {
+		if errBody, ok := shared.ExtractStreamEmbeddedError([]byte(data)); ok {
 			return fmt.Errorf("upstream embedded error in SSE stream: %.500s", string(errBody))
 		}
 
 		var chunk dto.ChatCompletionStreamResponse
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-			// 解析失败不中断流（上游可能夹杂非 chat 格式行），后置的协议守卫兜底
+			// 解析失败不中断流（上游可能夹杂非 chat 格式行），后置的协议守卫兜底；经宿主能力接口留痕
+			convmeta.RecordSoftError(info, "skip unparsable chat chunk: %v (data=%.200s)", err, data)
 			continue
 		}
 		parsedChunks++
@@ -205,7 +255,7 @@ func (c *OpenAIToResponsesStreamConverter) ConvertStreamResponse(
 
 			if err := emit("response.created", map[string]any{
 				"type":     "response.created",
-				"response": buildResponsesObjectMap(respID, createdAt, "in_progress", modelName, []any{}, nil, nil, echo),
+				"response": buildResponsesObjectMap(respID, createdAt, "in_progress", modelName, []any{}, nil, nil, nil, echo),
 			}, nil); err != nil {
 				return err
 			}
@@ -336,10 +386,10 @@ func (c *OpenAIToResponsesStreamConverter) ConvertStreamResponse(
 					// 记录 index → callID 映射，用于后续参数 chunk 的查找
 					toolCallIDByIndex[tcIdx] = callID
 
-					// 先关闭文本 content part
+					// 先关闭文本 content part（工具调用前的文本段已完整，状态 completed）
 					if !sentTextDone {
 						finishedText := contentBuilder.String()
-						if err := emitTextDoneEvents(emit, msgID, outputIndex, contentIndex, finishedText); err != nil {
+						if err := emitTextDoneEvents(emit, msgID, outputIndex, contentIndex, finishedText, "completed"); err != nil {
 							return err
 						}
 						sentTextDone = true
@@ -387,44 +437,13 @@ func (c *OpenAIToResponsesStreamConverter) ConvertStreamResponse(
 				}
 			}
 
-			// finish_reason
+			// finish_reason：记录首个非空值（length / content_filter 决定终止态），并收口全部输出项
 			if choice.FinishReason != nil && *choice.FinishReason != "" {
-				if err := closeReasoningItem(); err != nil {
+				if finishReason == "" {
+					finishReason = *choice.FinishReason
+				}
+				if err := finalizeOutput(); err != nil {
 					return err
-				}
-				finishedText := contentBuilder.String()
-
-				// 关闭文本 content part（如果尚未关闭）
-				if !sentTextDone {
-					if err := emitTextDoneEvents(emit, msgID, outputIndex, contentIndex, finishedText); err != nil {
-						return err
-					}
-				}
-
-				// 发送每个 tool call 的 function_call_arguments.done + output_item.done
-				for tcID, tcIdx := range toolCallIndexByID {
-					if err := emit("response.function_call_arguments.done", map[string]any{
-						"type":         "response.function_call_arguments.done",
-						"item_id":      tcID,
-						"output_index": tcIdx,
-						"arguments":    toolCallArgsByID[tcID],
-					}, nil); err != nil {
-						return err
-					}
-					if err := emit("response.output_item.done", map[string]any{
-						"type":         "response.output_item.done",
-						"output_index": tcIdx,
-						"item": map[string]any{
-							"type":      "function_call",
-							"id":        tcID,
-							"call_id":   tcID,
-							"name":      toolCallNameByID[tcID],
-							"arguments": toolCallArgsByID[tcID],
-							"status":    "completed",
-						},
-					}, nil); err != nil {
-						return err
-					}
 				}
 			}
 		}
@@ -433,6 +452,9 @@ func (c *OpenAIToResponsesStreamConverter) ConvertStreamResponse(
 	if err := scanner.Err(); err != nil && err != io.EOF {
 		return fmt.Errorf("stream scanner error: %w", err)
 	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 
 	// 上游流始终不是 chat 格式（全程无 choices 且无内容/工具调用/usage）时不静默合成空响应：
 	// 典型形态包括 Responses/Claude 格式 SSE（JSON 能解析为空 chat chunk）、非流式 JSON 体、
@@ -440,6 +462,23 @@ func (c *OpenAIToResponsesStreamConverter) ConvertStreamResponse(
 	// 驱动重试换渠道/健康上报。
 	if !sawChoices && contentBuilder.Len() == 0 && len(toolCallIndexByID) == 0 && usage.TotalTokens == 0 {
 		return fmt.Errorf("upstream stream is not chat completions format: %d chunks parsed, none contained choices", parsedChunks)
+	}
+
+	// 既无 finish_reason 也无 [DONE] 即 EOF：流被掐断（上游崩溃 / 代理切断长连接 / 聚合器
+	// 静默失败）。此前这里会合成 status=completed 的 response.completed 假装正常——Codex 把
+	// 半截回答当完整答案、宿主按成功记账、截断不可见。现改为：已拿到的用量经侧信道上报
+	//（Data 为空的 StreamEvent，宿主只捕获 Usage），以 ErrUpstreamStreamTruncated 返回，
+	// 宿主据此补发 response.failed 并按上游故障处理。
+	// 只有 [DONE] 没有 finish_reason（部分兼容上游）视为正常结束：[DONE] 是显式终止哨兵。
+	if !sawDone && finishReason == "" {
+		if usage.PromptTokens > 0 || usage.CompletionTokens > 0 {
+			truncatedUsage := usage
+			if err := chunkWriter(&relayconvert.StreamEvent{Usage: &truncatedUsage}); err != nil {
+				return err
+			}
+		}
+		return fmt.Errorf("chat stream closed before finish_reason/[DONE] (chunks=%d, text=%d bytes, tool_calls=%d): %w",
+			parsedChunks, contentBuilder.Len(), len(toolCallIndexByID), relayconvert.ErrUpstreamStreamTruncated)
 	}
 
 	// 估算 usage（4 字符/token；流中断的保守估算兜底由宿主处理）
@@ -453,8 +492,8 @@ func (c *OpenAIToResponsesStreamConverter) ConvertStreamResponse(
 		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 	}
 
-	// 流在 finish_reason 之前被掐断时 reasoning 项可能仍未收口，此处兜底（幂等，正常路径为 no-op）
-	if err := closeReasoningItem(); err != nil {
+	// 上游只发 [DONE] 未发 finish_reason 时输出项尚未收口，此处兜底（幂等，正常路径为 no-op）
+	if err := finalizeOutput(); err != nil {
 		return err
 	}
 
@@ -469,13 +508,18 @@ func (c *OpenAIToResponsesStreamConverter) ConvertStreamResponse(
 		carry.StoreReasoningForCalls(callIDs, allReasoning.String())
 	}
 
-	// 构建 response.completed 的 output 数组（包含文本消息 + reasoning + 所有 tool call）
+	// 终止态按 finish_reason 映射：length / content_filter 是「模型没说完」，发
+	// response.incomplete（status=incomplete + incomplete_details.reason），Codex 等客户端据此
+	// 提示截断/续写；此前一律 completed，被 max_tokens 截断的回答在客户端看来是完整的。
+	terminalEvent, terminalStatus, itemStatus := responsesTerminalState(finishReason)
+
+	// 构建终止事件的 output 数组（包含文本消息 + reasoning + 所有 tool call）
 	finalOutput := make([]map[string]any, 0)
 	if !sentTextDone || contentBuilder.Len() > 0 {
 		finalOutput = append(finalOutput, map[string]any{
 			"type":   "message",
 			"id":     msgID,
-			"status": "completed",
+			"status": itemStatus,
 			"role":   "assistant",
 			"content": []map[string]any{
 				{
@@ -499,18 +543,19 @@ func (c *OpenAIToResponsesStreamConverter) ConvertStreamResponse(
 		})
 	}
 
-	// response.completed（最终 usage 同时挂在 StreamEvent.Usage 上供宿主提取）
+	// response.completed / response.incomplete（最终 usage 同时挂在 StreamEvent.Usage 上供宿主提取）
 	completedAt := int(time.Now().Unix())
 	finalUsage := usage
-	return emit("response.completed", map[string]any{
-		"type":     "response.completed",
-		"response": buildResponsesObjectMap(respID, createdAt, "completed", modelName, finalOutput, buildResponsesUsageMap(&usage), &completedAt, echo),
+	return emit(terminalEvent, map[string]any{
+		"type":     terminalEvent,
+		"response": buildResponsesObjectMap(respID, createdAt, terminalStatus, modelName, finalOutput, buildResponsesUsageMap(&usage), &completedAt, responsesIncompleteDetailsMap(finishReason), echo),
 	}, &finalUsage)
 }
 
 // emitTextDoneEvents 关闭文本 content part：依次发送 response.output_text.done、
-// response.content_part.done、response.output_item.done（message completed）。
-func emitTextDoneEvents(emit func(string, map[string]any, *dto.UsageWithDetails) error, msgID string, outputIndex int, contentIndex int, finishedText string) error {
+// response.content_part.done、response.output_item.done（message 项状态由 status 给出：
+// 正常收口 completed，被 max_tokens / 内容过滤截断时 incomplete）。
+func emitTextDoneEvents(emit func(string, map[string]any, *dto.UsageWithDetails) error, msgID string, outputIndex int, contentIndex int, finishedText string, status string) error {
 	if err := emit("response.output_text.done", map[string]any{
 		"type":          "response.output_text.done",
 		"item_id":       msgID,
@@ -539,7 +584,7 @@ func emitTextDoneEvents(emit func(string, map[string]any, *dto.UsageWithDetails)
 		"item": map[string]any{
 			"type":   "message",
 			"id":     msgID,
-			"status": "completed",
+			"status": status,
 			"role":   "assistant",
 			"content": []map[string]any{
 				{
@@ -552,36 +597,18 @@ func emitTextDoneEvents(emit func(string, map[string]any, *dto.UsageWithDetails)
 	}, nil)
 }
 
-// extractStreamEmbeddedError 检测 SSE data 行中内嵌的上游错误对象（存在 "error" 键且值非 null）。
-// 对流式 chunk 逐行检测，并排除 "error":null（部分供应商的正常 chunk 会携带空 error 字段）。
-func extractStreamEmbeddedError(data []byte) (json.RawMessage, bool) {
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, false
-	}
-	errBody, ok := raw["error"]
-	if !ok {
-		return nil, false
-	}
-	trimmed := string(bytes.TrimSpace(errBody))
-	if trimmed == "" || trimmed == "null" {
-		return nil, false
-	}
-	return errBody, true
-}
-
 // buildResponsesObjectMap 构建 Responses API response 对象的完整字段 map
 // （私有等价实现，宿主导出版 BuildResponsesObjectMap 仍被其他适配器复用）。
-// 请求参数从 echo 快照回显（快照缺失时回退默认值）；
-// store 恒为 false——合成响应不落上游存储，客户端不可经生命周期端点 retrieve。
-func buildResponsesObjectMap(respID string, createdAt int, status string, model string, output any, usageObj map[string]any, completedAt *int, echo responsesRequestEcho) map[string]any {
+// 请求参数从 echo 快照回显（快照缺失时回退默认值）；incompleteDetails 仅 status=incomplete
+// 时非 nil；store 恒为 false——合成响应不落上游存储，客户端不可经生命周期端点 retrieve。
+func buildResponsesObjectMap(respID string, createdAt int, status string, model string, output any, usageObj map[string]any, completedAt *int, incompleteDetails any, echo responsesRequestEcho) map[string]any {
 	m := map[string]any{
 		"id":                   respID,
 		"object":               "response",
 		"created_at":           createdAt,
 		"status":               status,
 		"error":                nil,
-		"incomplete_details":   nil,
+		"incomplete_details":   incompleteDetails,
 		"instructions":         echo.instructions,
 		"max_output_tokens":    echo.maxOutputTokens,
 		"model":                model,

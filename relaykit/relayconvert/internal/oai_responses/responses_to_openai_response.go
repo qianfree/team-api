@@ -69,6 +69,11 @@ func responsesResponseToChatCompletions(resp *dto.OpenAIResponsesResponse, id st
 	if len(toolCalls) > 0 && text == "" {
 		finishReason = "tool_calls"
 	}
+	// status=incomplete（max_output_tokens / content_filter 截断）→ length / content_filter，
+	// 此前一律 stop，被截断的回答在客户端看来是完整答案
+	if truncated := resp.TruncatedFinishReason(); truncated != "" {
+		finishReason = truncated
+	}
 	if text != "" || len(toolCalls) == 0 {
 		content = text
 	}

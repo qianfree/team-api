@@ -2,6 +2,7 @@ package oai_chat
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -296,18 +297,47 @@ data: [DONE]
 	}
 }
 
-// TestOpenAIToClaudeStreamConverter_UnexpectedEnd 上游未发 [DONE] 即断流：
-// 补发 content_block_stop + message_stop，已收到的 usage 附在 message_stop 上供宿主捕获。
-func TestOpenAIToClaudeStreamConverter_UnexpectedEnd(t *testing.T) {
+// TestOpenAIToClaudeStreamConverter_Truncated 既无 finish_reason 也无 [DONE] 即断流（上游崩溃 /
+// 代理切断 / 聚合器静默失败）：不得合成 message_stop 假装正常结束（Claude Code 会把半截回答当
+// 完整答案），必须以 ErrUpstreamStreamTruncated 返回；已收到的 usage 经侧信道（Data 为空的
+// StreamEvent）上报供宿主捕获。
+func TestOpenAIToClaudeStreamConverter_Truncated(t *testing.T) {
 	sse := `data: {"id":"c","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant","content":"partial"}}],"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}}
+
+`
+	events, err := collectClaudeStreamEvents(t, sse, newClaudeInboundMeta())
+	if !errors.Is(err, relayconvert.ErrUpstreamStreamTruncated) {
+		t.Fatalf("err = %v, want ErrUpstreamStreamTruncated", err)
+	}
+
+	// 已转发的事件保持原样（客户端已收到），但绝不能出现 message_delta / message_stop
+	for _, ev := range events {
+		if ev.Event == "message_stop" || ev.Event == "message_delta" {
+			t.Fatalf("truncated stream must not synthesize %s", ev.Event)
+		}
+	}
+	last := events[len(events)-1]
+	if last.Event != "" || last.Data != nil || last.Usage == nil {
+		t.Fatalf("last event should be a usage-only side-channel event, got event=%q data=%v usage=%v", last.Event, last.Data, last.Usage)
+	}
+	if last.Usage.PromptTokens != 10 || last.Usage.CompletionTokens != 2 || last.Usage.TotalTokens != 12 {
+		t.Errorf("usage = %+v, want prompt=10 completion=2 total=12", last.Usage)
+	}
+}
+
+// TestOpenAIToClaudeStreamConverter_FinishWithoutDone 上游给了 finish_reason 但省略 [DONE] 哨兵
+// （部分兼容上游如此）：finish_reason 已是协议层完成信号，按正常收尾发 message_delta + message_stop。
+func TestOpenAIToClaudeStreamConverter_FinishWithoutDone(t *testing.T) {
+	sse := `data: {"id":"c","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant","content":"done"}}]}
+
+data: {"id":"c","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"length"}],"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}}
 
 `
 	events, err := collectClaudeStreamEvents(t, sse, newClaudeInboundMeta())
 	if err != nil {
 		t.Fatalf("ConvertStreamResponse error: %v", err)
 	}
-
-	want := []string{"message_start", "content_block_start", "content_block_delta", "content_block_stop", "message_stop"}
+	want := []string{"message_start", "content_block_start", "content_block_delta", "content_block_stop", "message_delta", "message_stop"}
 	got := eventNames(events)
 	if len(got) != len(want) {
 		t.Fatalf("event sequence = %v, want %v", got, want)
@@ -317,13 +347,35 @@ func TestOpenAIToClaudeStreamConverter_UnexpectedEnd(t *testing.T) {
 			t.Fatalf("event[%d] = %q, want %q (full: %v)", i, got[i], want[i], got)
 		}
 	}
-
-	last := events[len(events)-1]
-	if last.Usage == nil {
-		t.Fatal("message_stop should carry usage on unexpected stream end")
+	delta := claudePayload(t, events[4])
+	if delta.Delta == nil || delta.Delta.StopReason == nil || *delta.Delta.StopReason != "max_tokens" {
+		t.Errorf("message_delta stop_reason = %v, want max_tokens (finish_reason=length)", delta.Delta)
 	}
-	if last.Usage.PromptTokens != 10 || last.Usage.CompletionTokens != 2 || last.Usage.TotalTokens != 12 {
-		t.Errorf("usage = %+v, want prompt=10 completion=2 total=12", last.Usage)
+	if events[4].Usage == nil || events[4].Usage.CompletionTokens != 2 {
+		t.Errorf("message_delta usage = %+v, want completion=2", events[4].Usage)
+	}
+}
+
+// TestOpenAIToClaudeStreamConverter_EmbeddedError 上游 HTTP 200 + SSE 里夹带错误对象
+// （聚合商出错常见形态）：该行能被 chat chunk 解析成功（无 choices），此前被静默跳过、
+// 随后按"正常结束"收尾——Claude Code 看到回答到一半正常停止。现必须以错误终止转换。
+func TestOpenAIToClaudeStreamConverter_EmbeddedError(t *testing.T) {
+	sse := `data: {"id":"c","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant","content":"Hel"}}]}
+
+data: {"error":{"message":"upstream rate limited","type":"rate_limit_error","code":429}}
+
+`
+	events, err := collectClaudeStreamEvents(t, sse, newClaudeInboundMeta())
+	if err == nil {
+		t.Fatal("embedded error should terminate the stream with error")
+	}
+	if !strings.Contains(err.Error(), "upstream rate limited") {
+		t.Errorf("error = %v, want to carry upstream message", err)
+	}
+	for _, ev := range events {
+		if ev.Event == "message_stop" || ev.Event == "message_delta" {
+			t.Fatalf("embedded error must not be followed by %s", ev.Event)
+		}
 	}
 }
 

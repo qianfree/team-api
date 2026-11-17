@@ -337,6 +337,40 @@ data: {"type":"message_stop"}
 - 上游供应商错误原样透传，不做二次包装
 - 限流错误额外设置 `X-RateLimit-Limit`、`X-RateLimit-Remaining`、`X-RateLimit-Reset` 响应头
 
+### chat 上游 → Claude / Responses 客户端的流式收尾语义
+
+Claude Code / Codex 经 chat-only 渠道（GPT 系列）调用时，上游 chat SSE 的结束方式决定客户端眼中回答是「完整 / 被截断 / 失败」。转换层（`relaykit/relayconvert/internal/{oai_chat,oai_responses}`）与桥接层（`relay/relaykit_bridge/stream.go`）按下表收尾，**任何异常都不得包装成正常结束**：
+
+| 上游 chat 流结束方式 | Claude 客户端 | Responses 客户端（Codex） | 宿主记账 |
+|---|---|---|---|
+| `finish_reason=stop/tool_calls` + `[DONE]` | `message_delta(stop_reason=end_turn/tool_use)` + `message_stop` | `response.completed`（status=completed） | 正常 |
+| `finish_reason=length` | `stop_reason=max_tokens` | `response.incomplete`（status=incomplete，`incomplete_details.reason=max_output_tokens`，message 项 status=incomplete） | 正常 |
+| `finish_reason=content_filter` | `stop_reason=refusal` | `response.incomplete`（reason=content_filter） | 正常 |
+| 有 finish_reason 但省略 `[DONE]` | 按正常收尾 | 按正常收尾 | 正常 |
+| 只有 `[DONE]` 没有 finish_reason | 按正常收尾（stop_reason=end_turn） | 按正常收尾（补齐 output_text.done 等收口事件） | 正常 |
+| 200 + SSE 内嵌 `{"error":{...}}` | `event: error`（type=api_error，携带上游消息） | `response.failed` | `stream_end_reason=error`，502 上报调度 |
+| 既无 finish_reason 也无 `[DONE]` 即 EOF（上游崩溃/代理切断） | `event: error` | `response.failed` | `stream_end_reason=upstream_truncated`（属流中断，按已转发部分结算），502 上报调度（`relayconvert.ErrUpstreamStreamTruncated`） |
+| 两帧间隔超过 `streaming_timeout_seconds`（上游假死） | `event: error` | `response.failed`（code=upstream_timeout） | `stream_end_reason=timeout`，按流中断结算，504 上报调度 |
+
+- 空闲超时由 `helper.IdleTimeoutReader` 实现（桥接路径与 Responses 直连透传共用），与 `StreamScannerHandler` 使用同一个 `streaming_timeout_seconds` 配置
+- 请求侧：外格式的输出上限（Claude `max_tokens` / Responses `max_output_tokens` / Gemini `maxOutputTokens`）转 chat 时，目标为 GPT-5 / o 系列 / codex 模型写 `max_completion_tokens`，其余写 `max_tokens`（`shared.SetChatMaxTokens`）
+- 转换器跳过的无法解析的 data 行经 `convmeta.SoftErrorRecorder` 记入 `StreamStatus` 软错误列表（此前静默 `continue`）
+
+### Responses 上游的流式收尾语义（反方向 + 直连透传）
+
+Responses 上游有两种落地：给 OpenAI chat 客户端（渠道 `ChatViaResponses` 桥接，或 relaykit Responses→chat 转换）与给 Responses 客户端的直连透传（codex 渠道 / 原生 Responses 上游）。
+
+| 上游 Responses 流结束方式 | OpenAI chat 客户端 | Responses 客户端（直连透传） | 宿主记账 |
+|---|---|---|---|
+| `response.completed` | `finish_reason=stop`（纯工具调用为 `tool_calls`） | 原样透传 | 正常 |
+| `response.incomplete`（reason=max_output_tokens） | `finish_reason=length` | 原样透传（视为合法终止态，不追加 failed） | 正常，usage 取 incomplete 事件携带值 |
+| `response.incomplete`（reason=content_filter） | `finish_reason=content_filter` | 原样透传 | 正常 |
+| 只有 `[DONE]` 无终止态事件 | 按正常 stop 收尾 | 按正常收尾 | 正常 |
+| 无终止态事件且无 `[DONE]` 即 EOF | data 行 `{"error":{"code":"upstream_truncated",...}}` + `[DONE]`（不再发假 `finish_reason=stop`） | 补发 `response.failed`（code=upstream_truncated） | `stream_end_reason=upstream_truncated`，502 上报调度 |
+
+- 非流式同理：`status=incomplete` → `finish_reason=length` / `content_filter`（`OpenAIResponsesResponse.TruncatedFinishReason`）
+- chat 流式协议没有独立错误事件，中途失败约定为 data 行携带 `error` 对象（OpenAI 官方行为，SDK 据此抛错），桥接层 OpenAI 客户端方向转换失败统一按此补发，error.code 区分 `upstream_truncated` / `upstream_timeout` / `content_filter` / `upstream_error`
+
 ## 中间件配置差异
 
 | 中间件 | 管理接口 | 代理接口 |
