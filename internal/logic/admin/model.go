@@ -117,6 +117,13 @@ func (s *sAdmin) ListModels(ctx context.Context, req *v1.ModelListReq) (*v1.Mode
 	if req.Search != "" {
 		query = query.Where("model_id LIKE ? OR model_name LIKE ?", "%"+req.Search+"%", "%"+req.Search+"%")
 	}
+	// 广场展示位筛选（"true"/"false"，空=不过滤；布尔字符串约定与告警规则 Enabled 筛选一致）
+	if req.IsRecommended == "true" || req.IsRecommended == "false" {
+		query = query.Where("is_recommended", req.IsRecommended == "true")
+	}
+	if req.IsNew == "true" || req.IsNew == "false" {
+		query = query.Where("is_new", req.IsNew == "true")
+	}
 	// 定价状态筛选（pricing JSONB 唯一真相：任一模式有正价即已定价）
 	// 已配价谓词：token 价>0 / per_request 价>0 / per_second 矩阵非空 / tiered 任一档价>0
 	const pricedPredicate = `EXISTS (SELECT 1 FROM mdl_pricing WHERE mdl_pricing.model_id = mdl_models.id AND (
@@ -692,7 +699,15 @@ func expandPricingBlob(mode string, blob *billing.PricingBlob) ([]v1.PricingItem
 		items = append(items, item)
 	}
 	// 时段与倍率横切所有计费模式（含 tiered），随 blob 顶层还原
-	return items, timeSegmentsToAPI(blob.TimeSegments), paramMultipliersToAPI(blob.ParamMultipliers)
+	var segsAPI []v1.TimeSegmentItem
+	if blob.TimeSegments != nil {
+		segsAPI = timeSegmentsToAPI(*blob.TimeSegments)
+	}
+	var rulesAPI []v1.ParamMultiplierItem
+	if blob.ParamMultipliers != nil {
+		rulesAPI = paramMultipliersToAPI(*blob.ParamMultipliers)
+	}
+	return items, segsAPI, rulesAPI
 }
 
 // derefStr 字符串指针安全解引用（NULL → 空串）
@@ -829,7 +844,9 @@ func writePricingForModel(ctx context.Context, modelDBID int64, items []v1.Prici
 	if err != nil {
 		return err
 	}
-	blob.ParamMultipliers = paramRules
+	if len(paramRules) > 0 {
+		blob.ParamMultipliers = &paramRules
+	}
 	blob.Scheme = scheme
 	blob.SchemeConfig = schemeConfig
 	blobJSON, err := json.Marshal(blob)
@@ -951,11 +968,15 @@ func buildOfficialBlob(items []v1.PricingItem, segments []v1.TimeSegmentItem, ru
 			return nil, err
 		}
 	}
-	blob.TimeSegments = segs
-	blob.ParamMultipliers = paramRules
+	if len(segs) > 0 {
+		blob.TimeSegments = &segs
+	}
+	if len(paramRules) > 0 {
+		blob.ParamMultipliers = &paramRules
+	}
 	empty := blob.InputPrice == nil && blob.OutputPrice == nil && blob.CacheReadPrice == nil &&
 		blob.CacheCreationPrice == nil && len(blob.Tiers) == 0 && blob.Price == nil &&
-		len(blob.Prices) == 0 && len(blob.TimeSegments) == 0 && len(blob.ParamMultipliers) == 0
+		len(blob.Prices) == 0 && blob.TimeSegmentsEmpty() && blob.ParamMultipliersEmpty()
 	if empty {
 		return nil, nil
 	}
