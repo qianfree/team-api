@@ -662,11 +662,11 @@ onMounted(() => {
 								<span class="font-medium text-white">{{ (tokenTooltipData.cache_read_tokens || 0).toLocaleString() }}</span>
 							</div>
 							<div  class="flex items-center justify-between gap-4">
-								<span class="text-gray-400">缓存创建(5分钟)</span>
+								<span class="text-gray-400">缓存创建(标准TTL)</span>
 								<span class="font-medium text-white">{{ (tokenTooltipData.cache_creation_5m_tokens || 0).toLocaleString() }}</span>
 							</div>
 							<div  class="flex items-center justify-between gap-4">
-								<span class="text-gray-400">缓存创建(1小时)</span>
+								<span class="text-gray-400">缓存创建(长时TTL)</span>
 								<span class="font-medium text-white">{{ (tokenTooltipData.cache_creation_1h_tokens || 0).toLocaleString() }}</span>
 							</div>
 							<div v-if="tokenTooltipData.reasoning_tokens > 0" class="flex items-center justify-between gap-4">
@@ -889,11 +889,11 @@ onMounted(() => {
 							<span class="font-semibold text-amber-800 tabular-nums">{{ (detailLog.cache_creation_tokens || 0).toLocaleString() }}</span>
 						</div>
 						<div class="flex items-center justify-between rounded-lg bg-orange-50 px-3 py-1.5">
-							<span class="text-orange-700">Cache 5m</span>
+							<span class="text-orange-700">缓存创建(标准TTL)</span>
 							<span class="font-semibold text-orange-800 tabular-nums">{{ (detailLog.cache_creation_5m_tokens || 0).toLocaleString() }}</span>
 						</div>
 						<div class="flex items-center justify-between rounded-lg bg-pink-50 px-3 py-1.5">
-							<span class="text-pink-700">Cache 1h</span>
+							<span class="text-pink-700">缓存创建(长时TTL)</span>
 							<span class="font-semibold text-pink-800 tabular-nums">{{ (detailLog.cache_creation_1h_tokens || 0).toLocaleString() }}</span>
 						</div>
 						<div v-if="detailLog.reasoning_tokens > 0" class="flex items-center justify-between rounded-lg bg-violet-50 px-3 py-1.5">

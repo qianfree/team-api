@@ -101,6 +101,10 @@ func buildResponsesUsageMap(usage *dto.UsageWithDetails) map[string]any {
 			"cache_write_tokens": usage.PromptTokensDetails.CacheWriteTokens,
 			"audio_tokens":       usage.PromptTokensDetails.AudioTokens,
 		}
+		// 写入 TTL 细分（官方键 ttl_30m/ttl_12h）：有细分才透传
+		if usage.PromptTokensDetails.CacheWriteTokensDetails != nil {
+			inputDetails["cache_write_tokens_details"] = usage.PromptTokensDetails.CacheWriteTokensDetails
+		}
 	}
 	if usage.CompletionTokenDetails != nil {
 		outputDetails = map[string]any{
@@ -122,7 +126,8 @@ func buildResponsesUsageMap(usage *dto.UsageWithDetails) map[string]any {
 // ========== 用量换算 ==========
 
 // claudeUsageToTokenDetails 将 ClaudeUsage 转换为 TokenDetails（含 cache token 细分），
-// 与宿主同名函数等价
+// 与宿主同名函数等价。TTL 双桶对位：官方键 cache_write_tokens(+details.ttl_30m/12h，
+// 短桶 5m→30m、长桶 1h→12h 归一) + 扩展键 cached_creation_5m/1h_tokens 并存
 func claudeUsageToTokenDetails(u *dto.ClaudeUsage) *dto.TokenDetails {
 	if u == nil {
 		return nil
@@ -130,10 +135,17 @@ func claudeUsageToTokenDetails(u *dto.ClaudeUsage) *dto.TokenDetails {
 	td := &dto.TokenDetails{
 		CachedTokens:         u.CacheReadInputTokens,
 		CachedCreationTokens: u.CacheCreationInputTokens,
+		CacheWriteTokens:     u.CacheCreationInputTokens,
 	}
 	if u.CacheCreation != nil {
 		td.CachedCreation5mTokens = u.CacheCreation.Ephemeral5mInputTokens
 		td.CachedCreation1hTokens = u.CacheCreation.Ephemeral1hInputTokens
+		if u.CacheCreation.Ephemeral5mInputTokens > 0 || u.CacheCreation.Ephemeral1hInputTokens > 0 {
+			td.CacheWriteTokensDetails = &dto.CacheWriteTokensDetail{
+				TTL30mTokens: u.CacheCreation.Ephemeral5mInputTokens,
+				TTL12hTokens: u.CacheCreation.Ephemeral1hInputTokens,
+			}
+		}
 	}
 	return td
 }

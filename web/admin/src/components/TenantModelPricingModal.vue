@@ -46,6 +46,7 @@ const form = reactive({
   custom_output_price: null as number | null,
   custom_cache_read_price: null as number | null,
   custom_cache_creation_price: null as number | null,
+  custom_cache_creation_1h_price: null as number | null,
   custom_pricing_tiers: [] as any[],
 })
 
@@ -171,6 +172,7 @@ function applyOfficialRef(source: any) {
     form.custom_output_price = toBasePrice(p.output_price)
     if ((Number(p.cache_read_price) || 0) > 0) form.custom_cache_read_price = toBasePrice(p.cache_read_price)
     if ((Number(p.cache_creation_price) || 0) > 0) form.custom_cache_creation_price = toBasePrice(p.cache_creation_price)
+    if ((Number(p.cache_creation_1h_price) || 0) > 0) form.custom_cache_creation_1h_price = toBasePrice(p.cache_creation_1h_price)
   }
   Message.success(`已填入 ${source.source} 官方价（已折算为本位币）`)
 }
@@ -181,6 +183,7 @@ const hasCustomPriceInput = computed(() =>
   (form.custom_output_price ?? 0) > 0 ||
   (form.custom_cache_read_price ?? 0) > 0 ||
   (form.custom_cache_creation_price ?? 0) > 0 ||
+  (form.custom_cache_creation_1h_price ?? 0) > 0 ||
   (form.per_request_price ?? 0) > 0 ||
   form.custom_pricing_tiers.length > 0 ||
   (perSecondMode.value === 'custom' && customPerSecondRows.value.some((r) => (Number(r.price) || 0) > 0)),
@@ -197,6 +200,7 @@ function addTenantTier() {
     output_price: 0,
     cache_read_price: 0,
     cache_creation_price: 0,
+    cache_creation_1h_price: 0,
   })
   if (last && last.max_tokens === null) {
     last.max_tokens = newMin
@@ -212,6 +216,7 @@ watch(() => form.billing_mode, (mode) => {
     form.custom_output_price = null
     form.custom_cache_read_price = null
     form.custom_cache_creation_price = null
+    form.custom_cache_creation_1h_price = null
     form.per_request_price = null
     form.custom_pricing_tiers = []
   } else {
@@ -239,6 +244,7 @@ watch(() => props.visible, (v) => {
   form.custom_output_price = record.custom_output_price || null
   form.custom_cache_read_price = record.custom_cache_read_price || null
   form.custom_cache_creation_price = record.custom_cache_creation_price || null
+  form.custom_cache_creation_1h_price = record.custom_cache_creation_1h_price || null
   form.custom_pricing_tiers = record.custom_pricing_tiers?.length > 0 ? [...record.custom_pricing_tiers] : []
 
   // 扩展覆盖回显：null=继承；[]=显式关闭；非空=自定义（纯函数直填行数组）
@@ -376,6 +382,7 @@ async function onSave() {
                       <div class="platform-ref-item"><span class="platform-ref-label">输出价</span><span>{{ fmtPrice(platformItem.output_price) }} {{ currencySymbol }}/1M</span></div>
                       <div class="platform-ref-item"><span class="platform-ref-label">缓存读</span><span>{{ fmtPrice(platformItem.cache_read_price) }} {{ currencySymbol }}/1M</span></div>
                       <div class="platform-ref-item"><span class="platform-ref-label">缓存写</span><span>{{ fmtPrice(platformItem.cache_creation_price) }} {{ currencySymbol }}/1M</span></div>
+                      <div class="platform-ref-item"><span class="platform-ref-label">缓存写(长时)</span><span>{{ fmtPrice(platformItem.cache_creation_1h_price) }} {{ currencySymbol }}/1M</span></div>
                     </div>
                     <!-- 按次 -->
                     <div v-else-if="platformItem.billing_mode === 'per_request'" class="platform-ref-grid platform-ref-section">
@@ -533,6 +540,11 @@ async function onSave() {
                   <template #suffix>{{ currencySymbol }} / 1M</template>
                 </AInputNumber>
               </AFormItem>
+              <AFormItem label="长时缓存创建" extra="长 TTL 桶（Claude 1h / GPT 12h）；留空按新基准价×1.6 推导">
+                <AInputNumber v-model="form.custom_cache_creation_1h_price" :min="0" :precision="4" placeholder="默认" class="w-full">
+                  <template #suffix>{{ currencySymbol }} / 1M</template>
+                </AInputNumber>
+              </AFormItem>
             </div>
           </template>
 
@@ -580,6 +592,11 @@ async function onSave() {
                 </AFormItem>
                 <AFormItem label="缓存创建价格">
                   <AInputNumber v-model="tier.cache_creation_price" :min="0" :precision="4" class="w-full">
+                    <template #suffix>{{ currencySymbol }}/1M</template>
+                  </AInputNumber>
+                </AFormItem>
+                <AFormItem label="长时缓存创建" extra="长 TTL 桶；0=回退首档锚点">
+                  <AInputNumber v-model="tier.cache_creation_1h_price" :min="0" :precision="4" class="w-full">
                     <template #suffix>{{ currencySymbol }}/1M</template>
                   </AInputNumber>
                 </AFormItem>

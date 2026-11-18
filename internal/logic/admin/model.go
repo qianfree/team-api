@@ -651,8 +651,10 @@ func expandPricingBlob(mode string, blob *billing.PricingBlob) ([]v1.PricingItem
 			} else if i == 0 && blob.CacheCreationPrice != nil {
 				item.CacheCreationPrice = *blob.CacheCreationPrice
 			}
-			// 1h TTL 价仅存 blob 顶层锚点（计费引擎不读档内值），随首档还原
-			if i == 0 && blob.CacheCreation1hPrice != nil {
+			// 1h TTL 价：档内值优先（计费按命中档生效）；档内无值时首档回退 blob 顶层锚点（存量兼容）
+			if tier.CacheCreation1hPrice != nil {
+				item.CacheCreation1hPrice = *tier.CacheCreation1hPrice
+			} else if i == 0 && blob.CacheCreation1hPrice != nil {
 				item.CacheCreation1hPrice = *blob.CacheCreation1hPrice
 			}
 			items = append(items, item)

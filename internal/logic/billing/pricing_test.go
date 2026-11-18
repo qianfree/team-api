@@ -8,6 +8,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	rcommon "github.com/qianfree/team-api/relay/common"
+	rdto "github.com/qianfree/team-api/relay/dto"
 )
 
 const eps = 1e-10
@@ -1072,6 +1073,7 @@ func TestHasTenantCustomPrice(t *testing.T) {
 		{"自定义输出价", &tenantModelRow{CustomOutputPrice: f(1.8)}, "token", nil, true},
 		{"自定义缓存读价", &tenantModelRow{CustomCacheReadPrice: f(0.1)}, "token", nil, true},
 		{"自定义缓存写价", &tenantModelRow{CustomCacheCreationPrice: f(0.3)}, "token", nil, true},
+		{"自定义长时缓存创建价", &tenantModelRow{CustomCacheCreation1hPrice: f(0.4)}, "token", nil, true},
 		{"零值自定义价不算", &tenantModelRow{CustomInputPrice: f(0)}, "token", nil, false},
 		{"tiered 自定义阶梯", &tenantModelRow{CustomPricingTiers: `[{"min_tokens":0}]`}, "tiered", nil, true},
 		{"tiered 空阶梯", &tenantModelRow{CustomPricingTiers: "[]"}, "tiered", nil, false},
@@ -1261,5 +1263,143 @@ func TestComputeCost_CacheTTLBuckets(t *testing.T) {
 	assertFloat(t, cb2.CacheCreation1hCost, 0, "fallback 1h bucket cost")
 	if cb2.CacheCreation5mTokens != 80_000 || cb2.CacheCreation1hTokens != 0 {
 		t.Errorf("fallback TTL tokens = 5m:%d 1h:%d, want 80000/0", cb2.CacheCreation5mTokens, cb2.CacheCreation1hTokens)
+	}
+}
+
+// TestComputeCost_TieredMode_CacheCreation1hPerTier 1h 缓存创建价阶梯逐档生效：
+// 命中档的档内价取代锚点价；档内未配置（nil）时回退锚点，保证存量阶梯数据价格口径不变
+func TestComputeCost_TieredMode_CacheCreation1hPerTier(t *testing.T) {
+	p20, p144 := 20.0, 14.4
+	pricing := &PricingResult{
+		BillingMode:          "tiered",
+		TenantMultiplier:     1.0,
+		Currency:             "USD",
+		CacheCreationPrice:   18.75,
+		CacheCreation5mPrice: 18.75,
+		CacheCreation1hPrice: 6.0, // 锚点价：仅作档内缺省时的回退
+		CustomTiers: []pricingTierRow{
+			{MinTokens: 0, MaxTokens: ptrInt64(100_000), InputPrice: 5, OutputPrice: 15, CacheCreation1hPrice: &p20},
+			{MinTokens: 100_000, MaxTokens: nil, InputPrice: 3, OutputPrice: 10, CacheCreation1hPrice: &p144},
+		},
+	}
+	newUsage := func(prompt int) *rcommon.Usage {
+		return &rcommon.Usage{
+			PromptTokens:     prompt,
+			CompletionTokens: 10,
+			PromptTokensDetails: &rcommon.TokenDetails{
+				CachedCreation1hTokens: 10_000,
+			},
+			CacheIncludedInPrompt: true,
+		}
+	}
+
+	// 完整输入 200K 命中第二档 → 10K × 14.4/1M = 0.144
+	cb := computeCost(pricing, 200_000, 10, newUsage(200_000), 1)
+	assertFloat(t, cb.CacheCreation1hCost, 0.144, "1h cost (tier2 in-tier price)")
+
+	// 低用量命中首档 → 10K × 20/1M = 0.2
+	cbLow := computeCost(pricing, 1_000, 10, newUsage(1_000), 1)
+	assertFloat(t, cbLow.CacheCreation1hCost, 0.2, "1h cost (tier1 in-tier price)")
+
+	// 档内未配置 → 回退锚点 6.0：10K × 6/1M = 0.06
+	pricing.CustomTiers[1].CacheCreation1hPrice = nil
+	cbFallback := computeCost(pricing, 200_000, 10, newUsage(200_000), 1)
+	assertFloat(t, cbFallback.CacheCreation1hCost, 0.06, "1h cost (anchor fallback)")
+}
+
+// TestComputeCost_TieredMode_CacheReadAnd5mPerTier 缓存读取价与 5m 缓存创建价阶梯逐档生效：
+// 命中档的档内价取代锚点价（OpenAI cache_write 并入 5m 桶同样随档计价）；
+// 档内未配置（nil）时回退锚点，保证存量阶梯数据（档内无缓存键）价格口径不变
+func TestComputeCost_TieredMode_CacheReadAnd5mPerTier(t *testing.T) {
+	read2, create2 := 0.4, 9.0
+	pricing := &PricingResult{
+		BillingMode:          "tiered",
+		TenantMultiplier:     1.0,
+		Currency:             "USD",
+		CacheReadPrice:       0.1, // 锚点价：仅作档内缺省时的回退
+		CacheCreationPrice:   3.75,
+		CacheCreation5mPrice: 3.75,
+		CustomTiers: []pricingTierRow{
+			{MinTokens: 0, MaxTokens: ptrInt64(100_000), InputPrice: 5, OutputPrice: 15},
+			{MinTokens: 100_000, MaxTokens: nil, InputPrice: 3, OutputPrice: 10, CacheReadPrice: &read2, CacheCreationPrice: &create2},
+		},
+	}
+	newUsage := func(prompt int) *rcommon.Usage {
+		return &rcommon.Usage{
+			PromptTokens:     prompt,
+			CompletionTokens: 10,
+			PromptTokensDetails: &rcommon.TokenDetails{
+				CachedTokens:     50_000,
+				CacheWriteTokens: 20_000,
+			},
+			CacheIncludedInPrompt: true,
+		}
+	}
+
+	// 完整输入 200K 命中第二档 → 读 50K×0.4/1M=0.02；写(5m) 20K×9/1M=0.18
+	cb := computeCost(pricing, 200_000, 10, newUsage(200_000), 1)
+	assertFloat(t, cb.CacheReadCost, 0.02, "cache read cost (tier2 in-tier price)")
+	assertFloat(t, cb.CacheCreation5mCost, 0.18, "5m creation cost (tier2 in-tier price)")
+
+	// 完整输入 80K 命中首档（档内未配置缓存价）→ 回退锚点：读 50K×0.1/1M=0.005；写 20K×3.75/1M=0.075
+	cbLow := computeCost(pricing, 80_000, 10, newUsage(80_000), 1)
+	assertFloat(t, cbLow.CacheReadCost, 0.005, "cache read cost (anchor fallback)")
+	assertFloat(t, cbLow.CacheCreation5mCost, 0.075, "5m creation cost (anchor fallback)")
+
+	// 非阶梯模式不受档内字段影响（token 模式恒用锚点价）
+	pricing.BillingMode = "token"
+	cbToken := computeCost(pricing, 200_000, 10, newUsage(200_000), 1)
+	assertFloat(t, cbToken.CacheReadCost, 0.005, "cache read cost (token mode uses anchor)")
+	assertFloat(t, cbToken.CacheCreation5mCost, 0.075, "5m creation cost (token mode uses anchor)")
+}
+
+// TestComputeCost_OpenAITTLDetailsNormalized GPT ttl_30m/ttl_12h 写入经归一双桶分档计价的
+// 端到端验证（dto → common 归一 → resolveTokenCounts → 费用）。数值锚点取自 OpenAI 官方
+// 文档示例：输入 $1/M、缓存读 $0.10/M、30m 写入 1.25×、12h 写入 2.5×，usage
+// input=12000 / cached=4000 / cache_write=7000(30m:3000+12h:4000) → 输入费用 $0.01515
+func TestComputeCost_OpenAITTLDetailsNormalized(t *testing.T) {
+	// 上游报文经 dto 解析后进入 common（DtoTokenDetailsToCommon 为归一咽喉点）
+	td := rcommon.DtoTokenDetailsToCommon(&rdto.TokenDetails{
+		CachedTokens:     4000,
+		CacheWriteTokens: 7000,
+		CacheWriteTokensDetails: &rdto.CacheWriteTokensDetail{
+			TTL30mTokens: 3000,
+			TTL12hTokens: 4000,
+		},
+	})
+	if td.CachedCreation5mTokens != 3000 || td.CachedCreation1hTokens != 4000 {
+		t.Fatalf("归一双桶 = 5m:%d 1h:%d, want 3000/4000", td.CachedCreation5mTokens, td.CachedCreation1hTokens)
+	}
+
+	pricing := &PricingResult{
+		InputPrice:         1.0, // $1/M（官方示例锚点）
+		OutputPrice:        0.0,
+		CacheReadPrice:     0.1,  // $0.10/M
+		CacheCreationPrice: 1.25, // 短桶 = GPT 30m 官方 1.25× 输入价
+		BillingMode:        "token",
+		TenantMultiplier:   1.0,
+		Currency:           "USD",
+	}
+	pricing.CacheCreation5mPrice = pricing.CacheCreationPrice
+	pricing.CacheCreation1hPrice = 2.5 // 长桶 = GPT 12h 官方 2.5×（显式配置）
+
+	usage := &rcommon.Usage{
+		PromptTokens:          12000,
+		CompletionTokens:      0,
+		PromptTokensDetails:   td,
+		CacheIncludedInPrompt: true, // OpenAI 口径：input_tokens 含 cache 子集
+	}
+	cb := computeCost(pricing, 12000, 0, usage, 1)
+
+	// 未缓存输入 = 12000 − 4000 − 7000 = 1000 → 1000/1M×1.0 = 0.001
+	assertFloat(t, cb.InputCost, 0.001, "InputCost (未缓存输入)")
+	// 读 4000×0.1/1M = 0.0004；短桶(30m) 3000×1.25/1M = 0.00375；长桶(12h) 4000×2.5/1M = 0.01
+	assertFloat(t, cb.CacheReadCost, 0.0004, "CacheReadCost")
+	assertFloat(t, cb.CacheCreation5mCost, 0.00375, "CacheCreation5mCost (ttl_30m)")
+	assertFloat(t, cb.CacheCreation1hCost, 0.01, "CacheCreation1hCost (ttl_12h)")
+	// 官方示例总额：$0.01515
+	assertFloat(t, cb.TotalCost, 0.01515, "TotalCost (OpenAI 官方文档示例锚点)")
+	if cb.InputTokens != 1000 {
+		t.Errorf("InputTokens = %d, want 1000", cb.InputTokens)
 	}
 }

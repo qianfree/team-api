@@ -105,10 +105,29 @@ func (c *OpenAIToClaudeStreamConverter) ConvertStreamResponse(
 			currentBlockType = ""
 		}
 
-		// Claude 语义：input_tokens 不含 cache_read（OpenAI 的 prompt_tokens 含 cached，扣减后映射）；
+		// Claude 语义：input_tokens 不含 cache_read 与 cache_creation（三项并列报告），
+		// OpenAI 的 prompt_tokens 含两者（子集语义），均需扣减后映射；
 		// OpenAI 的 usage 在流尾才返回、message_start 时不可得，最终用量在此补报
 		reason := mapOpenAIFinishReasonToClaude(finishReason)
-		deltaInput := inputTokens - cachedTokens
+		cacheWriteTotal := 0
+		var cacheCreation *dto.ClaudeCacheUsage
+		if promptDetails != nil {
+			cacheWriteTotal = promptDetails.CacheWriteTokens
+			// TTL 细分归一回写：GPT 30m → ephemeral_5m（短桶）、12h → ephemeral_1h（长桶）；
+			// 官方不变式 ttl_30m + ttl_12h = cache_write，细分大于总量时取大者（防御）
+			if d := promptDetails.CacheWriteTokensDetails; d != nil {
+				if d.TTL30mTokens+d.TTL12hTokens > cacheWriteTotal {
+					cacheWriteTotal = d.TTL30mTokens + d.TTL12hTokens
+				}
+				if d.TTL30mTokens > 0 || d.TTL12hTokens > 0 {
+					cacheCreation = &dto.ClaudeCacheUsage{
+						Ephemeral5mInputTokens: d.TTL30mTokens,
+						Ephemeral1hInputTokens: d.TTL12hTokens,
+					}
+				}
+			}
+		}
+		deltaInput := inputTokens - cachedTokens - cacheWriteTotal
 		if deltaInput < 0 {
 			deltaInput = 0
 		}
@@ -118,9 +137,11 @@ func (c *OpenAIToClaudeStreamConverter) ConvertStreamResponse(
 				StopReason: strPtr(reason),
 			},
 			Usage: &dto.ClaudeUsage{
-				InputTokens:          deltaInput,
-				CacheReadInputTokens: cachedTokens,
-				OutputTokens:         outputTokens,
+				InputTokens:              deltaInput,
+				CacheReadInputTokens:     cachedTokens,
+				CacheCreationInputTokens: cacheWriteTotal,
+				OutputTokens:             outputTokens,
+				CacheCreation:            cacheCreation,
 			},
 		}
 		if err := writeEvent("message_delta", &delta, hostUsage()); err != nil {

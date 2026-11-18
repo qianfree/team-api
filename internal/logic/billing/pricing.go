@@ -49,11 +49,11 @@ type PricingResult struct {
 	ModelMultiplier  float64 // 模型倍率
 	Currency         string
 
-	// Cache 直接定价
+	// Cache 直接定价（双桶按 TTL 归一：短桶 = Claude 5m / GPT 30m，长桶 = Claude 1h / GPT 12h）
 	CacheReadPrice       float64 // 缓存读取每 1M token 价格
-	CacheCreationPrice   float64 // 缓存创建/写入每 1M token 价格（5m TTL 基础价；Claude 创建与 OpenAI 写入共用，同一物理事件）
-	CacheCreation5mPrice float64 // 5 分钟缓存创建价格（1.25× 基础价）
-	CacheCreation1hPrice float64 // 1 小时缓存创建价格（2× 基础价）
+	CacheCreationPrice   float64 // 缓存创建/写入每 1M token 价格（短 TTL 基准价；Claude 创建与 OpenAI 写入共用，同一物理事件）
+	CacheCreation5mPrice float64 // 短 TTL 写入价格（Claude 5m ≈1.25× 输入价 / GPT 30m 1.25× 输入价）
+	CacheCreation1hPrice float64 // 长 TTL 写入价格（Claude 1h 2× / GPT 12h 2.5× 输入价；缺省按短桶 ×1.6 推导）
 
 	// 模型最大输出 token 数（随定价一起缓存，供预扣估算使用，
 	// 避免 EstimatePreDeductAmount 每请求单独查一次 mdl_models）。
@@ -108,17 +108,18 @@ const perSecondWildcard = "*"
 // tenantModelRow mdl_tenant_models 的计费相关列（GetModelPriceAt 查询用，
 // 提为包级类型供 hasTenantCustomPrice 纯函数判定复用）
 type tenantModelRow struct {
-	CustomInputPrice         *float64 `json:"custom_input_price"`
-	CustomOutputPrice        *float64 `json:"custom_output_price"`
-	CustomCacheReadPrice     *float64 `json:"custom_cache_read_price"`
-	CustomCacheCreationPrice *float64 `json:"custom_cache_creation_price"`
-	CustomPricingTiers       string   `json:"custom_pricing_tiers"`
-	CustomPricing            string   `json:"custom_pricing"`
-	Multiplier               *float64 `json:"multiplier"`
-	DiscountRatio            *float64 `json:"discount_ratio"`
-	BillingMode              *string  `json:"billing_mode"`
-	PerRequestPrice          *float64 `json:"per_request_price"`
-	Enabled                  bool     `json:"enabled"`
+	CustomInputPrice           *float64 `json:"custom_input_price"`
+	CustomOutputPrice          *float64 `json:"custom_output_price"`
+	CustomCacheReadPrice       *float64 `json:"custom_cache_read_price"`
+	CustomCacheCreationPrice   *float64 `json:"custom_cache_creation_price"`
+	CustomCacheCreation1hPrice *float64 `json:"custom_cache_creation_1h_price"`
+	CustomPricingTiers         string   `json:"custom_pricing_tiers"`
+	CustomPricing              string   `json:"custom_pricing"`
+	Multiplier                 *float64 `json:"multiplier"`
+	DiscountRatio              *float64 `json:"discount_ratio"`
+	BillingMode                *string  `json:"billing_mode"`
+	PerRequestPrice            *float64 `json:"per_request_price"`
+	Enabled                    bool     `json:"enabled"`
 }
 
 // TenantPricingPatch mdl_tenant_models.custom_pricing JSONB 的内存形态（覆盖补丁）。
@@ -210,6 +211,9 @@ func hasTenantCustomPrice(tm *tenantModelRow, mode string, patch *TenantPricingP
 		return true
 	}
 	if tm.CustomCacheCreationPrice != nil && *tm.CustomCacheCreationPrice > 0 {
+		return true
+	}
+	if tm.CustomCacheCreation1hPrice != nil && *tm.CustomCacheCreation1hPrice > 0 {
 		return true
 	}
 	return false
@@ -482,7 +486,7 @@ func GetModelPriceAt(ctx context.Context, tenantID int64, modelName string, bill
 	err = dao.MdlTenantModels.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Where("model_id", model.ID).
-		Fields("custom_input_price, custom_output_price, custom_cache_read_price, custom_cache_creation_price, custom_pricing_tiers, custom_pricing, multiplier, discount_ratio, billing_mode, per_request_price, enabled").
+		Fields("custom_input_price, custom_output_price, custom_cache_read_price, custom_cache_creation_price, custom_cache_creation_1h_price, custom_pricing_tiers, custom_pricing, multiplier, discount_ratio, billing_mode, per_request_price, enabled").
 		Scan(&tm)
 	if err != nil {
 		return nil, gerror.Wrapf(err, "query tenant model price")
@@ -520,6 +524,12 @@ func GetModelPriceAt(ctx context.Context, tenantID int64, modelName string, bill
 			// 租户重定缓存创建基准价 = 重定整套缓存创建价格体系：平台的显式 1h 价
 			// 不再适用（锚点已换，旧 1h 价相对新基准无意义），回落按租户基准 ×1.6 推导
 			cacheCreation1hPrice = nil
+		}
+		// 租户显式覆盖长时缓存创建价（长 TTL 桶：Claude 1h / GPT 12h）：
+		// 在基准重定（推导兜底）之上优先生效——官方长 TTL 写入价为输入价 2~2.5×，
+		// 推导 ×1.6 会低估，需要精确覆盖能力的租户显式配置此列
+		if tm.CustomCacheCreation1hPrice != nil && *tm.CustomCacheCreation1hPrice > 0 {
+			cacheCreation1hPrice = tm.CustomCacheCreation1hPrice
 		}
 
 		// 租户自定义阶梯定价
@@ -760,12 +770,16 @@ func computeCostByMode(pricing *PricingResult, inputTokens, outputTokens int, us
 	million := decimal.NewFromInt(1_000_000)
 	mul := NewFromFloat(pricing.TenantMultiplier).Mul(NewFromFloat(effectiveTimeMultiplier(pricing)))
 
-	cacheReadCostD := decimal.NewFromInt(int64(cacheReadTokens)).Div(million).Mul(NewFromFloat(pricing.CacheReadPrice))
+	// 缓存价阶梯化：tiered 模式下三项缓存价均按命中档取价（档内未配置回退锚点），
+	// 与输入/输出选档同一依据（tierInputTokens）；OpenAI cache_write 也随档计价
+	cacheReadPrice, cacheCreation5mPrice, cacheCreation1hPrice := effectiveCachePrices(pricing, tierInputTokens)
+	cacheReadCostD := decimal.NewFromInt(int64(cacheReadTokens)).Div(million).Mul(NewFromFloat(cacheReadPrice))
 
-	// 缓存创建按 TTL 分别计价：5m 按 1.25×，1h 按 2×。
-	// OpenAI cache_write 并入 5m 基础价桶（resolveTokenCounts 合并，无 TTL 分档）
-	cacheCreation5mCostD := decimal.NewFromInt(int64(cacheCreation5mTokens)).Div(million).Mul(NewFromFloat(pricing.CacheCreation5mPrice))
-	cacheCreation1hCostD := decimal.NewFromInt(int64(cacheCreation1hTokens)).Div(million).Mul(NewFromFloat(pricing.CacheCreation1hPrice))
+	// 缓存创建按 TTL 双桶分别计价：短桶（Claude 5m / GPT 30m）按基础价（≈1.25× 输入价），
+	// 长桶（Claude 1h / GPT 12h）按命中档/锚点价（≈2~2.5×）。
+	// 无 TTL 细分的 OpenAI cache_write 并入短桶（resolveTokenCounts 合并）
+	cacheCreation5mCostD := decimal.NewFromInt(int64(cacheCreation5mTokens)).Div(million).Mul(NewFromFloat(cacheCreation5mPrice))
+	cacheCreation1hCostD := decimal.NewFromInt(int64(cacheCreation1hTokens)).Div(million).Mul(NewFromFloat(cacheCreation1hPrice))
 	cacheCreationCostD := cacheCreation5mCostD.Add(cacheCreation1hCostD)
 
 	// 总费用 = (基础输入 + 输出 + cache各项) × 租户倍率
@@ -861,9 +875,10 @@ func fillCacheCreationBuckets(bd *CostBreakdown, tokens5m, tokens1h int, cost5m,
 
 // resolveTokenCounts 根据 usage 信息解析最终的 token 计数。
 // 处理 cacheIncludedInPrompt 逻辑：如果 PromptTokens 包含 cache tokens，则扣减以避免重复计费。
-// 缓存写入合并桶：Claude cached_creation 与 OpenAI cache_write 是同一物理事件的不同协议报法，
-// 互斥出现（Claude 路径只填 CachedCreation*、OpenAI 路径只填 CacheWriteTokens）；
-// max 防御上游异常双报时重复计费，统一按 CacheCreationPrice 计价（5m/1h 分档仅 Claude 触发）。
+// 缓存写入双桶（短 TTL = CachedCreation5mTokens / 长 TTL = CachedCreation1hTokens）：
+// Claude 5m/1h 与 GPT 30m/12h 写入同构归一（OpenAI TTL 细分在 relay/common.NormalizeCacheWriteTTL
+// 前置归一，此处无感知）；有细分时按桶分别计价，无细分时 Claude 旧协议 cached_creation 与
+// OpenAI cache_write 合并取大（互斥协议报法，max 防御异常双报），全部按短桶基础价兜底（保守计费）。
 // 返回：baseInput, output, cacheRead, cacheCreation5m, cacheCreation1h
 func resolveTokenCounts(pricing *PricingResult, inputTokens, outputTokens int, usage *rcommon.Usage) (baseInput, output, cacheRead, cacheCreation5m, cacheCreation1h int) {
 	baseInput = inputTokens
@@ -872,13 +887,13 @@ func resolveTokenCounts(pricing *PricingResult, inputTokens, outputTokens int, u
 	if usage != nil {
 		if usage.PromptTokensDetails != nil {
 			cacheRead = usage.PromptTokensDetails.CachedTokens
-			// 优先使用细分的 5m/1h token（Claude 新协议）
+			// 优先使用 TTL 细分双桶（Claude 原生 / GPT 归一后）
 			if usage.PromptTokensDetails.CachedCreation5mTokens > 0 || usage.PromptTokensDetails.CachedCreation1hTokens > 0 {
 				cacheCreation5m = usage.PromptTokensDetails.CachedCreation5mTokens
 				cacheCreation1h = usage.PromptTokensDetails.CachedCreation1hTokens
 			} else {
 				// 无 TTL 细分：Claude 旧协议 cached_creation 与 OpenAI cache_write 合并取大，
-				// 全部按 5m 基础价兜底（保守计费）
+				// 全部按短桶基础价兜底（保守计费）
 				cacheCreation5m = max(usage.PromptTokensDetails.CachedCreationTokens, usage.PromptTokensDetails.CacheWriteTokens)
 			}
 		}
@@ -1228,12 +1243,13 @@ func BuildPricingBlob(items []PricingItemInput) (*PricingBlob, error) {
 		}
 		for _, item := range items {
 			blob.Tiers = append(blob.Tiers, pricingTierRow{
-				MinTokens:          item.MinTokens,
-				MaxTokens:          item.MaxTokens,
-				InputPrice:         item.InputPrice,
-				OutputPrice:        item.OutputPrice,
-				CacheReadPrice:     positivePtr(item.CacheReadPrice),
-				CacheCreationPrice: positivePtr(item.CacheCreationPrice),
+				MinTokens:            item.MinTokens,
+				MaxTokens:            item.MaxTokens,
+				InputPrice:           item.InputPrice,
+				OutputPrice:          item.OutputPrice,
+				CacheReadPrice:       positivePtr(item.CacheReadPrice),
+				CacheCreationPrice:   positivePtr(item.CacheCreationPrice),
+				CacheCreation1hPrice: positivePtr(item.CacheCreation1hPrice),
 			})
 		}
 		return blob, nil
@@ -1330,14 +1346,16 @@ func tiersHavePrice(tiers []pricingTierRow) bool {
 
 // pricingTierRow 定价阶梯行（绝对价格）。
 // 逐档缓存价为可选键（omitempty，旧数据缺键 unmarshal 为 nil，无需迁移）：
-// 编辑器逐档缓存价落库于此；计费引擎的缓存 token 计费仍取 blob 顶层锚点缓存价，不读档内字段
+// 编辑器逐档缓存价落库于此，tiered 模式下三项缓存价均按命中档生效（见 effectiveCachePrices），
+// 档内未配置回退 blob 顶层锚点缓存价（锚点 = BuildPricingBlob 的首档）
 type pricingTierRow struct {
-	MinTokens          int64    `json:"min_tokens"`
-	MaxTokens          *int64   `json:"max_tokens"`
-	InputPrice         float64  `json:"input_price"`
-	OutputPrice        float64  `json:"output_price"`
-	CacheReadPrice     *float64 `json:"cache_read_price,omitempty"`
-	CacheCreationPrice *float64 `json:"cache_creation_price,omitempty"`
+	MinTokens            int64    `json:"min_tokens"`
+	MaxTokens            *int64   `json:"max_tokens"`
+	InputPrice           float64  `json:"input_price"`
+	OutputPrice          float64  `json:"output_price"`
+	CacheReadPrice       *float64 `json:"cache_read_price,omitempty"`
+	CacheCreationPrice   *float64 `json:"cache_creation_price,omitempty"`
+	CacheCreation1hPrice *float64 `json:"cache_creation_1h_price,omitempty"`
 }
 
 // effectiveTimeMultiplier 时段乘数归一化：0/负值视为 1.0。
@@ -1348,6 +1366,47 @@ func effectiveTimeMultiplier(p *PricingResult) float64 {
 		return 1.0
 	}
 	return p.TimeMultiplier
+}
+
+// hitTierFor 按完整输入长度命中阶梯档位，命中规则与 calculateTieredCostFromTiersByInput 一致：
+// min_tokens <= tierInputTokens 的档中 min_tokens 最大者，同 min_tokens 时数组靠后者胜。
+// 无任何匹配档（空数组）返回 nil。
+func hitTierFor(tiers []pricingTierRow, tierInputTokens int) *pricingTierRow {
+	var hit *pricingTierRow
+	hitMin := int64(-1)
+	for i := range tiers {
+		tier := &tiers[i]
+		if int64(tierInputTokens) >= tier.MinTokens && tier.MinTokens >= hitMin {
+			hitMin = tier.MinTokens
+			hit = tier
+		}
+	}
+	return hit
+}
+
+// effectiveCachePrices 结算用缓存价三元组（读取 / 5m 创建 / 1h 创建）：
+// tiered 且配置了档位时，三项缓存价均按命中档取价（tierInputTokens 与输入/输出选档同一依据），
+// 档内未配置（nil/0）回退锚点，保证存量阶梯数据（档内无缓存键）价格口径不变、
+// 缓存费用不会静默变免费。其余计费模式直接返回锚点价。
+func effectiveCachePrices(pricing *PricingResult, tierInputTokens int) (read, creation5m, creation1h float64) {
+	read = pricing.CacheReadPrice
+	creation5m = pricing.CacheCreation5mPrice
+	creation1h = pricing.CacheCreation1hPrice
+	if pricing.BillingMode != "tiered" || len(pricing.CustomTiers) == 0 {
+		return
+	}
+	if tier := hitTierFor(pricing.CustomTiers, tierInputTokens); tier != nil {
+		if tier.CacheReadPrice != nil && *tier.CacheReadPrice > 0 {
+			read = *tier.CacheReadPrice
+		}
+		if tier.CacheCreationPrice != nil && *tier.CacheCreationPrice > 0 {
+			creation5m = *tier.CacheCreationPrice
+		}
+		if tier.CacheCreation1hPrice != nil && *tier.CacheCreation1hPrice > 0 {
+			creation1h = *tier.CacheCreation1hPrice
+		}
+	}
+	return
 }
 
 // calculateTieredCostFromTiers 兼容包装：选档依据 = 计费数量自身（tokens 双写）。

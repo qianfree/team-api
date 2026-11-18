@@ -21,34 +21,35 @@ import (
 // ListTenantModels 列出租户已分配的模型
 func (s *sAdmin) ListTenantModels(ctx context.Context, req *v1.TenantModelListReq) (*v1.TenantModelListRes, error) {
 	var results []struct {
-		ID                       int64    `json:"id"`
-		TenantID                 int64    `json:"tenant_id"`
-		ModelID                  int64    `json:"model_id"`
-		Enabled                  bool     `json:"enabled"`
-		BillingMode              *string  `json:"billing_mode"`
-		PerRequestPrice          *float64 `json:"per_request_price"`
-		DiscountRatio            *float64 `json:"discount_ratio"`
-		MaxConcurrency           *int     `json:"max_concurrency"`
-		ChannelScope             string   `json:"channel_scope"`
-		CustomInputPrice         *float64 `json:"custom_input_price"`
-		CustomOutputPrice        *float64 `json:"custom_output_price"`
-		CustomCacheReadPrice     *float64 `json:"custom_cache_read_price"`
-		CustomCacheCreationPrice *float64 `json:"custom_cache_creation_price"`
-		CustomPricingTiers       string   `json:"custom_pricing_tiers"`
-		CustomPricing            string   `json:"custom_pricing"`
-		Multiplier               float64  `json:"multiplier"`
-		PriceNote                *string  `json:"price_note"`
-		DiscountLabel            *string  `json:"discount_label"`
-		PriceChangeNote          *string  `json:"price_change_note"`
-		ModelCode                string   `json:"model_code"`
-		ModelName                string   `json:"model_name"`
-		Category                 string   `json:"category"`
+		ID                         int64    `json:"id"`
+		TenantID                   int64    `json:"tenant_id"`
+		ModelID                    int64    `json:"model_id"`
+		Enabled                    bool     `json:"enabled"`
+		BillingMode                *string  `json:"billing_mode"`
+		PerRequestPrice            *float64 `json:"per_request_price"`
+		DiscountRatio              *float64 `json:"discount_ratio"`
+		MaxConcurrency             *int     `json:"max_concurrency"`
+		ChannelScope               string   `json:"channel_scope"`
+		CustomInputPrice           *float64 `json:"custom_input_price"`
+		CustomOutputPrice          *float64 `json:"custom_output_price"`
+		CustomCacheReadPrice       *float64 `json:"custom_cache_read_price"`
+		CustomCacheCreationPrice   *float64 `json:"custom_cache_creation_price"`
+		CustomCacheCreation1hPrice *float64 `json:"custom_cache_creation_1h_price"`
+		CustomPricingTiers         string   `json:"custom_pricing_tiers"`
+		CustomPricing              string   `json:"custom_pricing"`
+		Multiplier                 float64  `json:"multiplier"`
+		PriceNote                  *string  `json:"price_note"`
+		DiscountLabel              *string  `json:"discount_label"`
+		PriceChangeNote            *string  `json:"price_change_note"`
+		ModelCode                  string   `json:"model_code"`
+		ModelName                  string   `json:"model_name"`
+		Category                   string   `json:"category"`
 	}
 
 	err := dao.MdlTenantModels.Ctx(ctx).
 		LeftJoin("mdl_models ON mdl_tenant_models.model_id = mdl_models.id").
 		Where("mdl_tenant_models.tenant_id", req.TenantID).
-		Fields("mdl_tenant_models.id, mdl_tenant_models.tenant_id, mdl_tenant_models.model_id, mdl_tenant_models.enabled, mdl_tenant_models.billing_mode, mdl_tenant_models.per_request_price, mdl_tenant_models.discount_ratio, mdl_tenant_models.max_concurrency, mdl_tenant_models.channel_scope, mdl_tenant_models.custom_input_price, mdl_tenant_models.custom_output_price, mdl_tenant_models.custom_cache_read_price, mdl_tenant_models.custom_cache_creation_price, mdl_tenant_models.custom_pricing_tiers, mdl_tenant_models.custom_pricing, mdl_tenant_models.multiplier, mdl_tenant_models.price_note, mdl_tenant_models.discount_label, mdl_tenant_models.price_change_note, mdl_models.model_id as model_code, mdl_models.model_name, mdl_models.category").
+		Fields("mdl_tenant_models.id, mdl_tenant_models.tenant_id, mdl_tenant_models.model_id, mdl_tenant_models.enabled, mdl_tenant_models.billing_mode, mdl_tenant_models.per_request_price, mdl_tenant_models.discount_ratio, mdl_tenant_models.max_concurrency, mdl_tenant_models.channel_scope, mdl_tenant_models.custom_input_price, mdl_tenant_models.custom_output_price, mdl_tenant_models.custom_cache_read_price, mdl_tenant_models.custom_cache_creation_price, mdl_tenant_models.custom_cache_creation_1h_price, mdl_tenant_models.custom_pricing_tiers, mdl_tenant_models.custom_pricing, mdl_tenant_models.multiplier, mdl_tenant_models.price_note, mdl_tenant_models.discount_label, mdl_tenant_models.price_change_note, mdl_models.model_id as model_code, mdl_models.model_name, mdl_models.category").
 		OrderAsc("mdl_models.category").
 		OrderAsc("mdl_models.model_id").
 		Scan(&results)
@@ -59,26 +60,27 @@ func (s *sAdmin) ListTenantModels(ctx context.Context, req *v1.TenantModelListRe
 	list := make([]v1.TenantModelItem, 0, len(results))
 	for _, r := range results {
 		item := v1.TenantModelItem{
-			ID:                       r.ID,
-			TenantID:                 r.TenantID,
-			ModelID:                  r.ModelID,
-			ModelCode:                r.ModelCode,
-			ModelName:                r.ModelName,
-			Category:                 r.Category,
-			Enabled:                  r.Enabled,
-			BillingMode:              r.BillingMode,
-			PerRequestPrice:          r.PerRequestPrice,
-			DiscountRatio:            r.DiscountRatio,
-			MaxConcurrency:           r.MaxConcurrency,
-			ChannelScope:             r.ChannelScope,
-			CustomInputPrice:         r.CustomInputPrice,
-			CustomOutputPrice:        r.CustomOutputPrice,
-			CustomCacheReadPrice:     r.CustomCacheReadPrice,
-			CustomCacheCreationPrice: r.CustomCacheCreationPrice,
-			Multiplier:               r.Multiplier,
-			PriceNote:                r.PriceNote,
-			DiscountLabel:            r.DiscountLabel,
-			PriceChangeNote:          r.PriceChangeNote,
+			ID:                         r.ID,
+			TenantID:                   r.TenantID,
+			ModelID:                    r.ModelID,
+			ModelCode:                  r.ModelCode,
+			ModelName:                  r.ModelName,
+			Category:                   r.Category,
+			Enabled:                    r.Enabled,
+			BillingMode:                r.BillingMode,
+			PerRequestPrice:            r.PerRequestPrice,
+			DiscountRatio:              r.DiscountRatio,
+			MaxConcurrency:             r.MaxConcurrency,
+			ChannelScope:               r.ChannelScope,
+			CustomInputPrice:           r.CustomInputPrice,
+			CustomOutputPrice:          r.CustomOutputPrice,
+			CustomCacheReadPrice:       r.CustomCacheReadPrice,
+			CustomCacheCreationPrice:   r.CustomCacheCreationPrice,
+			CustomCacheCreation1hPrice: r.CustomCacheCreation1hPrice,
+			Multiplier:                 r.Multiplier,
+			PriceNote:                  r.PriceNote,
+			DiscountLabel:              r.DiscountLabel,
+			PriceChangeNote:            r.PriceChangeNote,
 		}
 		if r.CustomPricingTiers != "" && r.CustomPricingTiers != "null" && r.CustomPricingTiers != "[]" {
 			var tiers []*v1.PricingTier
@@ -156,7 +158,7 @@ func (s *sAdmin) BatchAssignModels(ctx context.Context, req *v1.TenantModelBatch
 		}
 
 		// API 边界 *float64 → *decimal.Decimal 转换
-		var perRequestPriceDecimal, discountRatioDecimal, customInputPriceDecimal, customOutputPriceDecimal, customCacheReadPriceDecimal, customCacheCreationPriceDecimal *decimal.Decimal
+		var perRequestPriceDecimal, discountRatioDecimal, customInputPriceDecimal, customOutputPriceDecimal, customCacheReadPriceDecimal, customCacheCreationPriceDecimal, customCacheCreation1hPriceDecimal *decimal.Decimal
 		if a.PerRequestPrice != nil {
 			d := billing.NewFromFloat(*a.PerRequestPrice)
 			perRequestPriceDecimal = &d
@@ -181,22 +183,27 @@ func (s *sAdmin) BatchAssignModels(ctx context.Context, req *v1.TenantModelBatch
 			d := billing.NewFromFloat(*a.CustomCacheCreationPrice)
 			customCacheCreationPriceDecimal = &d
 		}
+		if a.CustomCacheCreation1hPrice != nil {
+			d := billing.NewFromFloat(*a.CustomCacheCreation1hPrice)
+			customCacheCreation1hPriceDecimal = &d
+		}
 
 		insertData := do.MdlTenantModels{
-			TenantId:                 req.TenantID,
-			ModelId:                  a.ModelID,
-			Enabled:                  a.Enabled,
-			BillingMode:              a.BillingMode,
-			PerRequestPrice:          perRequestPriceDecimal,
-			DiscountRatio:            discountRatioDecimal,
-			MaxConcurrency:           maxConc,
-			ChannelScope:             a.ChannelScope,
-			CustomInputPrice:         customInputPriceDecimal,
-			CustomOutputPrice:        customOutputPriceDecimal,
-			CustomCacheReadPrice:     customCacheReadPriceDecimal,
-			CustomCacheCreationPrice: customCacheCreationPriceDecimal,
-			CustomPricingTiers:       tiersJSON,
-			Multiplier:               1.0,
+			TenantId:                   req.TenantID,
+			ModelId:                    a.ModelID,
+			Enabled:                    a.Enabled,
+			BillingMode:                a.BillingMode,
+			PerRequestPrice:            perRequestPriceDecimal,
+			DiscountRatio:              discountRatioDecimal,
+			MaxConcurrency:             maxConc,
+			ChannelScope:               a.ChannelScope,
+			CustomInputPrice:           customInputPriceDecimal,
+			CustomOutputPrice:          customOutputPriceDecimal,
+			CustomCacheReadPrice:       customCacheReadPriceDecimal,
+			CustomCacheCreationPrice:   customCacheCreationPriceDecimal,
+			CustomCacheCreation1HPrice: customCacheCreation1hPriceDecimal,
+			CustomPricingTiers:         tiersJSON,
+			Multiplier:                 1.0,
 		}
 		g.Log().Debugf(ctx, "BatchAssignModels: inserting data tenant_id=%v, model_id=%v, enabled=%v, max_concurrency=%v", insertData.TenantId, insertData.ModelId, insertData.Enabled, *maxConc)
 		_, err = dao.MdlTenantModels.Ctx(ctx).Insert(insertData)
@@ -408,6 +415,10 @@ func (s *sAdmin) UpdateTenantModel(ctx context.Context, req *v1.TenantModelUpdat
 	if req.CustomCacheCreationPrice != nil {
 		d := billing.NewFromFloat(**req.CustomCacheCreationPrice)
 		data.CustomCacheCreationPrice = &d
+	}
+	if req.CustomCacheCreation1hPrice != nil {
+		d := billing.NewFromFloat(**req.CustomCacheCreation1hPrice)
+		data.CustomCacheCreation1HPrice = &d
 	}
 	if req.CustomOutputPrice != nil {
 		d := billing.NewFromFloat(**req.CustomOutputPrice)
