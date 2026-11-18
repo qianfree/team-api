@@ -497,7 +497,7 @@ interface OfficialApplyPlan {
 	timeSegmentCount: number // 将原样复制的时段条数
 	paramRuleCount: number // 将原样复制的参数倍率条数
 	target: 'token' | 'per_request' | 'tiered' | 'per_second' // 将写入的我方计费模式
-	tiers: Array<{ min_tokens: number; max_tokens: number | null; input_price: number; output_price: number; cache_read_price: number; cache_creation_price: number }> // tiered 换算结果
+	tiers: Array<{ min_tokens: number; max_tokens: number | null; input_price: number; output_price: number; cache_read_price: number; cache_creation_price: number; cache_creation_1h_price: number }> // tiered 换算结果
 }
 
 // 换算计划：预览表与执行动作共用同一套判断与计算，避免两份逻辑漂移
@@ -559,6 +559,8 @@ function officialApplyPlan(): OfficialApplyPlan {
 			const officialOut = Number(t.output_price) || 0
 			const officialCacheRead = Number(t.cache_read_price) || 0
 			const officialCacheCreation = Number(t.cache_creation_price) || 0
+			// 1h TTL 价逐档参与换算：与计费按命中档取档内价的口径一致（档内为空则回退首档锚点）
+			const officialCacheCreation1h = Number(t.cache_creation_1h_price) || 0
 			plan.rows.push({
 				label: `档位 ${i + 1}（≥${Number(t.min_tokens) || 0} tokens）`,
 				official: officialIn,
@@ -587,6 +589,14 @@ function officialApplyPlan(): OfficialApplyPlan {
 					current: Number(editorItems[i]?.cache_creation_price) || 0,
 				})
 			}
+			if (officialCacheCreation1h > 0) {
+				plan.rows.push({
+					label: `档位 ${i + 1} 缓存创建(1小时)`,
+					official: officialCacheCreation1h,
+					applied: round6(officialCacheCreation1h * d),
+					current: Number(editorItems[i]?.cache_creation_1h_price) || 0,
+				})
+			}
 			plan.tiers.push({
 				min_tokens: Number(t.min_tokens) || 0,
 				max_tokens: i < officialItems.length - 1 ? (t.max_tokens ?? null) : null,
@@ -594,6 +604,7 @@ function officialApplyPlan(): OfficialApplyPlan {
 				output_price: round6(officialOut * d),
 				cache_read_price: round6(officialCacheRead * d),
 				cache_creation_price: round6(officialCacheCreation * d),
+				cache_creation_1h_price: round6(officialCacheCreation1h * d),
 			})
 		}
 		if (!plan.tiers.some((t) => t.input_price > 0 || t.output_price > 0)) {
@@ -608,6 +619,7 @@ function officialApplyPlan(): OfficialApplyPlan {
 			['输出价格', Number(offFirst.output_price) || 0, Number(first.output_price) || 0],
 			['缓存读取', Number(offFirst.cache_read_price) || 0, Number(first.cache_read_price) || 0],
 			['缓存创建', Number(offFirst.cache_creation_price) || 0, Number(first.cache_creation_price) || 0],
+			['缓存创建(1小时)', Number(offFirst.cache_creation_1h_price) || 0, Number(first.cache_creation_1h_price) || 0],
 		]
 		for (const [label, official, current] of dims) {
 			plan.rows.push({ label, official, applied: round6(official * d), current })
@@ -658,6 +670,7 @@ function applyOfficialToPricing() {
 				per_request_price: null,
 				cache_read_price: t.cache_read_price,
 				cache_creation_price: t.cache_creation_price,
+				cache_creation_1h_price: t.cache_creation_1h_price,
 				per_second_prices: null,
 			})
 		}
@@ -673,6 +686,7 @@ function applyOfficialToPricing() {
 		editorItems[0].output_price = plan.rows[1].applied
 		editorItems[0].cache_read_price = plan.rows[2].applied
 		editorItems[0].cache_creation_price = plan.rows[3].applied
+		editorItems[0].cache_creation_1h_price = plan.rows[4].applied
 	}
 	// 时段与参数倍率整体复制（直接克隆行数据，不经载荷往返；乘数是相对结构，不随折扣缩放）
 	if (plan.timeSegmentCount > 0) {
@@ -1149,15 +1163,15 @@ watch(() => props.visible, (val) => {
 							<h3>按量定价</h3>
 							<span class="section-hint">价格单位为 {{ currencySymbol }} / 1M Token</span>
 						</div>
-						<!-- 价格两行布局：基础价 2 个一行，缓存价 3 个一行；输入框固定宽（w-44）不占满弹窗 -->
-						<div class="grid w-fit grid-cols-2 gap-x-4">
+						<!-- 价格两行布局：基础价 2 个一行，缓存价 3 个一行；列宽固定 11rem，各档位输入框等宽对齐 -->
+						<div class="price-grid-2">
 							<AFormItem label="输入价格">
 								<AInputNumber
 									v-model="editorItems[0].input_price"
 									:min="0"
 									:precision="6"
 									placeholder="0"
-									class="w-44"
+									class="w-full"
 								>
 									<template #suffix>{{ currencySymbol }} / 1M</template>
 								</AInputNumber>
@@ -1168,20 +1182,20 @@ watch(() => props.visible, (val) => {
 									:min="0"
 									:precision="6"
 									placeholder="0"
-									class="w-44"
+									class="w-full"
 								>
 									<template #suffix>{{ currencySymbol }} / 1M</template>
 								</AInputNumber>
 							</AFormItem>
 						</div>
-						<div class="grid w-fit grid-cols-2 gap-x-4 md:grid-cols-3">
+						<div class="price-grid-3">
 							<AFormItem label="缓存读取">
 								<AInputNumber
 									v-model="editorItems[0].cache_read_price"
 									:min="0"
 									:precision="6"
 									placeholder="0"
-									class="w-44"
+									class="w-full"
 								>
 									<template #suffix>{{ currencySymbol }} / 1M</template>
 								</AInputNumber>
@@ -1192,7 +1206,7 @@ watch(() => props.visible, (val) => {
 									:min="0"
 									:precision="6"
 									placeholder="0"
-									class="w-44"
+									class="w-full"
 								>
 									<template #suffix>{{ currencySymbol }} / 1M</template>
 								</AInputNumber>
@@ -1203,7 +1217,7 @@ watch(() => props.visible, (val) => {
 									:min="0"
 									:precision="6"
 									placeholder="留空按上方基准价×1.6"
-									class="w-44"
+									class="w-full"
 								>
 									<template #suffix>{{ currencySymbol }} / 1M</template>
 								</AInputNumber>
@@ -1252,7 +1266,7 @@ watch(() => props.visible, (val) => {
 									@click="removeTier(index)"
 								>删除</AButton>
 							</div>
-							<div class="grid grid-cols-2 md:grid-cols-4 gap-x-4">
+							<div class="price-grid-2">
 								<AFormItem label="输入价格">
 									<AInputNumber
 										v-model="tier.input_price"
@@ -1273,6 +1287,8 @@ watch(() => props.visible, (val) => {
 										<template #suffix>{{ currencySymbol }}/1M</template>
 									</AInputNumber>
 								</AFormItem>
+							</div>
+							<div class="price-grid-3">
 								<AFormItem label="缓存读取价格">
 									<AInputNumber
 										v-model="tier.cache_read_price"
@@ -1283,29 +1299,29 @@ watch(() => props.visible, (val) => {
 										<template #suffix>{{ currencySymbol }}/1M</template>
 									</AInputNumber>
 								</AFormItem>
-							<AFormItem label="缓存创建/写入价格">
-								<AInputNumber
-									v-model="tier.cache_creation_price"
-									:min="0"
-									:precision="6"
-									class="w-full"
-								>
-									<template #suffix>{{ currencySymbol }}/1M</template>
-								</AInputNumber>
-							</AFormItem>
-							<!-- 1h TTL 价仅锚点（首档）生效：计费引擎只读首档缓存价，非首档不提供输入 -->
-							<AFormItem v-if="index === 0" label="缓存创建价格(1小时)" extra="仅 Claude 1h TTL 缓存生效，其他模型忽略">
-								<AInputNumber
-									v-model="tier.cache_creation_1h_price"
-									:min="0"
-									:precision="6"
-									placeholder="留空按基准价×1.6"
-									class="w-full"
-								>
-									<template #suffix>{{ currencySymbol }}/1M</template>
-								</AInputNumber>
-							</AFormItem>
-						</div>
+								<AFormItem label="缓存创建/写入价格">
+									<AInputNumber
+										v-model="tier.cache_creation_price"
+										:min="0"
+										:precision="6"
+										class="w-full"
+									>
+										<template #suffix>{{ currencySymbol }}/1M</template>
+									</AInputNumber>
+								</AFormItem>
+								<!-- 1h TTL 价逐档配置：档内填了按命中档生效，留空回退首档锚点价 -->
+								<AFormItem label="缓存创建价格(1小时)" extra="仅 Claude；留空用首档价">
+									<AInputNumber
+										v-model="tier.cache_creation_1h_price"
+										:min="0"
+										:precision="6"
+										placeholder="留空按基准价×1.6"
+										class="w-full"
+									>
+										<template #suffix>{{ currencySymbol }}/1M</template>
+									</AInputNumber>
+								</AFormItem>
+							</div>
 					</div>
 					<AButton type="dashed" long @click="addTier" class="mt-3">+ 添加梯度</AButton>
 				</div>
@@ -1480,53 +1496,92 @@ watch(() => props.visible, (val) => {
 
 			<!-- 官方阶梯定价（与我方阶梯同构：逐档 min/max/输入/输出/缓存价） -->
 			<template v-else-if="officialBillingMode === 'tiered'">
-				<div v-for="(tier, index) in officialItems" :key="index" class="tier-card">
-					<div class="tier-header">
-						<div class="tier-range">
-							<span class="tier-label">第 {{ index + 1 }} 档</span>
-							<AInputNumber v-model="tier.min_tokens" :min="0" :precision="0" placeholder="起始" size="small" class="tier-range-input" />
-							<span class="tier-range-sep">~</span>
-							<AInputNumber v-if="index < officialItems.length - 1" v-model="tier.max_tokens" :min="0" :precision="0" placeholder="上限" size="small" class="tier-range-input" />
-							<span v-else class="tier-range-unlimited" title="末档无上限">无上限</span>
-							<span class="tier-range-unit">tokens</span>
+				<!-- 必须包在 vertical 表单内：AFormItem 脱离 AForm 时走默认 horizontal 布局，
+				     label 与输入框同行会把每列宽度撑成「label+控件」，各档位列宽参差 -->
+				<AForm :model="{}" layout="vertical">
+					<div v-for="(tier, index) in officialItems" :key="index" class="tier-card">
+						<div class="tier-header">
+							<div class="tier-range">
+								<span class="tier-label">第 {{ index + 1 }} 档</span>
+								<AInputNumber v-model="tier.min_tokens" :min="0" :precision="0" placeholder="起始" size="small" class="tier-range-input" />
+								<span class="tier-range-sep">~</span>
+								<AInputNumber v-if="index < officialItems.length - 1" v-model="tier.max_tokens" :min="0" :precision="0" placeholder="上限" size="small" class="tier-range-input" />
+								<span v-else class="tier-range-unlimited" title="末档无上限">无上限</span>
+								<span class="tier-range-unit">tokens</span>
+							</div>
+							<AButton
+								size="mini"
+								status="danger"
+								:disabled="officialItems.length <= 1"
+								@click="removeOfficialTier(index)"
+							>删除</AButton>
 						</div>
-						<AButton
-							size="mini"
-							status="danger"
-							:disabled="officialItems.length <= 1"
-							@click="removeOfficialTier(index)"
-						>删除</AButton>
+						<div class="price-grid-2">
+							<AFormItem label="输入价格">
+								<AInputNumber
+									v-model="tier.input_price"
+									:min="0"
+									:precision="6"
+									placeholder="0"
+									class="w-full"
+								>
+									<template #suffix>{{ currencySymbol }}/1M</template>
+								</AInputNumber>
+							</AFormItem>
+							<AFormItem label="输出价格">
+								<AInputNumber
+									v-model="tier.output_price"
+									:min="0"
+									:precision="6"
+									placeholder="0"
+									class="w-full"
+								>
+									<template #suffix>{{ currencySymbol }}/1M</template>
+								</AInputNumber>
+							</AFormItem>
+						</div>
+						<div class="price-grid-3">
+							<AFormItem label="缓存读取价格">
+								<AInputNumber
+									v-model="tier.cache_read_price"
+									:min="0"
+									:precision="6"
+									class="w-full"
+								>
+									<template #suffix>{{ currencySymbol }}/1M</template>
+								</AInputNumber>
+							</AFormItem>
+							<AFormItem label="缓存创建价格">
+								<AInputNumber
+									v-model="tier.cache_creation_price"
+									:min="0"
+									:precision="6"
+									class="w-full"
+								>
+									<template #suffix>{{ currencySymbol }}/1M</template>
+								</AInputNumber>
+							</AFormItem>
+							<AFormItem label="缓存创建价格(1小时)" extra="仅 Claude；留空用首档价">
+								<AInputNumber
+									v-model="tier.cache_creation_1h_price"
+									:min="0"
+									:precision="6"
+									placeholder="留空按基准价×1.6"
+									class="w-full"
+								>
+									<template #suffix>{{ currencySymbol }}/1M</template>
+								</AInputNumber>
+							</AFormItem>
+						</div>
 					</div>
-					<div class="grid grid-cols-2 md:grid-cols-4 gap-x-4">
-						<AFormItem label="输入价格">
-							<AInputNumber v-model="tier.input_price" :min="0" :precision="6" placeholder="0" class="w-full">
-								<template #suffix>{{ currencySymbol }} / 1M</template>
-							</AInputNumber>
-						</AFormItem>
-						<AFormItem label="输出价格">
-							<AInputNumber v-model="tier.output_price" :min="0" :precision="6" placeholder="0" class="w-full">
-								<template #suffix>{{ currencySymbol }} / 1M</template>
-							</AInputNumber>
-						</AFormItem>
-						<AFormItem label="缓存读取价格">
-							<AInputNumber v-model="tier.cache_read_price" :min="0" :precision="6" class="w-full">
-								<template #suffix>{{ currencySymbol }}/1M</template>
-							</AInputNumber>
-						</AFormItem>
-						<AFormItem label="缓存创建价格">
-							<AInputNumber v-model="tier.cache_creation_price" :min="0" :precision="6" class="w-full">
-								<template #suffix>{{ currencySymbol }}/1M</template>
-							</AInputNumber>
-						</AFormItem>
-					</div>
-				</div>
+				</AForm>
 				<AButton type="dashed" long class="mt-1" @click="addOfficialTier">+ 添加档位</AButton>
 			</template>
 
 			<!-- 官方按量定价 -->
 			<template v-else>
 				<AForm :model="{}" layout="vertical" class="official-token-pricing-form">
-					<div class="grid grid-cols-2 md:grid-cols-4 gap-x-4">
+					<div class="price-grid-2">
 						<AFormItem label="输入价格">
 							<AInputNumber
 								v-model="officialItems[0].input_price"
@@ -1535,7 +1590,7 @@ watch(() => props.visible, (val) => {
 								placeholder="0"
 								class="w-full"
 							>
-								<template #suffix>{{ currencySymbol }} / 1M</template>
+								<template #suffix>{{ currencySymbol }}/1M</template>
 							</AInputNumber>
 						</AFormItem>
 						<AFormItem label="输出价格">
@@ -1546,9 +1601,11 @@ watch(() => props.visible, (val) => {
 								placeholder="0"
 								class="w-full"
 							>
-								<template #suffix>{{ currencySymbol }} / 1M</template>
+								<template #suffix>{{ currencySymbol }}/1M</template>
 							</AInputNumber>
 						</AFormItem>
+					</div>
+					<div class="price-grid-3">
 						<AFormItem label="缓存读取">
 							<AInputNumber
 								v-model="officialItems[0].cache_read_price"
@@ -1557,7 +1614,7 @@ watch(() => props.visible, (val) => {
 								placeholder="0"
 								class="w-full"
 							>
-								<template #suffix>{{ currencySymbol }} / 1M</template>
+								<template #suffix>{{ currencySymbol }}/1M</template>
 							</AInputNumber>
 						</AFormItem>
 						<AFormItem label="缓存创建">
@@ -1568,7 +1625,18 @@ watch(() => props.visible, (val) => {
 								placeholder="0"
 								class="w-full"
 							>
-								<template #suffix>{{ currencySymbol }} / 1M</template>
+								<template #suffix>{{ currencySymbol }}/1M</template>
+							</AInputNumber>
+						</AFormItem>
+						<AFormItem label="缓存创建(1小时)" extra="仅 Claude 1h TTL 缓存生效，其他模型忽略">
+							<AInputNumber
+								v-model="officialItems[0].cache_creation_1h_price"
+								:min="0"
+								:precision="6"
+								placeholder="留空按基准价×1.6"
+								class="w-full"
+							>
+								<template #suffix>{{ currencySymbol }}/1M</template>
 							</AInputNumber>
 						</AFormItem>
 					</div>
@@ -1604,6 +1672,37 @@ watch(() => props.visible, (val) => {
 </template>
 
 <style scoped>
+/*
+ * 价格输入网格：固定列宽（11rem = 176px）而非 w-fit + 1fr。
+ * w-fit 下每列按 max-content 计算，label/提示文案长短不同会让各档位、各行的输入框宽度参差；
+ * 固定列宽保证同一弹窗内所有价格框严格等宽对齐。窄屏回落 2 列，避免 3 列横向溢出。
+ */
+.price-grid-2 {
+	display: grid;
+	grid-template-columns: repeat(2, 11rem);
+	column-gap: 1rem;
+}
+
+.price-grid-3 {
+	display: grid;
+	grid-template-columns: repeat(2, 11rem);
+	column-gap: 1rem;
+}
+
+@media (min-width: 768px) {
+	.price-grid-3 {
+		grid-template-columns: repeat(3, 11rem);
+	}
+}
+
+/* 超窄屏（手机端管理后台）固定列宽放不下时回落等分，避免横向溢出 */
+@media (max-width: 520px) {
+	.price-grid-2,
+	.price-grid-3 {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+}
+
 /* 定价面板 footer：左下角计费模式下拉 + 右侧操作按钮（窄屏自动换行） */
 .pricing-footer {
 	display: flex;
