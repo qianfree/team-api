@@ -452,7 +452,8 @@ func extractReasoningEffort(rawRequest map[string]json.RawMessage) string {
 			BudgetTokens int `json:"budget_tokens"`
 		}
 		if json.Unmarshal(raw, &t) == nil && t.BudgetTokens > 0 {
-			return fmt.Sprintf("budget:%d", t.BudgetTokens) // 最长 budget:2147483647 = 18 字符
+			// budget 为客户端可控的 64 位整数，超长值截断到列宽（防落库失败丢用量日志）
+			return truncateChars(fmt.Sprintf("budget:%d", t.BudgetTokens), 20)
 		}
 	}
 	// Gemini：generationConfig.thinkingConfig（枚举优先于数字预算）
@@ -468,7 +469,7 @@ func extractReasoningEffort(rawRequest map[string]json.RawMessage) string {
 				return truncateChars(g.ThinkingConfig.ThinkingLevel, 20)
 			}
 			if g.ThinkingConfig.ThinkingBudget > 0 {
-				return fmt.Sprintf("budget:%d", g.ThinkingConfig.ThinkingBudget)
+				return truncateChars(fmt.Sprintf("budget:%d", g.ThinkingConfig.ThinkingBudget), 20)
 			}
 		}
 	}
@@ -598,6 +599,9 @@ func settleSuccessfulRequest(
 		// Cache token 明细。cache_creation_tokens 列统一记录「写入缓存的 token」：
 		// Claude 为 cache_creation_input_tokens，OpenAI 为 cache_write_tokens（同一物理事件，
 		// 计费侧 resolveTokenCounts 合并桶按 CacheCreationPrice 计价）。
+		// 两条来源路径互斥填充、相加恒为单次值：原生 Claude 通道只填顶层
+		// CacheCreationTokens（details 不含 CacheWriteTokens）；relaykit 转换路径只填
+		// details.CacheWriteTokens（bridge 不填顶层，防同源双计）。
 		// 5m/1h 分桶列为 TTL 归一双桶（短桶含 GPT 30m、长桶含 GPT 12h，见 common.NormalizeCacheWriteTTL）
 		CacheCreationTokens: usage.CacheCreationTokens +
 			tokenDetailField(usage.PromptTokensDetails, func(d *common.TokenDetails) int { return d.CacheWriteTokens }),

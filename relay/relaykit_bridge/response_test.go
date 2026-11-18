@@ -34,10 +34,12 @@ func TestResponseConverterIDForRoute(t *testing.T) {
 // --- UsageFromConvertedChatResponse ---
 
 func TestUsageFromConvertedChatResponse(t *testing.T) {
+	// 模拟 relaykit Claude→OpenAI 转换器产出的真实形态：
+	// CachedCreationTokens 与 CacheWriteTokens 同值（同一 cache_creation_input_tokens）
 	body, _ := json.Marshal(dto.ChatCompletionResponse{
 		Usage: dto.UsageWithDetails{
 			PromptTokens: 5, CompletionTokens: 3, TotalTokens: 8,
-			PromptTokensDetails:    &dto.TokenDetails{CachedTokens: 2, CachedCreationTokens: 1},
+			PromptTokensDetails:    &dto.TokenDetails{CachedTokens: 2, CachedCreationTokens: 1, CacheWriteTokens: 1},
 			CompletionTokenDetails: &dto.TokenDetails{ReasoningTokens: 4},
 		},
 	})
@@ -46,10 +48,19 @@ func TestUsageFromConvertedChatResponse(t *testing.T) {
 		t.Fatal("expected ok=true")
 	}
 	if usage == nil || usage.PromptTokens != 5 || usage.CompletionTokens != 3 ||
-		usage.CacheCreationTokens != 1 || usage.PromptTokensDetails == nil ||
+		usage.PromptTokensDetails == nil ||
 		usage.PromptTokensDetails.CachedTokens != 2 || usage.CompletionTokenDetails == nil ||
 		usage.CompletionTokenDetails.ReasoningTokens != 4 {
 		t.Errorf("unexpected usage: %+v", usage)
+	}
+	// 回归：顶层 CacheCreationTokens 必须为 0（写入量由 details.CacheWriteTokens 携带）。
+	// 宿主 relay_handler 落库做「顶层 + details.CacheWriteTokens」相加，bridge 填顶层
+	// 会同源双计（cache_creation 日志列翻倍）
+	if usage.CacheCreationTokens != 0 {
+		t.Errorf("CacheCreationTokens = %d, want 0（bridge 不填顶层，防落库双计）", usage.CacheCreationTokens)
+	}
+	if usage.PromptTokensDetails.CacheWriteTokens != 1 {
+		t.Errorf("details.CacheWriteTokens = %d, want 1（写入量唯一携带点）", usage.PromptTokensDetails.CacheWriteTokens)
 	}
 
 	// 畸形 JSON

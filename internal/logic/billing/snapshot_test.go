@@ -765,7 +765,7 @@ func TestGenerateBillingSnapshot_CachePrices1hTiered(t *testing.T) {
 		CacheReadPrice: 0.1, CacheCreationPrice: 3.75,
 		CacheCreation5mPrice: 3.75, CacheCreation1hPrice: 6.0,
 		TenantMultiplier: 1.0, ModelMultiplier: 1.0,
-		CustomTiers: []pricingTierRow{
+		CustomTiers: []PricingTierRow{
 			{MinTokens: 0, MaxTokens: nil, InputPrice: 1, OutputPrice: 2, CacheCreation1hPrice: &p20},
 		},
 	}
@@ -788,7 +788,7 @@ func TestGenerateBillingSnapshot_CachePricesTiered(t *testing.T) {
 		CacheReadPrice: 0.1, CacheCreationPrice: 3.75,
 		CacheCreation5mPrice: 3.75, CacheCreation1hPrice: 6.0,
 		TenantMultiplier: 1.0, ModelMultiplier: 1.0,
-		CustomTiers: []pricingTierRow{
+		CustomTiers: []PricingTierRow{
 			{MinTokens: 0, MaxTokens: nil, InputPrice: 1, OutputPrice: 2},
 			{MinTokens: 100_000, MaxTokens: nil, InputPrice: 1, OutputPrice: 2,
 				CacheReadPrice: &read2, CacheCreationPrice: &create2, CacheCreation1hPrice: &create1h2},

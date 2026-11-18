@@ -440,13 +440,13 @@ func (s *sTenant) convertToMarketplaceItem(ctx context.Context, model *entity.Md
 	}
 
 	// 时段价目：平台基础价 × 时段乘数换算（tiered 用首档价换算，与 buildTiers 首档口径一致）
-	if blob != nil && len(blob.TimeSegments) > 0 {
+	if blob != nil && blob.TimeSegments != nil && len(*blob.TimeSegments) > 0 {
 		var tiers []v1.PricingTierItem
 		if billingMode == "tiered" && len(blob.Tiers) > 0 {
 			tiers = append(tiers, v1.PricingTierItem{InputPrice: blob.Tiers[0].InputPrice, OutputPrice: blob.Tiers[0].OutputPrice})
 		}
 		in, out := baseInput, baseOutput
-		item.TimePrices = buildTimePrices(blob.TimeSegments, billingMode, &in, &out, basePerRequest, tiers, item.PerSecondPrices)
+		item.TimePrices = buildTimePrices(*blob.TimeSegments, billingMode, &in, &out, basePerRequest, tiers, item.PerSecondPrices)
 	}
 
 	return item

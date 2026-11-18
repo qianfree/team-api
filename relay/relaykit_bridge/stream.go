@@ -102,7 +102,6 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 			capturedUsage.PromptTokens = streamChunk.Usage.PromptTokens
 			capturedUsage.CompletionTokens = streamChunk.Usage.CompletionTokens
 			capturedUsage.TotalTokens = streamChunk.Usage.TotalTokens
-			capturedUsage.CacheCreationTokens = convertedCacheCreationTokens(streamChunk.Usage.PromptTokensDetails)
 			capturedUsage.PromptTokensDetails = common.DtoTokenDetailsToCommon(streamChunk.Usage.PromptTokensDetails)
 			capturedUsage.CompletionTokenDetails = common.DtoTokenDetailsToCommon(streamChunk.Usage.CompletionTokenDetails)
 		}
@@ -380,11 +379,13 @@ func streamEventTextLen(c *relayconvert.StreamEvent) int {
 }
 
 // captureDtoUsage 把 StreamEvent 携带的带明细 Usage 累计进宿主 Usage（后到覆盖先到）。
+// 不填顶层 CacheCreationTokens：转换器把写入量同值填进 details.CacheWriteTokens，
+// 宿主 relay_handler 落库时做「顶层 + details.CacheWriteTokens」相加，bridge 再填
+// 顶层会同源双计（翻倍）；写入量统一由 details 键携带。
 func captureDtoUsage(dst *common.Usage, u *dto.UsageWithDetails) {
 	dst.PromptTokens = u.PromptTokens
 	dst.CompletionTokens = u.CompletionTokens
 	dst.TotalTokens = u.TotalTokens
-	dst.CacheCreationTokens = convertedCacheCreationTokens(u.PromptTokensDetails)
 	dst.PromptTokensDetails = common.DtoTokenDetailsToCommon(u.PromptTokensDetails)
 	dst.CompletionTokenDetails = common.DtoTokenDetailsToCommon(u.CompletionTokenDetails)
 }

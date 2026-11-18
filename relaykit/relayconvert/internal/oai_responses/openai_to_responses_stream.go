@@ -650,6 +650,11 @@ func buildResponsesUsageMap(usage *dto.UsageWithDetails) map[string]any {
 		if usage.PromptTokensDetails.CachedTokensDetails != nil {
 			inputDetails["cached_tokens_details"] = usage.PromptTokensDetails.CachedTokensDetails
 		}
+		// cache_write_tokens TTL 细分（官方键 ttl_30m/ttl_12h）：上游报了才透传，
+		// 与宿主 BuildResponsesUsageMap 同构
+		if usage.PromptTokensDetails.CacheWriteTokensDetails != nil {
+			inputDetails["cache_write_tokens_details"] = usage.PromptTokensDetails.CacheWriteTokensDetails
+		}
 	}
 	if usage.CompletionTokenDetails != nil {
 		outputDetails = map[string]any{

@@ -68,8 +68,12 @@ data: {"type":"message_stop"}
 	if usage.CompletionTokens != 7 {
 		t.Errorf("CompletionTokens = %d, want 7", usage.CompletionTokens)
 	}
-	if usage.PromptTokensDetails == nil || usage.PromptTokensDetails.CachedTokens != 4 || usage.CacheCreationTokens != 3 {
-		t.Errorf("cache usage = %+v, want read=4 creation=3", usage)
+	// 缓存明细：读取=4（CachedTokens）、写入=3（details.CacheWriteTokens 唯一携带点，
+	// 顶层 CacheCreationTokens 恒 0——宿主落库做「顶层+details.CacheWriteTokens」相加，
+	// bridge 填顶层会同源双计）
+	if usage.PromptTokensDetails == nil || usage.PromptTokensDetails.CachedTokens != 4 ||
+		usage.PromptTokensDetails.CacheWriteTokens != 3 || usage.CacheCreationTokens != 0 {
+		t.Errorf("cache usage = %+v, want read=4 write(details)=3 toplevel=0", usage)
 	}
 	// 转换后的 prompt 已含缓存（OpenAI 子集语义），计费前须扣减缓存部分避免双重计费
 	if !usage.CacheIncludedInPrompt {

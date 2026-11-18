@@ -18,14 +18,11 @@ const modelsLoading = ref(false)
 const modelsData = ref<any[]>([])
 const allModels = ref<any[]>([])
 
-// 是否存在任一定价覆盖（独立模型表「覆盖」列）：模式/价格/折扣/补丁三键/展示字段
+// 是否存在任一定价覆盖（独立模型表「覆盖」列）：pricing blob 任一键/折扣/展示字段。
+// 后端仅在有覆盖键时回显 pricing 对象（含显式关闭的空数组键）
 function hasAnyOverride(r: any): boolean {
-  if (r.billing_mode || r.discount_ratio) return true
-  if (r.custom_input_price || r.custom_output_price || r.custom_cache_read_price || r.custom_cache_creation_price) return true
-  if (r.per_request_price) return true
-  if (r.custom_pricing_tiers?.length) return true
-  if (Array.isArray(r.custom_time_segments) || Array.isArray(r.custom_param_multipliers)) return true
-  if (r.custom_per_second_prices) return true
+  if (r.pricing && Object.keys(r.pricing).length > 0) return true
+  if (r.discount_ratio) return true
   if (r.price_note || r.discount_label || r.price_change_note) return true
   return false
 }
@@ -48,9 +45,11 @@ const modelColumns: TableColumnData[] = [
   {
     title: '计费', dataIndex: 'billing_mode', width: 80,
     render({ record }) {
-      if (record.billing_mode === 'per_request') return h(Tag, { color: 'purple', size: 'small' }, () => '按次')
-      if (record.billing_mode === 'tiered') return h(Tag, { color: 'orange', size: 'small' }, () => '阶梯')
-      if (record.billing_mode === 'token') return h(Tag, { color: 'cyan', size: 'small' }, () => 'Token')
+      // 覆盖模式取 pricing.billing_mode（租户覆盖键），无覆盖显示「默认」
+      const mode = record.pricing?.billing_mode
+      if (mode === 'per_request') return h(Tag, { color: 'purple', size: 'small' }, () => '按次')
+      if (mode === 'tiered') return h(Tag, { color: 'orange', size: 'small' }, () => '阶梯')
+      if (mode === 'token') return h(Tag, { color: 'cyan', size: 'small' }, () => 'Token')
       return h(Tag, { color: 'arcoblue', size: 'small' }, () => '默认')
     },
   },
@@ -75,10 +74,17 @@ const modelColumns: TableColumnData[] = [
   },
   { title: '版本', dataIndex: 'version', width: 60 },
   {
-    title: '操作', dataIndex: 'actions', width: 160, fixed: 'right',
+    title: '操作', dataIndex: 'actions', width: 200, fixed: 'right',
     render({ record }) {
       return h(Space, { size: 4 }, () => [
         h(Button, { size: 'small', onClick: () => openPricingModal(record) }, () => '定价'),
+        // 快速折扣：一行已配专属价时禁用（互斥，后端同样拒绝并存）
+        h(Button, {
+          size: 'small',
+          disabled: recordHasCustomPrice(record),
+          title: recordHasCustomPrice(record) ? '该模型已配置专属价（一口价），不可叠加折扣' : '在平台价基础上打折',
+          onClick: () => openQuickDiscount(record),
+        }, () => '折扣'),
         h(Popconfirm, { content: '确定移除该模型？', onOk: () => removeModel(record) }, () =>
           h(Button, { size: 'small', status: 'danger' }, () => '移除')
         ),
@@ -92,8 +98,11 @@ async function fetchTenantModels() {
   try {
     const res: any = await request.get(`/admin/tenants/${props.tenantId}/models`)
     const list = res.data?.data?.list || res.data?.list || []
-    // 「覆盖」列标记注入（响应不含 _override，前端按覆盖字段推导）
-    for (const row of list) row._override = hasAnyOverride(row)
+    // 「覆盖」列标记注入（响应不含 _override，前端按覆盖字段推导）；卡片计费字段同理
+    for (const row of list) {
+      row._override = hasAnyOverride(row)
+      row._billingMode = row.pricing?.billing_mode ? String(row.pricing.billing_mode) : '默认'
+    }
     modelsData.value = list
   } catch {
   } finally {
@@ -123,6 +132,54 @@ function openPricingModal(record: any) {
 
 function onPricingSaved() {
   fetchTenantModels()
+}
+
+// === 快速折扣（轻量弹窗：平台价 × 折扣，与专属价互斥）===
+const showQuickDiscount = ref(false)
+const quickSaving = ref(false)
+const quickRatio = ref<number | null>(null)
+const quickPresets = [0.95, 0.9, 0.85, 0.8, 0.5]
+
+// 行是否已配专属价（pricing blob 含价格键：五价/按次/阶梯/矩阵）——折扣互斥判定
+function recordHasCustomPrice(r: any): boolean {
+  const p = r?.pricing
+  if (!p) return false
+  return ['input_price', 'output_price', 'cache_read_price', 'cache_creation_price', 'cache_creation_1h_price', 'price', 'tiers', 'prices'].some((k) => {
+    const v = p[k]
+    if (Array.isArray(v)) return v.length > 0
+    if (v !== null && typeof v === 'object') return Object.keys(v).length > 0
+    return v !== null && v !== undefined && v !== ''
+  })
+}
+
+function openQuickDiscount(record: any) {
+  pricingModel.value = record
+  quickRatio.value = record.discount_ratio || null
+  showQuickDiscount.value = true
+}
+
+async function saveQuickDiscount() {
+  const record = pricingModel.value
+  if (!record) return
+  if ((quickRatio.value ?? 0) <= 0 || (quickRatio.value ?? 0) > 1) {
+    Message.warning('请选择或输入折扣比例（0.01 ~ 1，如 0.8 = 8折）')
+    return
+  }
+  quickSaving.value = true
+  try {
+    // 只动折扣维度；pricing 覆盖不携带（后端省略=不动）
+    await request.put(`/admin/tenants/${props.tenantId}/models/${record.model_id}`, {
+      discount_ratio: quickRatio.value,
+      version: record.version,
+    })
+    Message.success(`已设置 ${(quickRatio.value! * 100).toFixed(0)}% 折扣`)
+    showQuickDiscount.value = false
+    fetchTenantModels()
+  } catch {
+    // 拦截器统一提示
+  } finally {
+    quickSaving.value = false
+  }
 }
 
 // === 分配模型弹窗 ===
@@ -351,7 +408,7 @@ defineExpose({ openPreviewModal })
       card-title-key="model_code"
       card-subtitle-key="model_name"
       card-badge-key="enabled"
-      :card-fields="['category', 'billing_mode', 'discount_ratio', 'max_concurrency', 'version']"
+      :card-fields="['category', '_billingMode', 'discount_ratio', 'max_concurrency', 'version']"
     />
     <div class="table-footer">
       <TableStats :total="modelsData.length" />
@@ -419,6 +476,41 @@ defineExpose({ openPreviewModal })
     :model="pricingModel"
     @saved="onPricingSaved"
   />
+
+  <!-- 快速折扣弹窗：平台价 × 折扣（与专属价互斥，专属价行入口已禁用） -->
+  <AModal
+    :visible="showQuickDiscount"
+    :width="'min(420px, 94vw)'"
+    :mask-closable="false"
+    simple
+    @cancel="showQuickDiscount = false"
+    @ok="saveQuickDiscount"
+    :ok-loading="quickSaving"
+    ok-text="保存折扣"
+  >
+    <template #title>快速折扣 - {{ pricingModel?.model_code }}</template>
+    <div style="font-size: 12px; color: var(--color-text-3); margin-bottom: 8px">
+      最终价 = 平台定价 × 折扣比例（全模型价格维度统一生效）
+    </div>
+    <div style="display: flex; gap: 8px; margin-bottom: 12px">
+      <Button
+        v-for="d in quickPresets"
+        :key="d"
+        size="small"
+        :type="quickRatio === d ? 'primary' : 'outline'"
+        @click="quickRatio = d"
+      >{{ d === 0.95 ? '95折' : d === 0.85 ? '85折' : `${d * 10}折` }}</Button>
+    </div>
+    <AInputNumber
+      v-model="quickRatio"
+      :min="0.01"
+      :max="1"
+      :step="0.05"
+      :precision="2"
+      placeholder="自定义折扣，如 0.8 = 8折"
+      style="width: 100%"
+    />
+  </AModal>
 </template>
 
 <style scoped>

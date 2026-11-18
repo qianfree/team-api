@@ -71,14 +71,14 @@ func TestCalculateTieredCostFromTiers_EmptyTiers(t *testing.T) {
 	if got != 0 {
 		t.Errorf("expected 0 for nil tiers, got %f", got)
 	}
-	got = calculateTieredCostFromTiers([]pricingTierRow{}, 1000, true)
+	got = calculateTieredCostFromTiers([]PricingTierRow{}, 1000, true)
 	if got != 0 {
 		t.Errorf("expected 0 for empty tiers, got %f", got)
 	}
 }
 
 func TestCalculateTieredCostFromTiers_ZeroOrNegativeTokens(t *testing.T) {
-	tiers := []pricingTierRow{
+	tiers := []PricingTierRow{
 		{MinTokens: 0, MaxTokens: ptrInt64(100_000), InputPrice: 5.0, OutputPrice: 15.0},
 	}
 	for _, tokens := range []int{0, -1, -1000} {
@@ -90,7 +90,7 @@ func TestCalculateTieredCostFromTiers_ZeroOrNegativeTokens(t *testing.T) {
 }
 
 func TestCalculateTieredCostFromTiers_SingleTier_WithMax(t *testing.T) {
-	tiers := []pricingTierRow{
+	tiers := []PricingTierRow{
 		{MinTokens: 0, MaxTokens: ptrInt64(100_000), InputPrice: 5.0, OutputPrice: 15.0},
 	}
 
@@ -114,7 +114,7 @@ func TestCalculateTieredCostFromTiers_SingleTier_WithMax(t *testing.T) {
 }
 
 func TestCalculateTieredCostFromTiers_SingleTier_NilMax(t *testing.T) {
-	tiers := []pricingTierRow{
+	tiers := []PricingTierRow{
 		{MinTokens: 0, MaxTokens: nil, InputPrice: 10.0, OutputPrice: 30.0},
 	}
 
@@ -126,7 +126,7 @@ func TestCalculateTieredCostFromTiers_SingleTier_NilMax(t *testing.T) {
 }
 
 func TestCalculateTieredCostFromTiers_TwoTiers(t *testing.T) {
-	tiers := []pricingTierRow{
+	tiers := []PricingTierRow{
 		{MinTokens: 0, MaxTokens: ptrInt64(100_000), InputPrice: 5.0, OutputPrice: 15.0},
 		{MinTokens: 100_000, MaxTokens: ptrInt64(500_000), InputPrice: 3.0, OutputPrice: 10.0},
 	}
@@ -147,7 +147,7 @@ func TestCalculateTieredCostFromTiers_TwoTiers(t *testing.T) {
 func TestCalculateTieredCostFromTiers_ThreeTiers_WithOpenEnd(t *testing.T) {
 	max128 := int64(128_000)
 	max1M := int64(1_000_000)
-	tiers := []pricingTierRow{
+	tiers := []PricingTierRow{
 		{MinTokens: 0, MaxTokens: &max128, InputPrice: 3.0, OutputPrice: 15.0},
 		{MinTokens: max128, MaxTokens: &max1M, InputPrice: 2.0, OutputPrice: 10.0},
 		{MinTokens: max1M, MaxTokens: nil, InputPrice: 1.0, OutputPrice: 5.0},
@@ -167,7 +167,7 @@ func TestCalculateTieredCostFromTiers_ThreeTiers_WithOpenEnd(t *testing.T) {
 }
 
 func TestCalculateTieredCostFromTiers_ExactBoundary(t *testing.T) {
-	tiers := []pricingTierRow{
+	tiers := []PricingTierRow{
 		{MinTokens: 0, MaxTokens: ptrInt64(1000), InputPrice: 5.0, OutputPrice: 15.0},
 		{MinTokens: 1000, MaxTokens: ptrInt64(5000), InputPrice: 3.0, OutputPrice: 10.0},
 	}
@@ -182,7 +182,7 @@ func TestCalculateTieredCostFromTiers_ExactBoundary(t *testing.T) {
 }
 
 func TestCalculateTieredCostFromTiers_InputVsOutput(t *testing.T) {
-	tiers := []pricingTierRow{
+	tiers := []PricingTierRow{
 		{MinTokens: 0, MaxTokens: ptrInt64(100_000), InputPrice: 5.0, OutputPrice: 15.0},
 	}
 
@@ -197,7 +197,7 @@ func TestCalculateTieredCostFromTiers_InputVsOutput(t *testing.T) {
 }
 
 func TestCalculateTieredCostFromTiers_SkipDegenerateTier(t *testing.T) {
-	tiers := []pricingTierRow{
+	tiers := []PricingTierRow{
 		{MinTokens: 0, MaxTokens: ptrInt64(1000), InputPrice: 5.0, OutputPrice: 15.0},
 		{MinTokens: 1000, MaxTokens: ptrInt64(1000), InputPrice: 99.0, OutputPrice: 99.0},
 		{MinTokens: 1000, MaxTokens: ptrInt64(5000), InputPrice: 3.0, OutputPrice: 10.0},
@@ -209,7 +209,7 @@ func TestCalculateTieredCostFromTiers_SkipDegenerateTier(t *testing.T) {
 }
 
 func TestCalculateTieredCostFromTiers_TokensExceedAllTiers(t *testing.T) {
-	tiers := []pricingTierRow{
+	tiers := []PricingTierRow{
 		{MinTokens: 0, MaxTokens: ptrInt64(1000), InputPrice: 5.0, OutputPrice: 15.0},
 		{MinTokens: 1000, MaxTokens: ptrInt64(5000), InputPrice: 3.0, OutputPrice: 10.0},
 	}
@@ -220,7 +220,7 @@ func TestCalculateTieredCostFromTiers_TokensExceedAllTiers(t *testing.T) {
 }
 
 func TestCalculateTieredCostFromTiers_SingleToken(t *testing.T) {
-	tiers := []pricingTierRow{
+	tiers := []PricingTierRow{
 		{MinTokens: 0, MaxTokens: ptrInt64(100_000), InputPrice: 30.0, OutputPrice: 60.0},
 	}
 	got := calculateTieredCostFromTiers(tiers, 1, true)
@@ -228,7 +228,7 @@ func TestCalculateTieredCostFromTiers_SingleToken(t *testing.T) {
 }
 
 func TestCalculateTieredCostFromTiers_ZeroPrice(t *testing.T) {
-	tiers := []pricingTierRow{
+	tiers := []PricingTierRow{
 		{MinTokens: 0, MaxTokens: ptrInt64(100_000), InputPrice: 0.0, OutputPrice: 0.0},
 	}
 	got := calculateTieredCostFromTiers(tiers, 50_000, true)
@@ -239,7 +239,7 @@ func TestCalculateTieredCostFromTiers_ZeroPrice(t *testing.T) {
 
 func TestCalculateTieredCostFromTiers_MixedZeroAndNonZeroTiers(t *testing.T) {
 	// First tier free, second tier paid
-	tiers := []pricingTierRow{
+	tiers := []PricingTierRow{
 		{MinTokens: 0, MaxTokens: ptrInt64(10_000), InputPrice: 0.0, OutputPrice: 0.0},
 		{MinTokens: 10_000, MaxTokens: ptrInt64(100_000), InputPrice: 5.0, OutputPrice: 15.0},
 	}
@@ -256,7 +256,7 @@ func TestCalculateTieredCostFromTiers_MixedZeroAndNonZeroTiers(t *testing.T) {
 func TestCalculateTieredCostFromTiers_TableDriven(t *testing.T) {
 	max1K := int64(1000)
 	max5K := int64(5000)
-	tiers := []pricingTierRow{
+	tiers := []PricingTierRow{
 		{MinTokens: 0, MaxTokens: &max1K, InputPrice: 10.0, OutputPrice: 30.0},
 		{MinTokens: max1K, MaxTokens: &max5K, InputPrice: 5.0, OutputPrice: 15.0},
 		{MinTokens: max5K, MaxTokens: nil, InputPrice: 2.0, OutputPrice: 8.0},
@@ -290,7 +290,7 @@ func TestCalculateTieredCostFromTiers_TableDriven(t *testing.T) {
 // TestCalculateTieredCostFromTiersByInput 选档依据与计费数量分离语义：
 // 档位由完整输入长度（tierInputTokens）决定，计费按实际 token 数（tokens）。
 func TestCalculateTieredCostFromTiersByInput(t *testing.T) {
-	tiers := []pricingTierRow{
+	tiers := []PricingTierRow{
 		{MinTokens: 0, MaxTokens: ptrInt64(100_000), InputPrice: 5.0, OutputPrice: 15.0},
 		{MinTokens: 100_000, MaxTokens: nil, InputPrice: 3.0, OutputPrice: 10.0},
 	}
@@ -352,18 +352,18 @@ func TestValidatePricingConfigured(t *testing.T) {
 		},
 		{
 			name:    "tiered 双零但有自定义阶梯放行",
-			pricing: &PricingResult{BillingMode: "tiered", CustomTiers: []pricingTierRow{{MinTokens: 0, InputPrice: 1.0}}},
+			pricing: &PricingResult{BillingMode: "tiered", CustomTiers: []PricingTierRow{{MinTokens: 0, InputPrice: 1.0}}},
 			wantErr: false,
 		},
 		{
 			// 平台阶梯兜底使 CustomTiers 恒非空，全 0 价阶梯不得视为「已配置」放行（免费使用）
 			name:    "tiered 双零且阶梯全 0 价拒绝",
-			pricing: &PricingResult{BillingMode: "tiered", CustomTiers: []pricingTierRow{{MinTokens: 0, InputPrice: 0, OutputPrice: 0}, {MinTokens: 100, InputPrice: 0, OutputPrice: 0}}},
+			pricing: &PricingResult{BillingMode: "tiered", CustomTiers: []PricingTierRow{{MinTokens: 0, InputPrice: 0, OutputPrice: 0}, {MinTokens: 100, InputPrice: 0, OutputPrice: 0}}},
 			wantErr: true,
 		},
 		{
 			name:    "tiered 双零但阶梯任一档有正价放行",
-			pricing: &PricingResult{BillingMode: "tiered", CustomTiers: []pricingTierRow{{MinTokens: 0, InputPrice: 0, OutputPrice: 0}, {MinTokens: 100, OutputPrice: 10.0}}},
+			pricing: &PricingResult{BillingMode: "tiered", CustomTiers: []PricingTierRow{{MinTokens: 0, InputPrice: 0, OutputPrice: 0}, {MinTokens: 100, OutputPrice: 10.0}}},
 			wantErr: false,
 		},
 		{
@@ -629,7 +629,7 @@ func TestComputeCost_WithTimeMultiplier(t *testing.T) {
 		TenantMultiplier: 1.0,
 		TimeMultiplier:   0.5,
 		Currency:         "USD",
-		CustomTiers: []pricingTierRow{
+		CustomTiers: []PricingTierRow{
 			{MinTokens: 0, MaxTokens: ptrInt64(100_000), InputPrice: 5.0, OutputPrice: 15.0},
 			{MinTokens: 100_000, MaxTokens: nil, InputPrice: 3.0, OutputPrice: 10.0},
 		},
@@ -645,7 +645,7 @@ func TestComputeCost_TieredMode_WithCustomTiers(t *testing.T) {
 		BillingMode:      "tiered",
 		TenantMultiplier: 1.0,
 		Currency:         "USD",
-		CustomTiers: []pricingTierRow{
+		CustomTiers: []PricingTierRow{
 			{MinTokens: 0, MaxTokens: ptrInt64(100_000), InputPrice: 5.0, OutputPrice: 15.0},
 			{MinTokens: 100_000, MaxTokens: nil, InputPrice: 3.0, OutputPrice: 10.0},
 		},
@@ -671,7 +671,7 @@ func TestComputeCost_TieredMode_CacheTokensCountTowardTier(t *testing.T) {
 			TenantMultiplier: 1.0,
 			Currency:         "USD",
 			CacheReadPrice:   1.0,
-			CustomTiers: []pricingTierRow{
+			CustomTiers: []PricingTierRow{
 				{MinTokens: 0, MaxTokens: ptrInt64(100_000), InputPrice: 5.0, OutputPrice: 15.0},
 				{MinTokens: 100_000, MaxTokens: nil, InputPrice: 3.0, OutputPrice: 10.0},
 			},
@@ -1059,38 +1059,37 @@ func TestResolveTokenCounts_CacheWriteMergedBucket(t *testing.T) {
 // 判定按计费模式收窄——惰性字段（如 token 模式下遗留的按次单价）不构成跳过条件；
 // per_second/special 下仅覆盖按秒矩阵（补丁 prices）才构成一口价，未覆盖时倍率仍是折扣唯一手段
 func TestHasTenantCustomPrice(t *testing.T) {
-	f := func(v float64) *float64 { return &v }
 	tests := []struct {
-		name  string
-		tm    *tenantModelRow
-		mode  string
-		patch *TenantPricingPatch
-		want  bool
+		name string
+		tm   *tenantModelRow
+		mode string
+		want bool
 	}{
-		{"nil 行", nil, "token", nil, false},
-		{"空行", &tenantModelRow{}, "token", nil, false},
-		{"自定义输入价", &tenantModelRow{CustomInputPrice: f(1.8)}, "token", nil, true},
-		{"自定义输出价", &tenantModelRow{CustomOutputPrice: f(1.8)}, "token", nil, true},
-		{"自定义缓存读价", &tenantModelRow{CustomCacheReadPrice: f(0.1)}, "token", nil, true},
-		{"自定义缓存写价", &tenantModelRow{CustomCacheCreationPrice: f(0.3)}, "token", nil, true},
-		{"自定义长时缓存创建价", &tenantModelRow{CustomCacheCreation1hPrice: f(0.4)}, "token", nil, true},
-		{"零值自定义价不算", &tenantModelRow{CustomInputPrice: f(0)}, "token", nil, false},
-		{"tiered 自定义阶梯", &tenantModelRow{CustomPricingTiers: `[{"min_tokens":0}]`}, "tiered", nil, true},
-		{"tiered 空阶梯", &tenantModelRow{CustomPricingTiers: "[]"}, "tiered", nil, false},
-		{"tiered null 阶梯", &tenantModelRow{CustomPricingTiers: "null"}, "tiered", nil, false},
-		{"tiered 自定义缓存价仍算", &tenantModelRow{CustomCacheReadPrice: f(0.1)}, "tiered", nil, true},
-		{"per_request 自定义按次价", &tenantModelRow{PerRequestPrice: f(0.5)}, "per_request", nil, true},
-		{"per_request 遗留 token 价忽略", &tenantModelRow{CustomInputPrice: f(2)}, "per_request", nil, false},
-		{"token 遗留按次价忽略", &tenantModelRow{PerRequestPrice: f(0.5)}, "token", nil, false},
-		{"per_second 全部忽略", &tenantModelRow{CustomInputPrice: f(2), CustomOutputPrice: f(3), CustomCacheReadPrice: f(0.1), PerRequestPrice: f(0.5)}, "per_second", nil, false},
-		{"special 全部忽略", &tenantModelRow{CustomInputPrice: f(2)}, BillingModeSpecial, nil, false},
-		{"per_second 矩阵覆盖一口价", &tenantModelRow{}, "per_second", &TenantPricingPatch{Prices: map[string]float64{"720p": 0.1, "*": 0.2}}, true},
-		{"special 矩阵覆盖一口价", &tenantModelRow{}, BillingModeSpecial, &TenantPricingPatch{Prices: map[string]float64{"*": 0.2}}, true},
-		{"per_second 仅时段覆盖不算一口价", &tenantModelRow{}, "per_second", &TenantPricingPatch{TimeSegments: &[]TimeSegment{{Name: "夜间"}}}, false},
+		{"nil 行", nil, "token", false},
+		{"空行", &tenantModelRow{}, "token", false},
+		{"自定义输入价", &tenantModelRow{CustomPricing: `{"input_price":1.8}`}, "token", true},
+		{"自定义输出价", &tenantModelRow{CustomPricing: `{"output_price":1.8}`}, "token", true},
+		{"自定义缓存读价", &tenantModelRow{CustomPricing: `{"cache_read_price":0.1}`}, "token", true},
+		{"自定义缓存写价", &tenantModelRow{CustomPricing: `{"cache_creation_price":0.3}`}, "token", true},
+		{"自定义长时缓存创建价", &tenantModelRow{CustomPricing: `{"cache_creation_1h_price":0.4}`}, "token", true},
+		{"零值自定义价不算", &tenantModelRow{}, "token", false},
+		{"tiered 自定义阶梯", &tenantModelRow{CustomPricing: `{"tiers":[{"min_tokens":0}]}`}, "tiered", true},
+		{"tiered 空阶梯", &tenantModelRow{}, "tiered", false},
+		{"tiered null 阶梯", &tenantModelRow{}, "tiered", false},
+		{"tiered 自定义缓存价仍算", &tenantModelRow{CustomPricing: `{"cache_read_price":0.1}`}, "tiered", true},
+		{"per_request 自定义按次价", &tenantModelRow{CustomPricing: `{"price":0.5}`}, "per_request", true},
+		{"per_request 遗留 token 价忽略", &tenantModelRow{CustomPricing: `{"input_price":2}`}, "per_request", false},
+		{"token 遗留按次价忽略", &tenantModelRow{CustomPricing: `{"price":0.5}`}, "token", false},
+		{"per_second 全部忽略", &tenantModelRow{CustomPricing: `{"input_price":2,"output_price":3,"cache_read_price":0.1,"price":0.5}`}, "per_second", false},
+		{"special 全部忽略", &tenantModelRow{CustomPricing: `{"input_price":2}`}, BillingModeSpecial, false},
+		{"per_second 矩阵覆盖一口价", &tenantModelRow{CustomPricing: `{"prices":{"720p":0.1,"*":0.2}}`}, "per_second", true},
+		{"special 矩阵覆盖一口价", &tenantModelRow{CustomPricing: `{"prices":{"*":0.2}}`}, BillingModeSpecial, true},
+		{"per_second 仅时段覆盖不算一口价", &tenantModelRow{CustomPricing: `{"time_segments":[{"name":"夜间"}]}`}, "per_second", false},
+		{"blob 输入价（新存储形态）", &tenantModelRow{CustomPricing: `{"input_price":1.8}`}, "token", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := hasTenantCustomPrice(tt.tm, tt.mode, tt.patch); got != tt.want {
+			if got := hasTenantCustomPrice(buildTenantOverrideView(tt.tm), tt.mode); got != tt.want {
 				t.Errorf("hasTenantCustomPrice(%s) = %v, want %v", tt.mode, got, tt.want)
 			}
 		})
@@ -1104,25 +1103,25 @@ func TestApplyTenantModelDiscount(t *testing.T) {
 		name                          string
 		tm                            *tenantModelRow
 		mode                          string
-		patch                         *TenantPricingPatch
 		wantMul, wantRatio            float64
 		wantCustomPriced, wantRatioEx bool
 	}{
-		{"nil 行", nil, "token", nil, 1, 1, false, false},
-		{"未启用行", &tenantModelRow{DiscountRatio: f(0.9)}, "token", nil, 1, 1, false, false},
-		{"全空行", &tenantModelRow{Enabled: true}, "token", nil, 1, 1, false, false},
-		{"discount_ratio 0.9", &tenantModelRow{Enabled: true, DiscountRatio: f(0.9)}, "token", nil, 0.9, 0.9, false, true},
-		{"显式 discount_ratio=1.0（不打折）", &tenantModelRow{Enabled: true, DiscountRatio: f(1.0)}, "token", nil, 1, 1, false, true},
-		{"multiplier 1.2（加价）", &tenantModelRow{Enabled: true, Multiplier: f(1.2)}, "token", nil, 1.2, 1.2, false, false},
-		{"discount_ratio 优先于 multiplier", &tenantModelRow{Enabled: true, DiscountRatio: f(0.9), Multiplier: f(1.2)}, "token", nil, 0.9, 0.9, false, true},
-		{"一口价行跳过折扣", &tenantModelRow{Enabled: true, CustomInputPrice: f(1.8), DiscountRatio: f(0.9)}, "token", nil, 1, 1, true, false},
-		{"per_second 保留 multiplier（无逐格价）", &tenantModelRow{Enabled: true, CustomInputPrice: f(2), Multiplier: f(0.8)}, "per_second", nil, 0.8, 0.8, false, false},
-		{"per_second 矩阵覆盖跳过折扣（一口价）", &tenantModelRow{Enabled: true, Multiplier: f(0.8)}, "per_second", &TenantPricingPatch{Prices: map[string]float64{"*": 0.2}}, 1, 1, true, false},
-		{"per_request 一口价（自定义按次价）", &tenantModelRow{Enabled: true, PerRequestPrice: f(0.5), DiscountRatio: f(0.9)}, "per_request", nil, 1, 1, true, false},
+		{"nil 行", nil, "token", 1, 1, false, false},
+		{"未启用行", &tenantModelRow{DiscountRatio: f(0.9)}, "token", 1, 1, false, false},
+		{"全空行", &tenantModelRow{Enabled: true}, "token", 1, 1, false, false},
+		{"discount_ratio 0.9", &tenantModelRow{Enabled: true, DiscountRatio: f(0.9)}, "token", 0.9, 0.9, false, true},
+		{"显式 discount_ratio=1.0（不打折）", &tenantModelRow{Enabled: true, DiscountRatio: f(1.0)}, "token", 1, 1, false, true},
+		{"multiplier 1.2（加价）", &tenantModelRow{Enabled: true, Multiplier: f(1.2)}, "token", 1.2, 1.2, false, false},
+		{"discount_ratio 优先于 multiplier", &tenantModelRow{Enabled: true, DiscountRatio: f(0.9), Multiplier: f(1.2)}, "token", 0.9, 0.9, false, true},
+		{"一口价行跳过折扣", &tenantModelRow{Enabled: true, CustomPricing: `{"input_price":1.8}`, DiscountRatio: f(0.9)}, "token", 1, 1, true, false},
+		{"blob 一口价行跳过折扣", &tenantModelRow{Enabled: true, CustomPricing: `{"input_price":1.8}`, DiscountRatio: f(0.9)}, "token", 1, 1, true, false},
+		{"per_second 保留 multiplier（无逐格价）", &tenantModelRow{Enabled: true, CustomPricing: `{"input_price":2}`, Multiplier: f(0.8)}, "per_second", 0.8, 0.8, false, false},
+		{"per_second 矩阵覆盖跳过折扣（一口价）", &tenantModelRow{Enabled: true, Multiplier: f(0.8), CustomPricing: `{"prices":{"*":0.2}}`}, "per_second", 1, 1, true, false},
+		{"per_request 一口价（自定义按次价）", &tenantModelRow{Enabled: true, CustomPricing: `{"price":0.5}`, DiscountRatio: f(0.9)}, "per_request", 1, 1, true, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mul, ratio, customPriced, ratioEx := applyTenantModelDiscount(tt.tm, tt.mode, tt.patch)
+			mul, ratio, customPriced, ratioEx := applyTenantModelDiscount(tt.tm, tt.mode, buildTenantOverrideView(tt.tm))
 			if mul != tt.wantMul || ratio != tt.wantRatio || customPriced != tt.wantCustomPriced || ratioEx != tt.wantRatioEx {
 				t.Errorf("applyTenantModelDiscount() = (mul=%v ratio=%v customPriced=%v ratioExplicit=%v), want (%v %v %v %v)",
 					mul, ratio, customPriced, ratioEx, tt.wantMul, tt.wantRatio, tt.wantCustomPriced, tt.wantRatioEx)
@@ -1277,7 +1276,7 @@ func TestComputeCost_TieredMode_CacheCreation1hPerTier(t *testing.T) {
 		CacheCreationPrice:   18.75,
 		CacheCreation5mPrice: 18.75,
 		CacheCreation1hPrice: 6.0, // 锚点价：仅作档内缺省时的回退
-		CustomTiers: []pricingTierRow{
+		CustomTiers: []PricingTierRow{
 			{MinTokens: 0, MaxTokens: ptrInt64(100_000), InputPrice: 5, OutputPrice: 15, CacheCreation1hPrice: &p20},
 			{MinTokens: 100_000, MaxTokens: nil, InputPrice: 3, OutputPrice: 10, CacheCreation1hPrice: &p144},
 		},
@@ -1319,7 +1318,7 @@ func TestComputeCost_TieredMode_CacheReadAnd5mPerTier(t *testing.T) {
 		CacheReadPrice:       0.1, // 锚点价：仅作档内缺省时的回退
 		CacheCreationPrice:   3.75,
 		CacheCreation5mPrice: 3.75,
-		CustomTiers: []pricingTierRow{
+		CustomTiers: []PricingTierRow{
 			{MinTokens: 0, MaxTokens: ptrInt64(100_000), InputPrice: 5, OutputPrice: 15},
 			{MinTokens: 100_000, MaxTokens: nil, InputPrice: 3, OutputPrice: 10, CacheReadPrice: &read2, CacheCreationPrice: &create2},
 		},
@@ -1401,5 +1400,51 @@ func TestComputeCost_OpenAITTLDetailsNormalized(t *testing.T) {
 	assertFloat(t, cb.TotalCost, 0.01515, "TotalCost (OpenAI 官方文档示例锚点)")
 	if cb.InputTokens != 1000 {
 		t.Errorf("InputTokens = %d, want 1000", cb.InputTokens)
+	}
+}
+
+// TestBuildTenantOverrideView 覆盖归一视图构造（blob-only：000030 已删扁平列）：
+// 价格键解析、旧 TenantPricingPatch 三键同形兼容、显式关闭三态、空/nil 安全
+func TestBuildTenantOverrideView(t *testing.T) {
+	// 价格键 + 显式关闭时段
+	tm := &tenantModelRow{
+		CustomPricing: `{"input_price":1.5,"time_segments":[]}`,
+	}
+	v := buildTenantOverrideView(tm)
+	if v.InputPrice == nil || *v.InputPrice != 1.5 {
+		t.Errorf("InputPrice = %v, want 1.5（blob 键）", v.InputPrice)
+	}
+	if v.OutputPrice != nil {
+		t.Errorf("OutputPrice = %v, want nil（未覆盖键）", v.OutputPrice)
+	}
+	if v.TimeSegments == nil || len(*v.TimeSegments) != 0 {
+		t.Errorf("TimeSegments 应为非-nil 空切片（显式关闭）, got %v", v.TimeSegments)
+	}
+
+	// 旧 TenantPricingPatch 三键（prices/time_segments/param_multipliers）与 blob 键同形：
+	// 直接消费（显式关闭空数组保留三态）
+	tmPatch := &tenantModelRow{
+		CustomPricing: `{"prices":{"*":0.2},"time_segments":[],"param_multipliers":[{"path":"x","multiplier":1.5}],"billing_mode":"tiered"}`,
+	}
+	v3 := buildTenantOverrideView(tmPatch)
+	if len(v3.PerSecondPrices) != 1 || v3.PerSecondPrices["*"] != 0.2 {
+		t.Errorf("PerSecondPrices = %v, want {*:0.2}", v3.PerSecondPrices)
+	}
+	if v3.TimeSegments == nil || len(*v3.TimeSegments) != 0 {
+		t.Errorf("time_segments:[] 应保持显式关闭语义, got %v", v3.TimeSegments)
+	}
+	if v3.ParamMultipliers == nil || len(*v3.ParamMultipliers) != 1 {
+		t.Errorf("ParamMultipliers 应解析 1 条, got %v", v3.ParamMultipliers)
+	}
+	if v3.BillingMode == nil || *v3.BillingMode != "tiered" {
+		t.Errorf("billing_mode 键 = %v, want tiered", v3.BillingMode)
+	}
+
+	// 空行 / nil：无覆盖视图（零值）
+	if v4 := buildTenantOverrideView(&tenantModelRow{}); v4 == nil || v4.InputPrice != nil {
+		t.Errorf("空行视图应为零值, got %+v", v4)
+	}
+	if v5 := buildTenantOverrideView(nil); v5 != nil {
+		t.Errorf("nil 行视图应为 nil, got %+v", v5)
 	}
 }

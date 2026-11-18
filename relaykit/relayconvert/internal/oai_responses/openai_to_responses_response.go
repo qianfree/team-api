@@ -169,6 +169,7 @@ func chatCompletionToResponsesResponse(chatResp *dto.ChatCompletionResponse, inf
 		inputDetails.CachedTokens = d.CachedTokens
 		inputDetails.CachedTokensDetails = d.CachedTokensDetails
 		inputDetails.CacheWriteTokens = d.CacheWriteTokens
+		inputDetails.CacheWriteTokensDetails = d.CacheWriteTokensDetails
 		inputDetails.AudioTokens = d.AudioTokens
 	}
 	outputDetails := &dto.OutputTokenDetails{}

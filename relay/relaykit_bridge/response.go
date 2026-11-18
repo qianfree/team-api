@@ -117,6 +117,9 @@ func parseUpstreamResponse(upstream constant.RelayFormat, body []byte) (any, err
 // 非流式响应桥接成功后用于构建计费用量（转换器已把用量写入响应体的 Usage 字段）。
 // 转换后的 usage 统一为 OpenAI 口径（prompt_tokens 含缓存，cached 为其子集），故置
 // CacheIncludedInPrompt 让计费按明细扣减缓存部分，避免双重计费。
+// 不填顶层 CacheCreationTokens：转换器把写入量同值填进 details.CacheWriteTokens，
+// 宿主 relay_handler 落库时做「顶层 + details.CacheWriteTokens」相加，bridge 再填
+// 顶层会同源双计（翻倍）；写入量统一由 details 键携带。
 // 解析失败返回 (nil, false)，调用方可回退到从原始上游体提取或返回空用量。
 func UsageFromConvertedChatResponse(body []byte) (*common.Usage, bool) {
 	var resp dto.ChatCompletionResponse
@@ -127,18 +130,10 @@ func UsageFromConvertedChatResponse(body []byte) (*common.Usage, bool) {
 		PromptTokens:           resp.Usage.PromptTokens,
 		CompletionTokens:       resp.Usage.CompletionTokens,
 		TotalTokens:            resp.Usage.TotalTokens,
-		CacheCreationTokens:    convertedCacheCreationTokens(resp.Usage.PromptTokensDetails),
 		CacheIncludedInPrompt:  true,
 		PromptTokensDetails:    common.DtoTokenDetailsToCommon(resp.Usage.PromptTokensDetails),
 		CompletionTokenDetails: common.DtoTokenDetailsToCommon(resp.Usage.CompletionTokenDetails),
 	}, true
-}
-
-func convertedCacheCreationTokens(details *dto.TokenDetails) int {
-	if details == nil {
-		return 0
-	}
-	return details.CachedCreationTokens
 }
 
 // ResponseConvertError 把非流式响应转换错误映射为宿主错误类型。
