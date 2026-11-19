@@ -107,16 +107,21 @@ func isModelMapped(info convmeta.Meta) bool {
 
 // ========== 计费用量换算（StreamEvent.Usage 载荷，带缓存明细） ==========
 
-// claudeBillingUsage 按 Claude 计费口径换算（与宿主 buildUsageFromClaude 等价：
-// input 不含缓存，cache 读/写明细随 PromptTokensDetails 透传）
-func claudeBillingUsage(u *dto.ClaudeUsage) *dto.UsageWithDetails {
+// claudeVisibleUsage 按 OpenAI 语义换算 Claude 用量（prompt 含缓存，cached 为子集）。
+// 用途为 Claude→Gemini 流式收尾帧的计费侧信道（StreamEvent.Usage）：宿主桥接层对
+// 侧信道统一置 CacheIncludedInPrompt=true 并按明细扣减缓存还原 base input，侧信道
+// 必须为含缓存口径——发 Claude 口径（不含缓存）会被双重扣减（prompt 本就不含缓存
+// 再减一次缓存明细）导致输入少计。Gemini 客户端可见值走 geminiUsageFromClaude
+// （promptTotal 同为含缓存口径，两者一致）
+func claudeVisibleUsage(u *dto.ClaudeUsage) *dto.UsageWithDetails {
 	if u == nil {
 		return &dto.UsageWithDetails{}
 	}
+	promptTotal := u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens
 	return &dto.UsageWithDetails{
-		PromptTokens:        u.InputTokens,
+		PromptTokens:        promptTotal,
 		CompletionTokens:    u.OutputTokens,
-		TotalTokens:         u.InputTokens + u.OutputTokens,
+		TotalTokens:         promptTotal + u.OutputTokens,
 		PromptTokensDetails: claudeUsageToTokenDetails(u),
 	}
 }

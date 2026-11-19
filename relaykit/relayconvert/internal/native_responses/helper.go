@@ -150,8 +150,11 @@ func claudeUsageToTokenDetails(u *dto.ClaudeUsage) *dto.TokenDetails {
 	return td
 }
 
-// claudeVisibleUsage 按 OpenAI 语义换算 Claude 用量（Responses 客户端可见值：
-// input 含缓存，cached 为子集）
+// claudeVisibleUsage 按 OpenAI 语义换算 Claude 用量（prompt 含缓存，cached 为子集）。
+// 用途有二：Responses 客户端可见值（response.completed.usage）与流式终帧的计费侧信道
+// （StreamEvent.Usage）——宿主桥接层对侧信道统一置 CacheIncludedInPrompt=true 并按明细
+// 扣减缓存还原 base input，侧信道必须与可见值同为含缓存口径，否则 base input 被双重
+// 扣减（prompt 本就不含缓存再减一次缓存明细）导致输入少计
 func claudeVisibleUsage(u *dto.ClaudeUsage) *dto.UsageWithDetails {
 	if u == nil {
 		return &dto.UsageWithDetails{}
@@ -161,20 +164,6 @@ func claudeVisibleUsage(u *dto.ClaudeUsage) *dto.UsageWithDetails {
 		PromptTokens:        promptTotal,
 		CompletionTokens:    u.OutputTokens,
 		TotalTokens:         promptTotal + u.OutputTokens,
-		PromptTokensDetails: claudeUsageToTokenDetails(u),
-	}
-}
-
-// claudeBillingUsage 按 Claude 计费口径换算（与宿主 buildUsageFromClaude 等价：
-// input 不含缓存，cache 读/写明细随 PromptTokensDetails 透传）
-func claudeBillingUsage(u *dto.ClaudeUsage) *dto.UsageWithDetails {
-	if u == nil {
-		return &dto.UsageWithDetails{}
-	}
-	return &dto.UsageWithDetails{
-		PromptTokens:        u.InputTokens,
-		CompletionTokens:    u.OutputTokens,
-		TotalTokens:         u.InputTokens + u.OutputTokens,
 		PromptTokensDetails: claudeUsageToTokenDetails(u),
 	}
 }

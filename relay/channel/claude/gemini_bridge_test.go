@@ -239,9 +239,11 @@ func TestHandleStreamToGemini_TextAndThinking(t *testing.T) {
 		t.Errorf("收尾 usageMetadata 不对（应为 40+10 缓存）: %+v", final.UsageMetadata)
 	}
 
-	// 计费口径：Claude 的 input_tokens 不含缓存
-	if usage.PromptTokens != 40 || usage.CompletionTokens != 20 {
-		t.Errorf("计费用量 = %d/%d, want 40/20", usage.PromptTokens, usage.CompletionTokens)
+	// 计费口径：侧信道须为含缓存口径（prompt = input 40 + cache_read 10）——
+	// 桥接层置 CacheIncludedInPrompt=true 扣减缓存还原 base input（=40），
+	// 不含缓存口径会被双重扣减导致输入少计
+	if usage.PromptTokens != 50 || usage.CompletionTokens != 20 {
+		t.Errorf("计费用量 = %d/%d, want 50(含缓存)/20", usage.PromptTokens, usage.CompletionTokens)
 	}
 }
 

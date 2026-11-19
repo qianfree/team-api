@@ -268,13 +268,15 @@ func TestClaudeToGeminiStream_TextAndThinking(t *testing.T) {
 		t.Errorf("modelName = %q, want claude-sonnet-5", final.ModelName)
 	}
 
-	// 计费口径：Claude 的 input_tokens 不含缓存，随收尾帧携带
+	// 计费口径：侧信道须为含缓存口径（prompt = input 40 + cache_read 10）——
+	// 宿主桥接层置 CacheIncludedInPrompt=true 并按明细扣减还原 base input（=40），
+	// 发不含缓存的 Claude 口径会被双重扣减导致输入少计
 	lastEvent := events[len(events)-1]
 	if lastEvent.Usage == nil {
 		t.Fatal("收尾帧必须携带计费用量")
 	}
-	if lastEvent.Usage.PromptTokens != 40 || lastEvent.Usage.CompletionTokens != 20 {
-		t.Errorf("计费用量 = %d/%d, want 40/20", lastEvent.Usage.PromptTokens, lastEvent.Usage.CompletionTokens)
+	if lastEvent.Usage.PromptTokens != 50 || lastEvent.Usage.CompletionTokens != 20 {
+		t.Errorf("计费用量 = %d/%d, want 50(included cache)/20", lastEvent.Usage.PromptTokens, lastEvent.Usage.CompletionTokens)
 	}
 	if lastEvent.Usage.PromptTokensDetails == nil || lastEvent.Usage.PromptTokensDetails.CachedTokens != 10 {
 		t.Errorf("计费缓存明细不对: %+v", lastEvent.Usage.PromptTokensDetails)

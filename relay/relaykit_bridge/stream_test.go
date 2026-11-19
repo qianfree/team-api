@@ -101,6 +101,98 @@ data: {"type":"message_stop"}
 	}
 }
 
+// TestConvertStreamViaRelaykit_ClaudeToResponses_BillingUsageSemantics
+// 回归（双重扣减）：Claude→Responses 流式的计费侧信道必须为含缓存口径。
+// 修复前转换器终帧发 Claude 口径（prompt 不含缓存），而桥接层对侧信道硬编码
+// CacheIncludedInPrompt=true，计费 resolveTokenCounts 再扣一次缓存明细 →
+// baseInput = input − cacheRead − cc5m − cc1h 被错误压低（本例 1000−11000 → 钳 0，
+// 输入分文未计）。修复后 prompt=12000（含缓存），扣减还原 baseInput=1000。
+func TestConvertStreamViaRelaykit_ClaudeToResponses_BillingUsageSemantics(t *testing.T) {
+	claudeStream := `data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-5","usage":{"input_tokens":1000,"output_tokens":1,"cache_read_input_tokens":4000,"cache_creation_input_tokens":7000,"cache_creation":{"ephemeral_5m_input_tokens":3000,"ephemeral_1h_input_tokens":4000}}}}
+
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text"}}
+
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}
+
+data: {"type":"content_block_stop","index":0}
+
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":7}}
+
+data: {"type":"message_stop"}
+
+`
+	info := newStreamTestRelayInfo(constant.ProviderClaude, constant.RelayFormatResponses)
+	rec := httptest.NewRecorder()
+
+	usage, ok, err := convertStreamViaRelaykit(context.Background(), info, strings.NewReader(claudeStream), rec)
+	if !ok || err != nil {
+		t.Fatalf("expected (true, nil), got (%v, %v)", ok, err)
+	}
+	if usage == nil {
+		t.Fatal("expected non-nil usage")
+	}
+	// 侧信道口径：prompt 含缓存 = 1000 + 4000 + 7000
+	if usage.PromptTokens != 12000 {
+		t.Errorf("PromptTokens = %d, want 12000（含缓存；不含缓存会被双重扣减）", usage.PromptTokens)
+	}
+	if !usage.CacheIncludedInPrompt {
+		t.Error("CacheIncludedInPrompt = false, want true")
+	}
+	d := usage.PromptTokensDetails
+	if d == nil || d.CachedTokens != 4000 || d.CachedCreation5mTokens != 3000 || d.CachedCreation1hTokens != 4000 {
+		t.Fatalf("cache details = %+v, want read=4000 cc5m=3000 cc1h=4000", d)
+	}
+	// 计费扣减数值推演（与 billing.resolveTokenCounts 同式）：
+	// baseInput = 12000 − 4000 − 3000 − 4000 = 1000（修复前 = 0，输入全免）
+	baseInput := usage.PromptTokens - d.CachedTokens - d.CachedCreation5mTokens - d.CachedCreation1hTokens
+	if baseInput != 1000 {
+		t.Errorf("baseInput 推演 = %d, want 1000", baseInput)
+	}
+}
+
+// TestConvertStreamViaRelaykit_ClaudeToGemini_BillingUsageSemantics
+// 回归（双重扣减）：Claude→Gemini 流式同款口径约束，见 Responses 方向用例说明
+func TestConvertStreamViaRelaykit_ClaudeToGemini_BillingUsageSemantics(t *testing.T) {
+	claudeStream := `data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-5","usage":{"input_tokens":40,"output_tokens":1,"cache_read_input_tokens":10}}}
+
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text"}}
+
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}
+
+data: {"type":"content_block_stop","index":0}
+
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":20}}
+
+data: {"type":"message_stop"}
+
+`
+	info := newStreamTestRelayInfo(constant.ProviderClaude, constant.RelayFormatGemini)
+	rec := httptest.NewRecorder()
+
+	usage, ok, err := convertStreamViaRelaykit(context.Background(), info, strings.NewReader(claudeStream), rec)
+	if !ok || err != nil {
+		t.Fatalf("expected (true, nil), got (%v, %v)", ok, err)
+	}
+	if usage == nil {
+		t.Fatal("expected non-nil usage")
+	}
+	// 侧信道口径：prompt 含缓存 = 40 + 10（无 cache_creation）
+	if usage.PromptTokens != 50 {
+		t.Errorf("PromptTokens = %d, want 50（含缓存）", usage.PromptTokens)
+	}
+	if !usage.CacheIncludedInPrompt {
+		t.Error("CacheIncludedInPrompt = false, want true")
+	}
+	d := usage.PromptTokensDetails
+	if d == nil || d.CachedTokens != 10 {
+		t.Fatalf("cache details = %+v, want read=10", d)
+	}
+	// baseInput = 50 − 10 = 40（修复前 prompt=40 → 扣减后 30，少计 10）
+	if base := usage.PromptTokens - d.CachedTokens; base != 40 {
+		t.Errorf("baseInput 推演 = %d, want 40", base)
+	}
+}
+
 // TestConvertStreamViaRelaykit_GeminiToOpenAI 验证 Gemini SSE 流经 relaykit 转换为 OpenAI SSE，
 // 缓存/思考 token 明细正确透出，且因 Gemini 的 promptTokenCount 已含 cached（子集语义）
 // 计费标记 CacheIncludedInPrompt=true（计费时扣减缓存部分，避免双重计费）。
