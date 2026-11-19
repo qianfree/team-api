@@ -15,6 +15,7 @@ import (
 	"github.com/gogf/gf/v2/database/gredis"
 	"github.com/gogf/gf/v2/os/glog"
 
+	"github.com/qianfree/team-api/internal/utility/safego"
 	relaycommon "github.com/qianfree/team-api/relay/common"
 )
 
@@ -77,7 +78,9 @@ func (r *Registry) StartInvalidateSubscriber() {
 	}
 	stop := invalidateStop
 	invalidateMu.Unlock()
-	go r.subscribeInvalidate(stop)
+	safego.Run(context.Background(), "jsplugin:invalidate", func(context.Context) {
+		r.subscribeInvalidate(stop)
+	})
 }
 
 // stopInvalidateSubscriber 停止订阅循环（Shutdown 调用；支持进程内再次启动）。

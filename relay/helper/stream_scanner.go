@@ -12,6 +12,7 @@ import (
 
 	"github.com/gogf/gf/v2/frame/g"
 
+	"github.com/qianfree/team-api/internal/utility/safego"
 	"github.com/qianfree/team-api/relay/common"
 )
 
@@ -176,7 +177,7 @@ func StreamScannerHandler(
 	pingTicker := time.NewTicker(defaultPingInterval)
 	defer pingTicker.Stop()
 	wg.Add(1)
-	go func() {
+	safego.Run(ctx, "relay:stream_ping", func(ctx context.Context) {
 		defer wg.Done()
 		for {
 			select {
@@ -199,7 +200,7 @@ func StreamScannerHandler(
 				return
 			}
 		}
-	}()
+	})
 
 	// 主 goroutine 阻塞等待（单次 select，用 Timer 实现空闲超时）
 	timeoutTimer := time.NewTimer(streamTimeout)

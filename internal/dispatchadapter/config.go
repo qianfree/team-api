@@ -11,6 +11,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
+	"github.com/qianfree/team-api/internal/utility/safego"
 	"github.com/qianfree/team-api/relaykit/dispatch"
 )
 
@@ -114,7 +115,7 @@ func buildTenantPolicy(globalRaw, tenantRaw string) (*dispatch.RoutingPolicy, er
 // StartPolicyRefresher 周期重载策略并热更新到全部协调器（主 + 影子）。
 // 非法配置拒绝生效并告警，继续用上一份有效配置。
 func StartPolicyRefresher(ctx context.Context, stop <-chan struct{}, cos ...*dispatch.Coordinator) {
-	go func() {
+	safego.Run(ctx, "dispatch:policy_refresher", func(ctx context.Context) {
 		ticker := time.NewTicker(policyRefreshInterval)
 		defer ticker.Stop()
 		for {
@@ -132,5 +133,5 @@ func StartPolicyRefresher(ctx context.Context, stop <-chan struct{}, cos ...*dis
 				return
 			}
 		}
-	}()
+	})
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 
 	"github.com/qianfree/team-api/internal/consts"
+	"github.com/qianfree/team-api/internal/utility/safego"
 )
 
 // updateDir is the temp directory for update operations（本地集成测试可覆盖为临时目录）
@@ -101,7 +102,7 @@ func CheckPendingVerification(ctx context.Context) {
 	g.Log().Infof(ctx, "Detected pending update verification for version %s", info.Version)
 
 	// Verify health in background
-	go func() {
+	safego.Run(ctx, "update:health_verify", func(ctx context.Context) {
 		time.Sleep(5 * time.Second)
 
 		// 回滚入口展示用的版本号：优先取 pending 标记里的旧版本号；
@@ -166,7 +167,7 @@ func CheckPendingVerification(ctx context.Context) {
 			BackupVersion:     backupVersion,
 		}
 		manager.status.Store(status)
-	}()
+	})
 }
 
 // BackgroundCheck performs an update check (called by cron)

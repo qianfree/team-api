@@ -16,6 +16,7 @@ import (
 
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/billing/formula"
+	"github.com/qianfree/team-api/internal/utility/safego"
 	rcommon "github.com/qianfree/team-api/relay/common"
 )
 
@@ -250,7 +251,9 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 	}
 
 	// 6. 异步检查余额预警（GetWallet 读 Redis 权威值，实时准确）
-	go CheckBalanceWarning(context.Background(), tenantID)
+	safego.Run(context.Background(), "billing:balance_warning", func(ctx context.Context) {
+		CheckBalanceWarning(ctx, tenantID)
+	})
 
 	return &SettlementResult{
 		PreDeductAmount:  preDeductAmount,
@@ -398,7 +401,9 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 	}
 
 	// 6. 异步检查余额预警（GetWallet 读 Redis 权威值，实时准确）
-	go CheckBalanceWarning(context.Background(), tenantID)
+	safego.Run(context.Background(), "billing:balance_warning", func(ctx context.Context) {
+		CheckBalanceWarning(ctx, tenantID)
+	})
 
 	settlementResult := &SettlementResult{
 		PreDeductAmount:   preDeductAmount,

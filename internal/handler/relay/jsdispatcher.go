@@ -241,7 +241,7 @@ func handleJSTaskSubmit(r *ghttp.Request, plugin *jsplugin.ActivePlugin, route c
 		monitor.UnregisterRequest(rc.RequestID)
 	}
 	rc.ForwardingTrace = buildTaskForwardingTrace(nativePath, body2, channelMeta, capture.StatusCode())
-	go recordTaskSubmitAudit(r, rc, capture, body2)
+	goRecordTaskSubmitAudit(r, rc, capture, body2)
 
 	// 同步即完成（parseSubmitResponse 返回 immediate，经解码计划透传）：
 	// 提交成功立即终态化——结算/用量/审计/产物与轮询终态同口径（免轮询直达）

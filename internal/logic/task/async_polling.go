@@ -17,6 +17,7 @@ import (
 	"github.com/qianfree/team-api/internal/logic/monitor"
 	"github.com/qianfree/team-api/internal/logic/relay"
 	"github.com/qianfree/team-api/internal/logic/task/artifact"
+	"github.com/qianfree/team-api/internal/utility/safego"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/helper"
@@ -57,7 +58,7 @@ func StartAsyncPolling(ctx context.Context) {
 	g.Log().Info(ctx, "Starting async task polling...")
 	pollStop = make(chan struct{})
 	pollingWg.Add(1)
-	go func() {
+	safego.Run(ctx, "task:async_polling", func(ctx context.Context) {
 		defer pollingWg.Done()
 		ticker := time.NewTicker(pollInterval)
 		defer ticker.Stop()
@@ -71,7 +72,7 @@ func StartAsyncPolling(ctx context.Context) {
 				pollOnce(ctx)
 			}
 		}
-	}()
+	})
 }
 
 // StopAsyncPolling 通知轮询 goroutine 停止并等待其退出，在服务停机时调用。

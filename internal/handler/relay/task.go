@@ -20,6 +20,7 @@ import (
 	"github.com/qianfree/team-api/internal/logic/relay"
 	"github.com/qianfree/team-api/internal/logic/task"
 	"github.com/qianfree/team-api/internal/middleware"
+	"github.com/qianfree/team-api/internal/utility/safego"
 	relay_common "github.com/qianfree/team-api/relay/common"
 	relay_constant "github.com/qianfree/team-api/relay/constant"
 	relay_handler "github.com/qianfree/team-api/relay/handler"
@@ -113,7 +114,7 @@ func HandleTaskSubmit(r *ghttp.Request) {
 	rc.ForwardingTrace = buildTaskForwardingTrace(r.URL.Path, body, channelMeta, capture.StatusCode())
 
 	// 异步记录审计日志
-	go recordTaskSubmitAudit(r, rc, capture, body)
+	goRecordTaskSubmitAudit(r, rc, capture, body)
 }
 
 // HandleTaskFetch 处理异步任务查询（GET /v1/video/generations/:id, GET /suno/fetch/:id）
@@ -364,7 +365,7 @@ func HandleMjSubmit(r *ghttp.Request) {
 	}
 
 	rc.ForwardingTrace = buildTaskForwardingTrace(r.URL.Path, body, channelMeta, capture.StatusCode())
-	go recordTaskSubmitAudit(r, rc, capture, body)
+	goRecordTaskSubmitAudit(r, rc, capture, body)
 }
 
 // HandleAliImageSubmit 处理异步图片生成任务提交（POST /v1/images/generations/async）
@@ -455,7 +456,7 @@ func HandleAliImageSubmit(r *ghttp.Request) {
 	}
 
 	rc.ForwardingTrace = buildTaskForwardingTrace(r.URL.Path, body, channelMeta, capture.StatusCode())
-	go recordTaskSubmitAudit(r, rc, capture, body)
+	goRecordTaskSubmitAudit(r, rc, capture, body)
 }
 
 // registerAsyncTask 注册异步任务到实时监控
@@ -535,6 +536,15 @@ func extractMjTaskID(r *ghttp.Request) string {
 		}
 	}
 	return ""
+}
+
+// goRecordTaskSubmitAudit 异步记录任务提交审计（统一 panic 防护入口）。
+// 各任务端点（task/videos/ali_video/minimax_video/jsdispatcher）提交审计一律走本入口，
+// 不再裸 `go recordTaskSubmitAudit(...)`。
+func goRecordTaskSubmitAudit(r *ghttp.Request, rc *relay_handler.TaskRelayContext, capture *ResponseCaptureWriter, body []byte) {
+	safego.Run(r.Context(), "relay:task_submit_audit", func(context.Context) {
+		recordTaskSubmitAudit(r, rc, capture, body)
+	})
 }
 
 // recordTaskSubmitAudit 记录异步任务提交的审计日志

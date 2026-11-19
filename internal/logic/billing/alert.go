@@ -8,6 +8,7 @@ import (
 
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
+	"github.com/qianfree/team-api/internal/utility/safego"
 )
 
 // publishWebhookEventFn 由 tenant 包在初始化时注入，避免 billing → tenant 循环依赖
@@ -59,7 +60,7 @@ func CheckBalanceWarning(ctx context.Context, tenantID int64) {
 	walletCache.Delete(ctx, fmt.Sprintf("%d", tenantID))
 
 	// 异步发送站内通知 + webhook 事件（失败不影响主流程）
-	go func() {
+	safego.Run(ctx, "billing:balance_warning_notify", func(context.Context) {
 		bgCtx := context.Background()
 
 		// 查询租户信息（用于通知内容）
@@ -103,7 +104,7 @@ func CheckBalanceWarning(ctx context.Context, tenantID int64) {
 				g.Log().Errorf(bgCtx, "[BALANCE WARNING] publish webhook event failed: tenant=%d err=%v", tenantID, webhookErr)
 			}
 		}
-	}()
+	})
 }
 
 // ResetLowBalanceNotified 充值后检查：如果余额已恢复到阈值以上，重置 low_balance_notified 标记

@@ -11,6 +11,8 @@ import (
 	"github.com/cloudflare/ahocorasick"
 	"github.com/gogf/gf/v2/database/gredis"
 	"github.com/gogf/gf/v2/frame/g"
+
+	"github.com/qianfree/team-api/internal/utility/safego"
 )
 
 // FilterResult holds the result of a content filter check.
@@ -56,7 +58,7 @@ func ContentFilter() *ContentFilterEngine {
 func InitContentFilter(ctx context.Context) {
 	engine := ContentFilter()
 	engine.Rebuild(ctx)
-	go engine.startSubscriber(ctx)
+	safego.Run(ctx, "content_filter:subscriber", engine.startSubscriber)
 	g.Log().Info(ctx, "content filter engine initialized")
 }
 

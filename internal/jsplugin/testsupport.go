@@ -1,6 +1,8 @@
 package jsplugin
 
 import (
+	"testing"
+
 	"github.com/gogf/gf/v2/errors/gerror"
 )
 
@@ -45,4 +47,15 @@ func lookupTestPlugin(plugins []*ActivePlugin, key string) (*ActivePlugin, bool)
 		}
 	}
 	return nil, false
+}
+
+// readBuiltin 读取内置插件源码（go:embed 的 builtin/{key}/plugin.js），迁移测试用。
+// 2bffa46f 清理旧迁移测试时误删了共享 helper，残留的 alibaba/doubao/hailuo 测试引用悬空导致包测试编译失败。
+func readBuiltin(t *testing.T, key string) string {
+	t.Helper()
+	src, err := builtinFS.ReadFile("builtin/" + key + "/plugin.js")
+	if err != nil {
+		t.Fatalf("读取内置插件 %s 失败: %v", key, err)
+	}
+	return string(src)
 }

@@ -11,6 +11,7 @@ import (
 
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	do "github.com/qianfree/team-api/internal/model/do"
+	"github.com/qianfree/team-api/internal/utility/safego"
 )
 
 // sensitiveFields are field names that should be masked in operation logs.
@@ -157,13 +158,13 @@ func OperationLog(r *ghttp.Request) {
 		}
 	}
 
-	go func() {
+	safego.Run(r.Context(), "middleware:operation_log", func(context.Context) {
 		ctx := context.Background()
 		_, err := lcommon.AuditModelCtx(ctx, "aud_operation_logs").Data(logData).Insert()
 		if err != nil {
 			g.Log().Errorf(ctx, "write operation log: %v", err)
 		}
-	}()
+	})
 }
 
 // parseResourceFromPath extracts resource type and ID from URL path.

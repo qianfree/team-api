@@ -7,6 +7,8 @@ import (
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/glog"
+
+	"github.com/qianfree/team-api/internal/utility/safego"
 )
 
 // ---------------------------------------------------------------------------
@@ -117,9 +119,10 @@ func (e *HookEmitter) Emit(ctx context.Context, event string, data g.Map) (HookR
 
 // EmitAsync 异步发射事件（不阻塞主流程，适用于日志、通知等场景）。
 func (e *HookEmitter) EmitAsync(ctx context.Context, event string, data g.Map) {
-	go func() {
+	safego.Run(ctx, "plugin:emit_async", func(ctx context.Context) {
+		// 异步发射为尽力而为：订阅方异常不反馈给发射方，失败由 Emit 内部日志兜底
 		_, _ = e.Emit(ctx, event, data)
-	}()
+	})
 }
 
 // RemoveHooks 移除指定插件的所有 Hook 注册。

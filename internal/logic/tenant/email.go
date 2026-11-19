@@ -5,6 +5,8 @@ import (
 	do "github.com/qianfree/team-api/internal/model/do"
 	"strings"
 
+	"github.com/gogf/gf/v2/frame/g"
+
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 	"github.com/qianfree/team-api/internal/consts"
 	"github.com/qianfree/team-api/internal/dao"
@@ -12,6 +14,7 @@ import (
 	"github.com/qianfree/team-api/internal/middleware"
 	"github.com/qianfree/team-api/internal/model/entity"
 	"github.com/qianfree/team-api/internal/utility/crypto"
+	"github.com/qianfree/team-api/internal/utility/safego"
 )
 
 // SendCode sends a verification code email.
@@ -178,7 +181,7 @@ func (s *sTenant) ChangeEmail(ctx context.Context, req *v1.TenantChangeEmailReq)
 	// Send notification emails (fire and forget)
 	// WithoutCancel：脱离请求取消但保留 request_id 等链路值
 	bgCtx := context.WithoutCancel(ctx)
-	go func() {
+	safego.Run(bgCtx, "tenant:email_change_notify", func(context.Context) {
 		emailCfg, err := common.EmailConfigFromOptions(bgCtx)
 		if err != nil {
 			return
@@ -186,23 +189,27 @@ func (s *sTenant) ChangeEmail(ctx context.Context, req *v1.TenantChangeEmailReq)
 		sender := common.NewEmailSender(emailCfg)
 
 		// Notify old email
-		sender.Send(bgCtx, &common.EmailMessage{
+		if sendErr := sender.Send(bgCtx, &common.EmailMessage{
 			To:       oldEmail,
 			Subject:  "邮箱变更通知",
 			BodyHTML: "<p>您的账号邮箱已变更为 " + newEmail + "。如非本人操作，请立即联系管理员。</p>",
 			TenantID: tenantID,
 			UserID:   userID,
-		})
+		}); sendErr != nil {
+			g.Log().Warningf(bgCtx, "发送邮箱变更通知（旧邮箱）失败 user=%d: %v", userID, sendErr)
+		}
 
 		// Notify new email
-		sender.Send(bgCtx, &common.EmailMessage{
+		if sendErr := sender.Send(bgCtx, &common.EmailMessage{
 			To:       newEmail,
 			Subject:  "邮箱变更确认",
 			BodyHTML: "<p>您的账号邮箱已成功变更为本邮箱。</p>",
 			TenantID: tenantID,
 			UserID:   userID,
-		})
-	}()
+		}); sendErr != nil {
+			g.Log().Warningf(bgCtx, "发送邮箱变更确认（新邮箱）失败 user=%d: %v", userID, sendErr)
+		}
+	})
 
 	return nil, nil
 }

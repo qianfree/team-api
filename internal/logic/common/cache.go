@@ -16,6 +16,8 @@ import (
 	"github.com/gogf/gf/v2/os/gcache"
 	"github.com/gogf/gf/v2/util/gconv"
 	"golang.org/x/sync/singleflight"
+
+	"github.com/qianfree/team-api/internal/utility/safego"
 )
 
 const (
@@ -404,7 +406,7 @@ func PublishInvalidation(ctx context.Context, fullKey string) {
 // 不可见，广播模式由各实例对本地 L1 全量匹配清除。
 // 在 cmd.go 启动时调用一次；断线自动重连，语义与 ConfigService.StartSubscriber 一致。
 func StartCacheInvalidationSubscriber(ctx context.Context) {
-	go func() {
+	safego.Run(ctx, "cache:invalidation_subscriber", func(ctx context.Context) {
 		var reconnectCount int
 		for {
 			conn, _, err := g.Redis().Subscribe(ctx, cacheInvalidateChannel, cacheInvalidatePatternChannel)
@@ -455,7 +457,7 @@ func StartCacheInvalidationSubscriber(ctx context.Context) {
 
 			conn.Close(ctx)
 		}
-	}()
+	})
 }
 
 // TenantGroupModelCache 缓存租户通过分组可访问的模型集合，TTL 300s

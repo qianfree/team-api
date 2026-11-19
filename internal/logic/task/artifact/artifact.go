@@ -30,6 +30,7 @@ import (
 	"github.com/qianfree/team-api/internal/jsplugin"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	uc "github.com/qianfree/team-api/internal/utility/crypto"
+	"github.com/qianfree/team-api/internal/utility/safego"
 	"github.com/qianfree/team-api/internal/utility/ssrf"
 	rcommon "github.com/qianfree/team-api/relay/common"
 )
@@ -101,7 +102,10 @@ func Start(ctx context.Context) {
 	stop = make(chan struct{})
 	for i := 0; i < workerCount; i++ {
 		wg.Add(1)
-		go workerLoop()
+		safego.Run(context.Background(), "artifact:worker", func(context.Context) {
+			defer wg.Done()
+			workerLoop()
+		})
 	}
 	// sweep：重试 pending/failed（进程重启后的恢复网 + 队列溢出兜底）
 	if cs := lcommon.GetCronScheduler(); cs != nil {
@@ -240,13 +244,15 @@ func SweepPending(ctx context.Context) {
 // ---------------------------------------------------------------------------
 
 func workerLoop() {
-	defer wg.Done()
 	for {
 		select {
 		case <-stop:
 			return
 		case job := <-queue:
-			processJob(context.Background(), job)
+			// 逐 job 兜底：单笔转存 panic 只丢当次（留待 sweep 重试），worker 存活继续消费
+			safego.Guard(context.Background(), "artifact:processJob", func() {
+				processJob(context.Background(), job)
+			})
 		}
 	}
 }

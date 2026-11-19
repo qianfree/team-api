@@ -9,6 +9,7 @@ import (
 	"github.com/gogf/gf/v2/util/gconv"
 
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
+	"github.com/qianfree/team-api/internal/utility/safego"
 )
 
 const (
@@ -40,7 +41,7 @@ func walletMaterializeInterval(ctx context.Context) time.Duration {
 //   - 覆盖期间产生的新变动会重新 SADD 脏标记，下个 tick 收敛（最终一致）。
 func StartWalletMaterializer(ctx context.Context) {
 	interval := walletMaterializeInterval(ctx)
-	go func() {
+	safego.Run(ctx, "billing:wallet_materializer", func(ctx context.Context) {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		g.Log().Infof(ctx, "[WALLET MATERIALIZER] started, interval=%s", interval)
@@ -53,7 +54,7 @@ func StartWalletMaterializer(ctx context.Context) {
 				materializeDirtyWallets(ctx)
 			}
 		}
-	}()
+	})
 }
 
 // materializeDirtyWallets 单轮物化：取脏租户样本 → 读 Redis 权威值 → 覆盖 DB → 清脏标记

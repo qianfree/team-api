@@ -9,6 +9,7 @@ import (
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/relay"
 	do "github.com/qianfree/team-api/internal/model/do"
+	"github.com/qianfree/team-api/internal/utility/safego"
 )
 
 // CheckModelSunset 检查并处理已过 sunset 日期的弃用模型
@@ -63,17 +64,17 @@ func CheckModelSunset(ctx context.Context) error {
 		sunsetCount++
 
 		// 发送下线通知
-		go func(name, sunsetDate, replacement string) {
+		safego.Run(ctx, "task:model_sunset_notify", func(context.Context) {
 			bgCtx := context.Background()
 			engine := common.NewNotificationEngine()
 			if err := engine.SendToAllTenants(bgCtx, "model_sunset", g.Map{
-				"model_name":        name,
-				"sunset_date":       sunsetDate,
-				"replacement_model": replacement,
+				"model_name":        m.ModelId,
+				"sunset_date":       m.SunsetDate,
+				"replacement_model": m.ReplacementModel,
 			}, ""); err != nil {
-				g.Log().Errorf(bgCtx, "[Cron] send sunset notification for %s failed: %v", name, err)
+				g.Log().Errorf(bgCtx, "[Cron] send sunset notification for %s failed: %v", m.ModelId, err)
 			}
-		}(m.ModelId, m.SunsetDate, m.ReplacementModel)
+		})
 	}
 
 	g.Log().Debugf(ctx, "[Cron] model sunset check completed: %d models transitioned to offline", sunsetCount)

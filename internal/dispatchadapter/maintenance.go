@@ -14,6 +14,7 @@ import (
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	do "github.com/qianfree/team-api/internal/model/do"
 	"github.com/qianfree/team-api/internal/model/entity"
+	"github.com/qianfree/team-api/internal/utility/safego"
 )
 
 // 维护任务（阶段 3）：
@@ -50,7 +51,7 @@ func RequestHealthSnapshot(channelID int64) {
 
 // startMaintenance 启动维护循环（wire 组装时调用一次）。
 func startMaintenance(ctx context.Context, stop <-chan struct{}) {
-	go func() {
+	safego.Run(ctx, "dispatch:maintenance_loop", func(ctx context.Context) {
 		ticker := time.NewTicker(maintenanceInterval)
 		defer ticker.Stop()
 		for {
@@ -64,7 +65,7 @@ func startMaintenance(ctx context.Context, stop <-chan struct{}) {
 				return
 			}
 		}
-	}()
+	})
 }
 
 // refreshChannelHealth 按需重算单个渠道的健康快照。
@@ -292,7 +293,7 @@ func autoDisableChannel(ctx context.Context, channelID int64, openDurationMs int
 	if chName != nil {
 		channelName = *chName
 	}
-	go func() {
+	safego.Run(ctx, "dispatch:channel_auto_disable_notify", func(context.Context) {
 		bgCtx := context.Background()
 		engine := lcommon.NewNotificationEngine()
 		if err := engine.SendToAllTenants(bgCtx, "channel_auto_disabled", g.Map{
@@ -301,7 +302,7 @@ func autoDisableChannel(ctx context.Context, channelID int64, openDurationMs int
 		}, ""); err != nil {
 			g.Log().Errorf(bgCtx, "[Dispatch] 自动禁用通知发送失败: %v", err)
 		}
-	}()
+	})
 }
 
 func clampFloat(v, lo, hi float64) float64 {

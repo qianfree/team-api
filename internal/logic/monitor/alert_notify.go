@@ -13,6 +13,7 @@ import (
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
 	do "github.com/qianfree/team-api/internal/model/do"
+	"github.com/qianfree/team-api/internal/utility/safego"
 )
 
 const (
@@ -37,14 +38,14 @@ var alertNotifySem = make(chan struct{}, alertNotifyMaxConcurrent)
 // 由告警引擎在事件创建后调用；阻塞式信号量保证并发不超 alertNotifyMaxConcurrent，
 // WithTimeout 保证单个派发不会因上游挂起而无限挂起 goroutine。
 func goDispatchAlertNotifications(rule map[string]any, eventID int64, triggerValue, threshold float64) {
-	go func() {
+	safego.Run(context.Background(), "monitor:alert_notify", func(context.Context) {
 		alertNotifySem <- struct{}{}
 		defer func() { <-alertNotifySem }()
 		// 用全新的带超时 context，不沿用检测循环的 ctx（检测周期结束后原 ctx 可能被取消）。
 		ctx, cancel := context.WithTimeout(gctx.New(), alertNotifyTimeout)
 		defer cancel()
 		dispatchAlertNotifications(ctx, rule, eventID, triggerValue, threshold)
-	}()
+	})
 }
 
 // dispatchAlertNotifications sends notifications for a triggered alert.

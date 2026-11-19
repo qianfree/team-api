@@ -11,6 +11,7 @@ import (
 
 	"github.com/qianfree/team-api/internal/dispatchadapter"
 	"github.com/qianfree/team-api/internal/logic/monitor"
+	"github.com/qianfree/team-api/internal/utility/safego"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relaykit/dispatch"
@@ -148,7 +149,7 @@ type dispatchLeaseRefresher struct {
 // startDispatchLeaseRefresher 每 30s 续期一次调度租约（租约默认 90s，实例崩溃后自然过期）。
 func startDispatchLeaseRefresher(channelID int64, requestID string) *dispatchLeaseRefresher {
 	r := &dispatchLeaseRefresher{stop: make(chan struct{})}
-	go func() {
+	safego.Run(context.Background(), "relay:dispatch_lease_refresher", func(context.Context) {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
 		for {
@@ -161,7 +162,7 @@ func startDispatchLeaseRefresher(channelID int64, requestID string) *dispatchLea
 				return
 			}
 		}
-	}()
+	})
 	return r
 }
 

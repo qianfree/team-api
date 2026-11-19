@@ -16,6 +16,7 @@ import (
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/billing/formula"
 	do "github.com/qianfree/team-api/internal/model/do"
+	"github.com/qianfree/team-api/internal/utility/safego"
 	"github.com/qianfree/team-api/relay/common"
 )
 
@@ -347,7 +348,9 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 	}
 
 	// 4. 异步检查余额预警
-	go CheckBalanceWarning(context.Background(), tenantID)
+	safego.Run(context.Background(), "billing:balance_warning", func(ctx context.Context) {
+		CheckBalanceWarning(ctx, tenantID)
+	})
 
 	// 5. 差额已在步骤 3 一次性结清，此处不得再做任何解冻/退款：
 	//    SettleClaim 已 frozen -= 全部预扣认领金额（释放冻结）、balance -= actualCost
