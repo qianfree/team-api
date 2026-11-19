@@ -631,7 +631,8 @@ async function onSave() {
                 </template>
               </APopover>
             </div>
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-x-3">
+            <!-- 价格按 6 列栅格等分（每项占 2 列）：第一行输入/输出，第二行缓存三项，与平台定价弹窗排布一致 -->
+            <div class="price-grid">
               <AFormItem label="输入价格">
                 <AInputNumber v-model="form.input_price" :min="0" :precision="4" placeholder="默认" class="w-full">
                   <template #suffix>{{ currencySymbol }} / 1M</template>
@@ -642,6 +643,8 @@ async function onSave() {
                   <template #suffix>{{ currencySymbol }} / 1M</template>
                 </AInputNumber>
               </AFormItem>
+            </div>
+            <div class="price-grid">
               <AFormItem label="缓存读取">
                 <AInputNumber v-model="form.cache_read_price" :min="0" :precision="4" placeholder="默认" class="w-full">
                   <template #suffix>{{ currencySymbol }} / 1M</template>
@@ -652,12 +655,15 @@ async function onSave() {
                   <template #suffix>{{ currencySymbol }} / 1M</template>
                 </AInputNumber>
               </AFormItem>
-              <AFormItem label="长时缓存创建" extra="长 TTL 桶（Claude 1h / GPT 12h）；留空按新基准价×1.6 推导">
+              <AFormItem label="长时缓存创建">
                 <AInputNumber v-model="form.cache_creation_1h_price" :min="0" :precision="4" placeholder="默认" class="w-full">
                   <template #suffix>{{ currencySymbol }} / 1M</template>
                 </AInputNumber>
               </AFormItem>
             </div>
+            <p class="section-footnote">
+              「缓存创建」为短 TTL 桶（Claude 5m / GPT 30m），「长时缓存创建」为长 TTL 桶（Claude 1h / GPT 12h），留空继承平台价（平台未配置时按基准价 ×1.6 推导）。
+            </p>
           </template>
 
           <!-- 按次计费 -->
@@ -686,7 +692,9 @@ async function onSave() {
                 </div>
                 <AButton v-if="form.tiers.length > 1" size="mini" status="danger" @click="form.tiers.splice(index, 1)">删除</AButton>
               </div>
-              <div class="grid grid-cols-2 md:grid-cols-4 gap-x-3">
+              <!-- 价格字段按 6 列栅格排布（每项占 2 列）：第一行输入/输出，第二行缓存三项，与平台定价弹窗排布一致；
+                   留空/回退语义统一走区块脚注，不再逐字段挂 extra 长文案 -->
+              <div class="price-grid">
                 <AFormItem label="输入价格">
                   <AInputNumber v-model="tier.input_price" :min="0" :precision="4" class="w-full">
                     <template #suffix>{{ currencySymbol }}/1M</template>
@@ -697,17 +705,19 @@ async function onSave() {
                     <template #suffix>{{ currencySymbol }}/1M</template>
                   </AInputNumber>
                 </AFormItem>
-                <AFormItem label="缓存读取价格">
+              </div>
+              <div class="price-grid">
+                <AFormItem label="缓存读取">
                   <AInputNumber v-model="tier.cache_read_price" :min="0" :precision="4" class="w-full">
                     <template #suffix>{{ currencySymbol }}/1M</template>
                   </AInputNumber>
                 </AFormItem>
-                <AFormItem label="缓存创建价格">
+                <AFormItem label="缓存创建">
                   <AInputNumber v-model="tier.cache_creation_price" :min="0" :precision="4" class="w-full">
                     <template #suffix>{{ currencySymbol }}/1M</template>
                   </AInputNumber>
                 </AFormItem>
-                <AFormItem label="长时缓存创建" extra="长 TTL 桶；0=回退首档锚点">
+                <AFormItem label="长时缓存创建">
                   <AInputNumber v-model="tier.cache_creation_1h_price" :min="0" :precision="4" class="w-full">
                     <template #suffix>{{ currencySymbol }}/1M</template>
                   </AInputNumber>
@@ -715,6 +725,9 @@ async function onSave() {
               </div>
             </div>
             <AButton type="dashed" long @click="addTenantTier" class="mt-2">+ 添加梯度</AButton>
+            <p class="section-footnote">
+              缓存三项填 0 时回退第 1 梯锚点价；「缓存创建」为短 TTL 桶（Claude 5m / GPT 30m），「长时缓存创建」为长 TTL 桶（Claude 1h / GPT 12h），后者为 0 按第 1 梯基准价 ×1.6 推导，建议显式填写。
+            </p>
           </template>
           </template><!-- /专属定价模式 -->
         </div>
@@ -875,6 +888,45 @@ async function onSave() {
   margin-bottom: 12px;
 }
 
+/*
+ * 价格输入网格（与平台定价弹窗 ModelPricingModal 同构）：6 列等分，每个字段占 2 列（一行 3 个）。
+ * 第一行输入/输出两项占 4 列，第二行缓存三项占满——跨行、跨档位严格等宽对齐。
+ */
+.price-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  column-gap: 12px;
+}
+
+.price-grid > * {
+  grid-column: span 2;
+  min-width: 0;
+}
+
+/* 网格内表单项收紧下间距：默认 16px 会把区块下半截撑得过空 */
+.price-grid > :deep(.arco-form-item) {
+  margin-bottom: 10px;
+}
+
+/* 窄屏（手机端管理后台）回落 2 列，每字段独占 1 列，避免横向溢出 */
+@media (max-width: 767px) {
+  .price-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .price-grid > * {
+    grid-column: span 1;
+  }
+}
+
+/* 区块级脚注：留空/回退语义收拢成一行，替代逐字段 extra 长文案 */
+.section-footnote {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--ta-text-tertiary);
+}
+
 .billing-mode-row {
   display: flex;
   align-items: center;
@@ -903,7 +955,8 @@ async function onSave() {
 }
 
 .tier-card {
-  padding: 12px 16px;
+  /* 底部内边距收窄：网格内表单项自带 10px 下间距，避免卡片下缘过空（与平台定价弹窗一致） */
+  padding: 12px 16px 4px;
   background: var(--color-fill-1);
   border-radius: 8px;
   margin-bottom: 8px;
