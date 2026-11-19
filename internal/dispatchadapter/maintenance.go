@@ -288,7 +288,10 @@ func autoDisableChannel(ctx context.Context, channelID int64, openDurationMs int
 
 	// 全租户通知（异步，失败仅记日志）
 	var chName *string
-	_ = dao.ChnChannels.Ctx(ctx).Where("id", channelID).Fields("name").Scan(&chName)
+	if nameErr := dao.ChnChannels.Ctx(ctx).Where("id", channelID).Fields("name").Scan(&chName); nameErr != nil {
+		// 查询失败时通知缺渠道名（空值兜底），留痕排查
+		g.Log().Warningf(ctx, "[Dispatch] 查询渠道名失败（自动禁用通知）channel=%d: %v", channelID, nameErr)
+	}
 	channelName := ""
 	if chName != nil {
 		channelName = *chName

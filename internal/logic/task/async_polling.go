@@ -545,7 +545,12 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 			taskDataMap["plugin_state"] = state
 		}
 	}
-	taskData, _ := json.Marshal(taskDataMap)
+	taskData, mErr := json.Marshal(taskDataMap)
+	if mErr != nil {
+		// taskDataMap 的值多来自上游 JSON（已 json.Valid 预校验），失败概率极低；
+		// 但失败时 taskData 为 null 字节会原样发给上游 FetchTask，必须留痕
+		g.Log().Warningf(ctx, "async_polling: 序列化 taskData 失败 task=%d: %v", task.ID, mErr)
+	}
 
 	// 渠道调试日志（轮询记录，仅段2/段3——后台轮询无客户端交互）：
 	// 节流规则 = 只在「状态/进度相对上一次轮询发生变化」时落库（任务行 CAS 前的值即上一次

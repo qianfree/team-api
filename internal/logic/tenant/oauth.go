@@ -336,7 +336,7 @@ func (s *sTenant) OAuthCallback(ctx context.Context, req *v1.OAuthCallbackReq) (
 		if err != nil {
 			return nil, err
 		}
-		_ = common.RecordLoginHistory(ctx, "tenant", userID, tenantID, "sso", ipAddress, deviceInfo, "", true, "")
+		recordLoginHistorySafe(ctx, "tenant", userID, tenantID, "sso", ipAddress, deviceInfo, "", true, "")
 		return &v1.OAuthCallbackRes{
 			TotpRequired:     true,
 			ProvisionalToken: provisionalToken,
@@ -365,7 +365,7 @@ func (s *sTenant) OAuthCallback(ctx context.Context, req *v1.OAuthCallbackReq) (
 	}
 
 	// 记录登录历史
-	_ = common.RecordLoginHistory(ctx, "tenant", userID, tenantID, "sso", ipAddress, deviceInfo, "", true, "")
+	recordLoginHistorySafe(ctx, "tenant", userID, tenantID, "sso", ipAddress, deviceInfo, "", true, "")
 
 	return &v1.OAuthCallbackRes{
 		AccessToken:  tokenPair.AccessToken,

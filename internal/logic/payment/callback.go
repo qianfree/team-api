@@ -180,9 +180,12 @@ func QueryOrderPaid(ctx context.Context, orderNo string) bool {
 		return false
 	}
 	var status string
-	_ = dao.OrdOrders.Ctx(ctx).
+	if err := dao.OrdOrders.Ctx(ctx).
 		Where("order_no", orderNo).
 		Fields("status").
-		Scan(&status)
+		Scan(&status); err != nil {
+		// 仅影响回跳展示（按未支付展示），失败留痕便于排查 DB 抖动
+		g.Log().Warningf(ctx, "查询订单支付状态失败 orderNo=%s: %v", orderNo, err)
+	}
 	return status == "paid" || status == "fulfilled"
 }

@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"context"
 	crand "crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
+	"github.com/shopspring/decimal"
 
 	"github.com/qianfree/team-api/internal/logic/billing"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
@@ -128,7 +130,7 @@ func HandleSyncImageSubmit(r *ghttp.Request, body []byte, rc *relay_handler.Task
 	// 必须就地退掉上一步的预扣，避免冻结额被永久占用。
 	publicTaskID, err := generateSyncImagePublicID()
 	if err != nil {
-		_ = taskBillingProvider.SettleTaskFailed(ctx, rc.TenantID, rc.RequestID, preDeduct)
+		releaseSyncImagePreDeduct(ctx, rc, preDeduct)
 		g.Log().Errorf(ctx, "sync_image: generate task ID failed, refunded pre-deduct: %v", err)
 		writeSyncImageError(w, http.StatusInternalServerError, "generate task ID failed")
 		return
@@ -180,7 +182,7 @@ func HandleSyncImageSubmit(r *ghttp.Request, body []byte, rc *relay_handler.Task
 		SubmitTime:      &now,
 	}
 	if err := taskDataProvider.CreateTask(ctx, asyncTask); err != nil {
-		_ = taskBillingProvider.SettleTaskFailed(ctx, rc.TenantID, rc.RequestID, preDeduct)
+		releaseSyncImagePreDeduct(ctx, rc, preDeduct)
 		writeSyncImageError(w, http.StatusInternalServerError, "create task record failed: "+err.Error())
 		return
 	}
@@ -215,7 +217,7 @@ func HandleSyncImageSubmit(r *ghttp.Request, body []byte, rc *relay_handler.Task
 		SubmitTime:      now,
 	}
 	if !task.EnqueueSyncImageJob(job) {
-		_ = taskBillingProvider.SettleTaskFailed(ctx, rc.TenantID, rc.RequestID, preDeduct)
+		releaseSyncImagePreDeduct(ctx, rc, preDeduct)
 		_ = taskDataProvider.UpdateTaskCAS(ctx, &relay_common.AsyncTask{
 			ID:             created.ID,
 			Status:         "FAILURE",
@@ -327,6 +329,15 @@ func generateSyncImagePublicID() (string, error) {
 		return "", err
 	}
 	return "task_" + hex.EncodeToString(b), nil
+}
+
+// releaseSyncImagePreDeduct 失败路径释放预扣冻结（原 `_ = SettleTaskFailed` 静默吞错）：
+// 冻结款未释放会持续占用租户资金，失败必须留痕；prededuct_sweep cron 自愈兜底。
+func releaseSyncImagePreDeduct(ctx context.Context, rc *relay_handler.TaskRelayContext, preDeduct decimal.Decimal) {
+	if rErr := taskBillingProvider.SettleTaskFailed(ctx, rc.TenantID, rc.RequestID, preDeduct); rErr != nil {
+		g.Log().Errorf(ctx, "sync_image: 释放预扣冻结失败（等待 prededuct_sweep 自愈）: request=%s tenant=%d frozen=%s err=%v",
+			rc.RequestID, rc.TenantID, preDeduct, rErr)
+	}
 }
 
 func writeSyncImageError(w http.ResponseWriter, statusCode int, message string) {

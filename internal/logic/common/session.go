@@ -236,7 +236,10 @@ func GetSessionByRefreshToken(ctx context.Context, refreshToken string) (*entity
 				ip = r.GetClientIp()
 				ua = r.GetHeader("User-Agent")
 			}
-			_ = RecordLoginHistory(ctx, sess.UserType, sess.UserId, sess.TenantId, "refresh", ip, ua, "", false, "刷新令牌重放，会话已吊销")
+			// 安全事件（令牌重放）入库失败必须留痕——事件本身已由下方 Warningf 记录，历史表丢失可据此对账
+			if lhErr := RecordLoginHistory(ctx, sess.UserType, sess.UserId, sess.TenantId, "refresh", ip, ua, "", false, "刷新令牌重放，会话已吊销"); lhErr != nil {
+				g.Log().Errorf(ctx, "记录刷新令牌重放安全事件失败 session=%d: %v", sessionID, lhErr)
+			}
 			g.Log().Warningf(ctx, "refresh token replay detected: user_type=%s user_id=%d session=%d", sess.UserType, sess.UserId, sessionID)
 			return nil, true, nil
 		}

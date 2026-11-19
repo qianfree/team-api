@@ -508,6 +508,16 @@ func newSettleContext(parent context.Context) (context.Context, context.CancelFu
 	return context.WithTimeout(context.WithoutCancel(parent), 30*time.Second)
 }
 
+// releasePreDeduct 失败路径释放预扣冻结的统一入口（原各处 `_ = billing.SettleFailed(...)` 静默吞错）：
+// 冻结款未释放会持续占用租户资金，失败必须留痕排查；prededuct_sweep cron 每 2 分钟
+// 按「重算 frozen = Σ 幸存预扣」自愈兜底，此处日志即自愈前的排障线索。
+func releasePreDeduct(ctx context.Context, billing common.BillingProvider, tenantID int64, requestID string, amount float64) {
+	if rErr := billing.SettleFailed(ctx, tenantID, requestID, amount); rErr != nil {
+		g.Log().Errorf(ctx, "[RelayHandler] 释放预扣冻结失败（等待 prededuct_sweep 自愈）: request=%s tenant=%d frozen=%.6f err=%v",
+			requestID, tenantID, amount, rErr)
+	}
+}
+
 // settleSuccessfulRequest 成功路径的计费结算、健康度更新和用量记录。
 func settleSuccessfulRequest(
 	rc *RelayContext,
@@ -754,11 +764,11 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		// 各多付一次 Redis 往返，只为让"额度已耗尽"的请求少走一步预扣+退款，得不偿失
 		//（该场景已被上游 QPS 限流兜底），故移除。
 		if err := billing.CheckApiKeyQuota(ctx, rc.ApiKeyID, amt); err != nil {
-			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, amt)
+			releasePreDeduct(ctx, billing, rc.TenantID, rc.RequestID, amt)
 			return nil, nil, constant.NewQuotaError("API key quota exceeded", nil)
 		}
 		if err := billing.CheckMemberQuota(ctx, rc.TenantID, rc.UserID, amt); err != nil {
-			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, amt)
+			releasePreDeduct(ctx, billing, rc.TenantID, rc.RequestID, amt)
 			return nil, nil, constant.NewQuotaError("member quota exceeded", nil)
 		}
 	}
@@ -787,7 +797,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		// 不记失败用量、不打无可用渠道告警（与下方 MaterializeSelection 的处理一致）
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			if billing != nil && preDeductAmount > 0 {
-				_ = billing.SettleFailed(context.WithoutCancel(ctx), rc.TenantID, rc.RequestID, preDeductAmount)
+				releasePreDeduct(context.WithoutCancel(ctx), billing, rc.TenantID, rc.RequestID, preDeductAmount)
 			}
 			return nil, v.billingResult, err
 		}
@@ -825,7 +835,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			// 不打无可用渠道告警、不污染渠道健康统计
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				if billing != nil && preDeductAmount > 0 {
-					_ = billing.SettleFailed(context.WithoutCancel(ctx), rc.TenantID, rc.RequestID, preDeductAmount)
+					releasePreDeduct(context.WithoutCancel(ctx), billing, rc.TenantID, rc.RequestID, preDeductAmount)
 				}
 				return nil, v.billingResult, ctxErr
 			}
@@ -836,7 +846,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			// 也不按全部渠道失败记 ERROR 告警/失败用量；事件仍由审计日志与调度监控计数覆盖
 			if len(channelErrors) > 0 && statefulMismatchCount == len(channelErrors) {
 				if billing != nil && preDeductAmount > 0 {
-					_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
+					releasePreDeduct(ctx, billing, rc.TenantID, rc.RequestID, preDeductAmount)
 				}
 				return nil, v.billingResult, constant.NewRequestError(
 					constant.StatefulResponsesSwitchEndpointHint, nil)
@@ -852,7 +862,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			// 静默退出，不记入 channelErrors，不触发渠道健康惩罚，退还预扣款项后返回
 			if errors.Is(mErr, context.Canceled) || errors.Is(mErr, context.DeadlineExceeded) {
 				if billing != nil && preDeductAmount > 0 {
-					_ = billing.SettleFailed(context.WithoutCancel(ctx), rc.TenantID, rc.RequestID, preDeductAmount)
+					releasePreDeduct(context.WithoutCancel(ctx), billing, rc.TenantID, rc.RequestID, preDeductAmount)
 				}
 				return nil, v.billingResult, mErr
 			}
@@ -879,7 +889,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		if v.relayMode == constant.RelayModeImagesGenerations &&
 			constant.IsAsyncImageModel(constant.ProviderType(selection.ChannelType), selection.UpstreamModelName) {
 			if billing != nil && preDeductAmount > 0 {
-				_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
+				releasePreDeduct(ctx, billing, rc.TenantID, rc.RequestID, preDeductAmount)
 			}
 			return nil, v.billingResult, constant.NewRequestError(
 				"this image model uses asynchronous generation on Alibaba DashScope; submit via POST /v1/images/generations/async and poll for the result", nil)
@@ -919,7 +929,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		if adaptor == nil {
 			g.Log().Errorf(ctx, "[RelayHandler] No adaptor found for channelType: %d", selection.ChannelType)
 			if billing != nil && preDeductAmount > 0 {
-				_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
+				releasePreDeduct(ctx, billing, rc.TenantID, rc.RequestID, preDeductAmount)
 			}
 			dbgAttempt.MarkFinal(fmt.Errorf("unsupported channel type: %d", selection.ChannelType))
 			return nil, v.billingResult, fmt.Errorf("unsupported channel type: %d", selection.ChannelType)
@@ -944,7 +954,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 					attempt, selection.ChannelID, selection.ChannelName, v.modelName, err))
 				if reportProtocolMismatch(ctx, sess, err) == dispatch.DecisionAbort {
 					if billing != nil && preDeductAmount > 0 {
-						_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
+						releasePreDeduct(ctx, billing, rc.TenantID, rc.RequestID, preDeductAmount)
 					}
 					dbgAttempt.MarkFinal(err)
 					return nil, v.billingResult, constant.NewRequestError(
@@ -954,7 +964,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 				continue
 			}
 			if billing != nil && preDeductAmount > 0 {
-				_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
+				releasePreDeduct(ctx, billing, rc.TenantID, rc.RequestID, preDeductAmount)
 			}
 			dbgAttempt.MarkFinal(err)
 			return nil, v.billingResult, err
@@ -1299,7 +1309,7 @@ func handleChannelUnavailable(
 ) *channelUnavailableResult {
 	if err != common.ErrChannelUnavailable {
 		if billing != nil && preDeductAmount > 0 {
-			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
+			releasePreDeduct(ctx, billing, rc.TenantID, rc.RequestID, preDeductAmount)
 		}
 		return &channelUnavailableResult{nil, v.billingResult, err}
 	}
@@ -1311,7 +1321,7 @@ func handleChannelUnavailable(
 
 	if len(channelErrors) > 0 {
 		if billing != nil && preDeductAmount > 0 {
-			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
+			releasePreDeduct(ctx, billing, rc.TenantID, rc.RequestID, preDeductAmount)
 		}
 		// 全部渠道失败是真实运营告警，保留 ERROR 级别；但调用栈固定无意义，禁用堆栈打印
 		g.Log().Stack(false).Errorf(ctx, "[RelayHandler] All %d channels failed for model=%s tenant=%d user=%d request=%s.%s Failure details: %s",
@@ -1337,7 +1347,7 @@ func handleChannelUnavailable(
 	}
 
 	if billing != nil && preDeductAmount > 0 {
-		_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
+		releasePreDeduct(ctx, billing, rc.TenantID, rc.RequestID, preDeductAmount)
 	}
 	// 无可用渠道属于正常业务条件（模型未配渠道/容量满/熔断中等），降级为 Warning 并禁用堆栈打印；
 	// 具体原因由调度器的排除明细摘要给出（熔断OPEN/半开探测限流/容量租约满/凭证冷却/目录为空）

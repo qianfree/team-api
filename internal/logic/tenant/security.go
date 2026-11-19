@@ -310,10 +310,13 @@ func buildTenantUserMapLocal(ctx context.Context, records []entity.AudLoginHisto
 		ids = append(ids, id)
 	}
 	var users []entity.TntUsers
-	_ = dao.TntUsers.Ctx(ctx).
+	if err := dao.TntUsers.Ctx(ctx).
 		Fields("id, username, display_name").
 		WhereIn("id", ids).
-		Scan(&users)
+		Scan(&users); err != nil {
+		// 查询失败时映射为空（仅影响展示字段），留痕排查
+		g.Log().Warningf(ctx, "查询租户用户摘要失败（构建用户映射）: %v", err)
+	}
 	for _, u := range users {
 		m[u.Id] = tenantUserBriefLocal{Username: u.Username, DisplayName: u.DisplayName}
 	}

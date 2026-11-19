@@ -36,7 +36,11 @@ func GetTenantEffectiveLimits(ctx context.Context, tenantID int64) (maxMembers i
 	// 未自定义的字段从等级配置取
 	if tenant.MaxMembers <= 0 || tenant.MaxConcurrency <= 0 {
 		var config *entity.TntTenantLevelConfigs
-		_ = dao.TntTenantLevelConfigs.Ctx(ctx).Where("level", tenant.Level).Scan(&config)
+		if cfgErr := dao.TntTenantLevelConfigs.Ctx(ctx).Where("level", tenant.Level).Scan(&config); cfgErr != nil {
+			// 查询失败按「等级配置缺失」降级走默认值，但必须留痕：该值直接决定租户配额判定
+			g.Log().Warningf(ctx, "查询租户等级配置失败，按默认限制降级: tenant=%d level=%d err=%v", tenant.Id, tenant.Level, cfgErr)
+			config = nil
+		}
 		if tenant.MaxMembers <= 0 {
 			if config != nil {
 				maxMembers = config.MaxMembers // 0 表示无限制
@@ -74,7 +78,11 @@ func GetTenantEffectiveLimitsByEntity(ctx context.Context, tenant *entity.TntTen
 	// 未自定义的字段从等级配置取
 	if tenant.MaxMembers <= 0 || tenant.MaxConcurrency <= 0 {
 		var config *entity.TntTenantLevelConfigs
-		_ = dao.TntTenantLevelConfigs.Ctx(ctx).Where("level", tenant.Level).Scan(&config)
+		if cfgErr := dao.TntTenantLevelConfigs.Ctx(ctx).Where("level", tenant.Level).Scan(&config); cfgErr != nil {
+			// 查询失败按「等级配置缺失」降级走默认值，但必须留痕：该值直接决定租户配额判定
+			g.Log().Warningf(ctx, "查询租户等级配置失败，按默认限制降级: tenant=%d level=%d err=%v", tenant.Id, tenant.Level, cfgErr)
+			config = nil
+		}
 		if tenant.MaxMembers <= 0 {
 			if config != nil {
 				maxMembers = config.MaxMembers // 0 表示无限制

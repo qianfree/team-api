@@ -68,10 +68,13 @@ func CheckBalanceWarning(ctx context.Context, tenantID int64) {
 			Code string `json:"code"`
 			Name string `json:"name"`
 		}
-		_ = dao.TntTenants.Ctx(bgCtx).
+		if infoErr := dao.TntTenants.Ctx(bgCtx).
 			Where("id", tenantID).
 			Fields("code, name").
-			Scan(&tenantInfo)
+			Scan(&tenantInfo); infoErr != nil {
+			// 查询失败时通知变量缺租户名/代码（空值兜底），留痕排查
+			g.Log().Warningf(bgCtx, "[BALANCE WARNING] 查询租户信息失败 tenant=%d: %v", tenantID, infoErr)
+		}
 
 		// 站内通知
 		engine := common.NewNotificationEngine()
