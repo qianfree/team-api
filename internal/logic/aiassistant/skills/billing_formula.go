@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -140,7 +141,7 @@ weekday() >= 1 && weekday() <= 5 && hour() >= 9 && hour() < 18 ? 2 : 1
 }
 
 // Validate 复用 formula.Evaluate（与管理端「校验并试算」、保存烟测同一口径）。
-func (BillingFormulaSkill) Validate(code string) *Report {
+func (BillingFormulaSkill) Validate(_ context.Context, code string) *Report {
 	src := strings.TrimSpace(code)
 	if src == "" {
 		return &Report{Skill: KeyBillingFormula, OK: false, Error: "表达式为空"}

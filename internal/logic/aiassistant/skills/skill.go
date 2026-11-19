@@ -4,6 +4,7 @@
 package skills
 
 import (
+	"context"
 	"sort"
 	"strings"
 )
@@ -40,11 +41,11 @@ type Report struct {
 
 // Skill 领域技能接口。新增技能（override 规则、SQL 思路等）实现本接口并注册。
 type Skill interface {
-	Key() string                  // 唯一标识（chat 请求 skills 字段取值）
-	Label() string                // 中文标签
-	Fence() string                // 约定的四反引号围栏语言标记（提示词中告知模型）
-	Reference() string            // 注入 system prompt 的领域参考
-	Validate(code string) *Report // 本地校验（不调外部服务）
+	Key() string                                       // 唯一标识（chat 请求 skills 字段取值）
+	Label() string                                     // 中文标签
+	Fence() string                                     // 约定的四反引号围栏语言标记（提示词中告知模型）
+	Reference() string                                 // 注入 system prompt 的领域参考
+	Validate(ctx context.Context, code string) *Report // 本地校验（不调外部服务）；ctx 为请求链路 ctx，供内部执行感知取消
 }
 
 var registry = map[string]Skill{

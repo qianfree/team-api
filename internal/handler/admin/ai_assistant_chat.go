@@ -186,7 +186,7 @@ func HandleAiAssistantChat(r *ghttp.Request) {
 
 	if code != "" && len(activeSkills) > 0 {
 		if s, ok := skills.Get(aiassistant.SkillKeyForFence(fenceLang, activeSkills)); ok {
-			report := s.Validate(strings.TrimSuffix(code, "\n"))
+			report := s.Validate(ctx, strings.TrimSuffix(code, "\n"))
 			if res.Truncated() {
 				// 截断的报告要能自解释根因，否则只有一句「编译失败」误导用户
 				report.OK = false

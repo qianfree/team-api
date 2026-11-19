@@ -158,8 +158,8 @@ func OperationLog(r *ghttp.Request) {
 		}
 	}
 
-	safego.Run(r.Context(), "middleware:operation_log", func(context.Context) {
-		ctx := context.Background()
+	// WithoutCancel：落库在响应写出后执行，脱离请求取消但保留 ctxvar（request_id）
+	safego.Run(context.WithoutCancel(r.Context()), "middleware:operation_log", func(ctx context.Context) {
 		_, err := lcommon.AuditModelCtx(ctx, "aud_operation_logs").Data(logData).Insert()
 		if err != nil {
 			g.Log().Errorf(ctx, "write operation log: %v", err)

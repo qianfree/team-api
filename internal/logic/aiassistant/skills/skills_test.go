@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -21,7 +22,7 @@ func TestBillingFormulaReferenceDynamic(t *testing.T) {
 // TestBillingFormulaValidate 合法/非法公式的校验闭环。
 func TestBillingFormulaValidate(t *testing.T) {
 	s := BillingFormulaSkill{}
-	rep := s.Validate("p*2+c*6")
+	rep := s.Validate(context.Background(), "p*2+c*6")
 	if !rep.OK {
 		t.Fatalf("合法公式应通过: %+v", rep)
 	}
@@ -29,17 +30,17 @@ func TestBillingFormulaValidate(t *testing.T) {
 		t.Fatal("应返回烟测试算结果")
 	}
 
-	rep = s.Validate(`p*2+u("no_such_key")`)
+	rep = s.Validate(context.Background(), `p*2+u("no_such_key")`)
 	if rep.OK || !strings.Contains(rep.Error, "no_such_key") {
 		t.Fatalf("未注册 u() key 应拒绝: %+v", rep)
 	}
 
-	rep = s.Validate("((p*")
+	rep = s.Validate(context.Background(), "((p*")
 	if rep.OK {
 		t.Fatal("语法错误应拒绝")
 	}
 
-	rep = s.Validate("   ")
+	rep = s.Validate(context.Background(), "   ")
 	if rep.OK {
 		t.Fatal("空表达式应拒绝")
 	}
@@ -65,7 +66,7 @@ func TestJSPluginReferenceTemplate(t *testing.T) {
 
 // TestJSPluginValidateTemplate golden 模板自身应通过 dry-run 校验（引擎与契约的基准夹具）。
 func TestJSPluginValidateTemplate(t *testing.T) {
-	rep := JSPluginSkill{}.Validate(jsplugin.TemplateSource())
+	rep := JSPluginSkill{}.Validate(context.Background(), jsplugin.TemplateSource())
 	if !rep.OK {
 		t.Fatalf("golden 模板应通过校验: %+v", rep)
 	}
@@ -76,11 +77,11 @@ func TestJSPluginValidateTemplate(t *testing.T) {
 
 // TestJSPluginValidateBadSource 坏源码应 fail。
 func TestJSPluginValidateBadSource(t *testing.T) {
-	rep := JSPluginSkill{}.Validate("export const notMeta = 1")
+	rep := JSPluginSkill{}.Validate(context.Background(), "export const notMeta = 1")
 	if rep.OK {
 		t.Fatalf("缺 meta 的源码应不通过: %+v", rep)
 	}
-	rep = JSPluginSkill{}.Validate("")
+	rep = JSPluginSkill{}.Validate(context.Background(), "")
 	if rep.OK {
 		t.Fatal("空源码应不通过")
 	}

@@ -549,7 +549,8 @@ func goRecordTaskSubmitAudit(r *ghttp.Request, rc *relay_handler.TaskRelayContex
 
 // recordTaskSubmitAudit 记录异步任务提交的审计日志
 func recordTaskSubmitAudit(r *ghttp.Request, rc *relay_handler.TaskRelayContext, capture *ResponseCaptureWriter, body []byte) {
-	relayDataProvider.RecordAudit(context.Background(), &relay_common.AuditRecord{
+	// WithoutCancel：审计在响应写出后落库，脱离请求取消但保留 ctxvar（request_id）
+	relayDataProvider.RecordAudit(context.WithoutCancel(r.Context()), &relay_common.AuditRecord{
 		TenantID:        rc.TenantID,
 		UserID:          rc.UserID,
 		ApiKeyID:        rc.ApiKeyID,

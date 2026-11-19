@@ -251,7 +251,7 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 	}
 
 	// 6. 异步检查余额预警（GetWallet 读 Redis 权威值，实时准确）
-	safego.Run(context.Background(), "billing:balance_warning", func(ctx context.Context) {
+	safego.Run(context.WithoutCancel(ctx), "billing:balance_warning", func(ctx context.Context) {
 		CheckBalanceWarning(ctx, tenantID)
 	})
 
@@ -401,7 +401,7 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 	}
 
 	// 6. 异步检查余额预警（GetWallet 读 Redis 权威值，实时准确）
-	safego.Run(context.Background(), "billing:balance_warning", func(ctx context.Context) {
+	safego.Run(context.WithoutCancel(ctx), "billing:balance_warning", func(ctx context.Context) {
 		CheckBalanceWarning(ctx, tenantID)
 	})
 

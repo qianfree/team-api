@@ -70,7 +70,8 @@ func (r *DryRunReport) HasFail() bool {
 
 // DryRun 执行上传前试运行，永不返回 error——所有失败都体现在报告的检查项里，
 // 由前端按 fail/warn 分级呈现（编译失败也只是一条 fail，不是接口错误）。
-func DryRun(source string) *DryRunReport {
+// ctx 为调用方请求链路 ctx：样例执行感知取消（管理端试运行/API 助手技能校验均为同步请求路径）。
+func DryRun(ctx context.Context, source string) *DryRunReport {
 	report := &DryRunReport{}
 	engine := NewGojaEngine()
 	compiled, err := engine.Compile(source)
@@ -118,7 +119,7 @@ func DryRun(source string) *DryRunReport {
 	defer inst.Close()
 	pool := NewPluginPool(engine, compiled, opts)
 	defer pool.Close()
-	ctx := withDryRunMarker(context.Background())
+	ctx = withDryRunMarker(ctx)
 	has := inst.HasHook
 
 	report.Checks = append(report.Checks, dryRunHookCompleteness(m, has))

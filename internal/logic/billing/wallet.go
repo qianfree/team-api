@@ -165,7 +165,8 @@ func readWalletHash(ctx context.Context, tenantID int64) (balanceMicro, frozenMi
 // frozen 归零（接受窗口期超扣风险）；部分丢失（如 hash 被误删）时幸存明细仍能提供精确冻结。
 func rebuildWalletFromDB(ctx context.Context, tenantID int64) error {
 	_, err, _ := walletRebuildGroup.Do(strconv.FormatInt(tenantID, 10), func() (interface{}, error) {
-		return nil, doRebuildWalletFromDB(context.Background(), tenantID)
+		// WithoutCancel：singleflight 可能跨请求生命周期执行，脱离取消但保留 ctxvar（request_id）
+		return nil, doRebuildWalletFromDB(context.WithoutCancel(ctx), tenantID)
 	})
 	return err
 }

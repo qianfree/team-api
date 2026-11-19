@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"context"
 	"strings"
 
 	"github.com/qianfree/team-api/internal/jsplugin"
@@ -139,12 +140,12 @@ func (JSPluginSkill) Reference() string {
 }
 
 // Validate 复用 jsplugin.DryRun：与插件上传前自检、激活校验同一套检查。
-func (JSPluginSkill) Validate(code string) *Report {
+func (JSPluginSkill) Validate(ctx context.Context, code string) *Report {
 	src := strings.TrimSpace(code)
 	if src == "" {
 		return &Report{Skill: KeyJSPlugin, OK: false, Error: "插件源码为空"}
 	}
-	rep := jsplugin.DryRun(src)
+	rep := jsplugin.DryRun(ctx, src)
 	out := &Report{Skill: KeyJSPlugin, OK: !rep.HasFail()}
 	for _, c := range rep.Checks {
 		out.Checks = append(out.Checks, Check{Name: c.Name, Status: c.Status, Detail: c.Detail})

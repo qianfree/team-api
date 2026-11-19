@@ -78,8 +78,8 @@ func (s *sAdmin) JSPluginUpload(ctx context.Context, req *v1.JSPluginUploadReq) 
 // JSPluginDryRun 上传前试运行：编译 / 钩子齐备性 / 跨插件冲突预检 / 样例执行 /
 // 静态 lint（见 jsplugin.DryRun）。不落库、不发布 generation、不发真实 HTTP，
 // 所有失败都体现在检查项里，接口本身始终成功返回。
-func (s *sAdmin) JSPluginDryRun(_ context.Context, req *v1.JSPluginDryRunReq) (*v1.JSPluginDryRunRes, error) {
-	report := jsplugin.DryRun(req.Source)
+func (s *sAdmin) JSPluginDryRun(ctx context.Context, req *v1.JSPluginDryRunReq) (*v1.JSPluginDryRunRes, error) {
+	report := jsplugin.DryRun(ctx, req.Source)
 	res := &v1.JSPluginDryRunRes{
 		Checks: make([]v1.JSPluginDryRunCheck, 0, len(report.Checks)),
 		Pass:   !report.HasFail(),

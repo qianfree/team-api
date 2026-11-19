@@ -455,7 +455,7 @@ func recordRealtimeUsage(
 		record.CacheReadCost = settleResult.CacheReadCost
 	}
 
-	provider.RecordUsage(context.Background(), record)
+	provider.RecordUsage(context.WithoutCancel(r.Context()), record)
 }
 
 // extractModelFromEvent 从 WebSocket 事件中提取模型名称

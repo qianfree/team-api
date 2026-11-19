@@ -348,7 +348,7 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 	}
 
 	// 4. 异步检查余额预警
-	safego.Run(context.Background(), "billing:balance_warning", func(ctx context.Context) {
+	safego.Run(context.WithoutCancel(ctx), "billing:balance_warning", func(ctx context.Context) {
 		CheckBalanceWarning(ctx, tenantID)
 	})
 

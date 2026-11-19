@@ -1,6 +1,7 @@
 package jsplugin
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -12,7 +13,7 @@ func TestDemoEchoFileDryRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("读取示例插件失败: %v", err)
 	}
-	report := DryRun(string(data))
+	report := DryRun(context.Background(), string(data))
 	for _, c := range report.Checks {
 		t.Logf("检查项 %-16s %s | %s", c.Name, c.Status, c.Detail)
 		if c.Status == "fail" {

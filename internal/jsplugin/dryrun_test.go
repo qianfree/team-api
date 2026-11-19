@@ -1,6 +1,7 @@
 package jsplugin
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -77,7 +78,7 @@ func TestDryRunBuiltinsFullChain(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		report := DryRun(string(data))
+		report := DryRun(context.Background(), string(data))
 		byName := dryRunChecksByName(t, report)
 		for _, c := range report.Checks {
 			if c.Status == dryRunFail {
@@ -94,7 +95,7 @@ func TestDryRunBuiltinsFullChain(t *testing.T) {
 
 // TestDryRunGoldenFullChain golden：后半段调用链（估算/标准端点/受理解析/轮询/渲染）全部 pass。
 func TestDryRunGoldenFullChain(t *testing.T) {
-	byName := dryRunChecksByName(t, DryRun(dryRunGoldenSource(t)))
+	byName := dryRunChecksByName(t, DryRun(context.Background(), dryRunGoldenSource(t)))
 	for _, name := range []string{"standard-endpoint", "sample-estimate", "sample-parse-submit", "sample-query", "sample-render"} {
 		c, ok := byName[name]
 		if !ok || c.Status != dryRunPass {
@@ -153,13 +154,13 @@ func TestDryRunProgrammingErrorFails(t *testing.T) {
 	// 提交链：调用未定义函数
 	src := dryRunPatch(t, base, `return { url: "/v1/create", method: "POST", body: ctx.body || {} };`,
 		`return { url: buildUrl(), method: "POST" };`)
-	if c := dryRunChecksByName(t, DryRun(src))["sample-build"]; c.Status != dryRunFail || !strings.Contains(c.Detail, "编程错误") {
+	if c := dryRunChecksByName(t, DryRun(context.Background(), src))["sample-build"]; c.Status != dryRunFail || !strings.Contains(c.Detail, "编程错误") {
 		t.Errorf("sample-build 期望 fail(编程错误)，实际 %s: %s", c.Status, c.Detail)
 	}
 	// 轮询链：构造响应输入下的 ReferenceError
 	src = dryRunPatch(t, base, `return { items: [{ taskId: t.taskId, done: true }] };`,
 		`return { items: [{ taskId: t.taskId, done: mapStatus(ctx.responseBody) }] };`)
-	if c := dryRunChecksByName(t, DryRun(src))["sample-query"]; c.Status != dryRunFail || !strings.Contains(c.Detail, "ReferenceError") {
+	if c := dryRunChecksByName(t, DryRun(context.Background(), src))["sample-query"]; c.Status != dryRunFail || !strings.Contains(c.Detail, "ReferenceError") {
 		t.Errorf("sample-query 期望 fail(ReferenceError)，实际 %s: %s", c.Status, c.Detail)
 	}
 }
@@ -170,7 +171,7 @@ func TestDryRunFabricatedRejectionPasses(t *testing.T) {
 		`return { taskId: String((ctx.responseBody || {}).data || "t-1") };`,
 		`if (ctx.responseBody.vendor_code !== 0) throw new Error("submit rejected");
 		return { taskId: "x" };`)
-	report := DryRun(src)
+	report := DryRun(context.Background(), src)
 	byName := dryRunChecksByName(t, report)
 	if c := byName["sample-parse-submit"]; c.Status != dryRunPass || !strings.Contains(c.Detail, "属正常") {
 		t.Errorf("sample-parse-submit 期望 pass(拒绝属正常)，实际 %s: %s", c.Status, c.Detail)
@@ -192,18 +193,18 @@ func TestDryRunUsageAndArtifactContract(t *testing.T) {
 
 	src := dryRunPatch(t, withSchema, `return { items: [{ taskId: t.taskId, done: true }] };`,
 		`return { items: [{ taskId: t.taskId, done: true, usage: { secs: 5 } }] };`)
-	if c := dryRunChecksByName(t, DryRun(src))["sample-query"]; c.Status != dryRunFail || !strings.Contains(c.Detail, "secs") {
+	if c := dryRunChecksByName(t, DryRun(context.Background(), src))["sample-query"]; c.Status != dryRunFail || !strings.Contains(c.Detail, "secs") {
 		t.Errorf("未声明用量键期望 sample-query fail，实际 %s: %s", c.Status, c.Detail)
 	}
 
 	src = dryRunPatch(t, withSchema, `return { items: [{ taskId: t.taskId, done: true }] };`,
 		`return { items: [{ taskId: t.taskId, done: true, artifacts: [{ key: "video", source: { type: "inline", path: "b64" } }] }] };`)
-	if c := dryRunChecksByName(t, DryRun(src))["sample-query"]; c.Status != dryRunFail || !strings.Contains(c.Detail, "mimeType") {
+	if c := dryRunChecksByName(t, DryRun(context.Background(), src))["sample-query"]; c.Status != dryRunFail || !strings.Contains(c.Detail, "mimeType") {
 		t.Errorf("inline 缺 mimeType 期望 sample-query fail，实际 %s: %s", c.Status, c.Detail)
 	}
 
 	src = withSchema + "\nexport function estimateUsage(ctx) { return { duration: 5 }; }\n"
-	if c := dryRunChecksByName(t, DryRun(src))["sample-estimate"]; c.Status != dryRunFail || !strings.Contains(c.Detail, "duration") {
+	if c := dryRunChecksByName(t, DryRun(context.Background(), src))["sample-estimate"]; c.Status != dryRunFail || !strings.Contains(c.Detail, "duration") {
 		t.Errorf("estimateUsage 未声明键期望 fail，实际 %s: %s", c.Status, c.Detail)
 	}
 }
@@ -212,7 +213,7 @@ func TestDryRunUsageAndArtifactContract(t *testing.T) {
 func TestDryRunAsyncHookFails(t *testing.T) {
 	src := dryRunPatch(t, dryRunFixturePlugin("dryrun-async", "dryrun_async_model"),
 		"export function buildQueryRequest(ctx) {", "export async function buildQueryRequest(ctx) {")
-	if c := dryRunChecksByName(t, DryRun(src))["sample-query"]; c.Status != dryRunFail {
+	if c := dryRunChecksByName(t, DryRun(context.Background(), src))["sample-query"]; c.Status != dryRunFail {
 		t.Errorf("async 钩子期望 sample-query fail，实际 %s: %s", c.Status, c.Detail)
 	}
 }
@@ -222,7 +223,7 @@ func TestDryRunAsyncHookFails(t *testing.T) {
 // 正常分支拒绝；同时证明 config 配置缺失不参与 decode/build（utils.config.get
 // 返回 undefined，golden 走默认值），不产生误报。
 func TestDryRunGolden(t *testing.T) {
-	report := DryRun(dryRunGoldenSource(t))
+	report := DryRun(context.Background(), dryRunGoldenSource(t))
 	if report.Manifest == nil || report.Manifest.Key != "golden" {
 		t.Fatalf("manifest 未解析: %+v", report.Manifest)
 	}
@@ -255,7 +256,7 @@ func TestDryRunGolden(t *testing.T) {
 
 // TestDryRunCompileFail 编译失败：唯一一条 fail，无 manifest。
 func TestDryRunCompileFail(t *testing.T) {
-	report := DryRun("export const broken = {{{")
+	report := DryRun(context.Background(), "export const broken = {{{")
 	if report.Manifest != nil {
 		t.Errorf("编译失败不应解析出 manifest: %+v", report.Manifest)
 	}
@@ -273,7 +274,7 @@ func TestDryRunCompileFail(t *testing.T) {
 // TestDryRunMissingHooks 缺提交链/轮询链钩子 → hooks fail；decode 钩子在位时
 // 样例执行仍进行（单项失败不阻断后续可执行的检查）。
 func TestDryRunMissingHooks(t *testing.T) {
-	report := DryRun(`export const meta = {
+	report := DryRun(context.Background(), `export const meta = {
 		apiVersion: 1, key: "dryrun-bad", name: "DryRun Bad", version: "1.0.0",
 		models: ["dryrun_bad_model"],
 		routes: [{ method: "POST", path: "/submit", type: "submit" }],
@@ -312,7 +313,7 @@ func TestDryRunFetchRelativeURL(t *testing.T) {
 		`return { url: "/v1/create", method: "POST", body: ctx.body || {} };`,
 		`utils.fetch({ url: "/v1/relative" });
 	return { url: "/v1/create", method: "POST", body: ctx.body || {} };`, 1)
-	report := DryRun(src)
+	report := DryRun(context.Background(), src)
 	byName := dryRunChecksByName(t, report)
 	if _, ok := byName["lint-fetch-url"]; ok {
 		t.Error("lint-fetch-url 检查项应已移除（utils.fetch 相对 URL 已合法）")
@@ -334,7 +335,7 @@ func TestDryRunConflict(t *testing.T) {
 	}
 	defer cleanup()
 
-	report := DryRun(dryRunFixturePlugin("dryrun-challenger", "dryrun_conflict_model"))
+	report := DryRun(context.Background(), dryRunFixturePlugin("dryrun-challenger", "dryrun_conflict_model"))
 	byName := dryRunChecksByName(t, report)
 	c := byName["conflict"]
 	if c.Status != dryRunFail {
@@ -353,7 +354,7 @@ func TestDryRunDecodeInvalidContract(t *testing.T) {
 	src := strings.Replace(dryRunFixturePlugin("dryrun-undeclared", "dryrun_undeclared_model"),
 		`return { kind: "submit", model: "dryrun_undeclared_model", requestBody: ctx.body || {} };`,
 		`return { kind: "submit", model: "undeclared_model", requestBody: ctx.body || {} };`, 1)
-	report := DryRun(src)
+	report := DryRun(context.Background(), src)
 	byName := dryRunChecksByName(t, report)
 	c := byName["sample-decode"]
 	if c.Status != dryRunFail || !strings.Contains(c.Detail, "未在 meta.models") {
@@ -375,7 +376,7 @@ func TestTemplateSource(t *testing.T) {
 	if compiled.Key != "golden" {
 		t.Errorf("模板 manifest.key 期望 golden，实际 %s", compiled.Key)
 	}
-	if DryRun(src).HasFail() {
+	if DryRun(context.Background(), src).HasFail() {
 		t.Error("模板 dry-run 不应存在 fail 项")
 	}
 }
@@ -392,7 +393,7 @@ func TestDryRunStandardEndpoint(t *testing.T) {
 		"routes: [{ method: \"POST\", path: \"/create\", type: \"submit\" }],\n\tstandardVideos: \"decodeVideos\",", 1) +
 		"\nexport function decodeVideos(ctx) {\n" +
 		"\treturn { kind: \"submit\", model: \"dryrun_sv_ok_model\", requestBody: ctx.body || {} };\n}\n"
-	byName := dryRunChecksByName(t, DryRun(declared))
+	byName := dryRunChecksByName(t, DryRun(context.Background(), declared))
 	if c := byName["standard-endpoint"]; c.Status != dryRunPass {
 		t.Errorf("声明+导出期望 pass，实际 %s: %s", c.Status, c.Detail)
 	}
@@ -401,7 +402,7 @@ func TestDryRunStandardEndpoint(t *testing.T) {
 	missingHook := strings.Replace(dryRunFixturePlugin("dryrun-sv-miss", "dryrun_sv_miss_model"),
 		"routes: [{ method: \"POST\", path: \"/create\", type: \"submit\" }],",
 		"routes: [{ method: \"POST\", path: \"/create\", type: \"submit\" }],\n\tstandardVideos: \"decodeVideos\",", 1)
-	byName = dryRunChecksByName(t, DryRun(missingHook))
+	byName = dryRunChecksByName(t, DryRun(context.Background(), missingHook))
 	c := byName["standard-endpoint"]
 	if c.Status != dryRunFail || !strings.Contains(c.Detail, "未导出") {
 		t.Errorf("声明缺钩子期望 fail，实际 %s: %s", c.Status, c.Detail)
@@ -411,14 +412,14 @@ func TestDryRunStandardEndpoint(t *testing.T) {
 	seconds := strings.Replace(dryRunFixturePlugin("dryrun-sv-warn", "dryrun_sv_warn_model"),
 		"routes: [{ method: \"POST\", path: \"/create\", type: \"submit\" }],",
 		"routes: [{ method: \"POST\", path: \"/create\", type: \"submit\" }],\n\tusageSchema: [{ key: \"seconds\", type: \"number\", unit: \"second\" }],", 1)
-	byName = dryRunChecksByName(t, DryRun(seconds))
+	byName = dryRunChecksByName(t, DryRun(context.Background(), seconds))
 	c = byName["standard-endpoint"]
 	if c.Status != dryRunWarn || !strings.Contains(c.Detail, "standardVideos") {
 		t.Errorf("疑似视频插件未声明期望 warn，实际 %s: %s", c.Status, c.Detail)
 	}
 
 	// 未声明且无按秒字段 → pass（夹具默认形态）
-	byName = dryRunChecksByName(t, DryRun(dryRunFixturePlugin("dryrun-sv-none", "dryrun_sv_none_model")))
+	byName = dryRunChecksByName(t, DryRun(context.Background(), dryRunFixturePlugin("dryrun-sv-none", "dryrun_sv_none_model")))
 	if c := byName["standard-endpoint"]; c.Status != dryRunPass {
 		t.Errorf("非视频插件期望 pass，实际 %s: %s", c.Status, c.Detail)
 	}

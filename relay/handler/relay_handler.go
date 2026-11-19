@@ -1009,7 +1009,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 						rc.RequestID, rc.TenantID, rErr)
 				}
 			}
-			recordFailedUsage(provider, rc, selection, attempt, v.modelName, v.relayMode, v.isStream, err, info.StreamStatus, info.UpstreamRequestID, v.reasoningEffort)
+			recordFailedUsage(settleCtx, provider, rc, selection, attempt, v.modelName, v.relayMode, v.isStream, err, info.StreamStatus, info.UpstreamRequestID, v.reasoningEffort)
 			recordChannelError(rc, selection, v.modelName, attempt, true, err, info.LatencyMs())
 			finalizeTrace(trace, rc, hop, false, attempt, selection, err.Error(), info.LatencyMs())
 			dbgAttempt.MarkFinal(err)
@@ -1064,7 +1064,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 					}
 					interruptSettle = settleResult
 				}
-				recordFailedUsageWithTokens(provider, rc, selection, attempt, v.modelName, v.relayMode, v.isStream, err, streamUsage, interruptSettle, info.StreamStatus, info.UpstreamRequestID, v.reasoningEffort)
+				recordFailedUsageWithTokens(settleCtx, provider, rc, selection, attempt, v.modelName, v.relayMode, v.isStream, err, streamUsage, interruptSettle, info.StreamStatus, info.UpstreamRequestID, v.reasoningEffort)
 				finalizeTrace(trace, rc, hop, false, attempt, selection, err.Error(), info.LatencyMs())
 				dbgAttempt.MarkFinal(err)
 				return usage, v.billingResult, err
@@ -1119,7 +1119,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 						rc.RequestID, rc.TenantID, rErr)
 				}
 			}
-			recordFailedUsage(provider, rc, selection, attempt, v.modelName, v.relayMode, v.isStream, err, info.StreamStatus, info.UpstreamRequestID, v.reasoningEffort)
+			recordFailedUsage(settleCtx, provider, rc, selection, attempt, v.modelName, v.relayMode, v.isStream, err, info.StreamStatus, info.UpstreamRequestID, v.reasoningEffort)
 			recordChannelError(rc, selection, v.modelName, attempt, true, err, info.LatencyMs())
 			finalizeTrace(trace, rc, hop, false, attempt, selection, err.Error(), info.LatencyMs())
 			dbgAttempt.MarkFinal(err)
@@ -1342,7 +1342,7 @@ func handleChannelUnavailable(
 		)
 		// 用量日志补录最后一次实际发出请求的渠道（多渠道连环失败不再渠道留空）；
 		// error_message 对租户可见，保持通用文案不拼渠道详情，完整明细看审计转发链路
-		recordFailedUsage(provider, rc, last.selection, last.attempt, v.modelName, v.relayMode, v.isStream, allFailedErr, nil, "", v.reasoningEffort)
+		recordFailedUsage(ctx, provider, rc, last.selection, last.attempt, v.modelName, v.relayMode, v.isStream, allFailedErr, nil, "", v.reasoningEffort)
 		return &channelUnavailableResult{nil, v.billingResult, allFailedErr}
 	}
 
@@ -1445,7 +1445,7 @@ func applyStreamEndDiag(record *common.UsageRecord, streamStatus *common.StreamS
 // 全部渠道失败时为最后一次实际发出上游请求的渠道（从未发出过则 nil，渠道字段留空）。
 // attempt 为该次尝试的重试轮次（0=首次），落 retry_index，与成功路径口径一致。
 // streamStatus 非 nil 且已有结束原因时，同步落 stream_end_reason 并修正 error_message。
-func recordFailedUsage(provider common.DataProvider, rc *RelayContext, selection *common.ChannelSelection, attempt int, modelName string, relayMode constant.RelayMode, isStream bool, err error, streamStatus *common.StreamStatus, upstreamRequestID string, reasoningEffort string) {
+func recordFailedUsage(ctx context.Context, provider common.DataProvider, rc *RelayContext, selection *common.ChannelSelection, attempt int, modelName string, relayMode constant.RelayMode, isStream bool, err error, streamStatus *common.StreamStatus, upstreamRequestID string, reasoningEffort string) {
 	record := &common.UsageRecord{
 		TenantID:       rc.TenantID,
 		UserID:         rc.UserID,
@@ -1472,13 +1472,13 @@ func recordFailedUsage(provider common.DataProvider, rc *RelayContext, selection
 		record.ChannelType = selection.ChannelType
 		record.UpstreamModel = selection.UpstreamModelName
 	}
-	provider.RecordUsage(context.Background(), record)
+	provider.RecordUsage(context.WithoutCancel(ctx), record)
 }
 
 // recordFailedUsageWithTokens 记录失败用量（含 token 明细，用于流中断等已有部分 usage 的场景）。
 // 与 recordFailedUsage 的区别：此函数会填充 token 字段，避免报表中流中断记录的 token 全为 0。
 // attempt 为失败尝试的重试轮次（0=首次），落 retry_index。
-func recordFailedUsageWithTokens(provider common.DataProvider, rc *RelayContext, selection *common.ChannelSelection, attempt int, modelName string, relayMode constant.RelayMode, isStream bool, err error, usage *common.Usage, settleResult *common.SettlementResult, streamStatus *common.StreamStatus, upstreamRequestID string, reasoningEffort string) {
+func recordFailedUsageWithTokens(ctx context.Context, provider common.DataProvider, rc *RelayContext, selection *common.ChannelSelection, attempt int, modelName string, relayMode constant.RelayMode, isStream bool, err error, usage *common.Usage, settleResult *common.SettlementResult, streamStatus *common.StreamStatus, upstreamRequestID string, reasoningEffort string) {
 	record := &common.UsageRecord{
 		TenantID:       rc.TenantID,
 		UserID:         rc.UserID,
@@ -1521,7 +1521,7 @@ func recordFailedUsageWithTokens(provider common.DataProvider, rc *RelayContext,
 		record.BillingMode = settleResult.BillingMode
 		record.BillingSource = settleResult.BillingSource
 	}
-	provider.RecordUsage(context.Background(), record)
+	provider.RecordUsage(context.WithoutCancel(ctx), record)
 }
 
 // recordChannelError 记录渠道错误事件到 chn_error_events（异步，不阻塞请求）
