@@ -430,9 +430,9 @@ func (info *RelayInfo) buildConvOptions() *convmeta.Options {
 			DefaultMaxTokens: defaultMaxTokensForClaude,
 		},
 		Gemini: convmeta.GeminiOptions{
-			FunctionCallThoughtSignatureEnabled: true, // TODO: 从配置读取
+			FunctionCallThoughtSignatureEnabled: true, // TODO(qian): 从渠道配置读取
 			SupportsImagine:                     supportsImagineModel,
-			SafetySetting:                       nil, // TODO: 从配置读取
+			SafetySetting:                       nil, // TODO(qian): 从渠道配置读取
 			WebSearchToGoogleSearch:             info.ChannelMeta != nil && info.ChannelMeta.Settings.WebSearchToGoogleSearch,
 		},
 		OpenRouterDialect: info.ChannelMeta != nil && info.ChannelMeta.ChannelType == int(constant.ProviderOpenRouter),

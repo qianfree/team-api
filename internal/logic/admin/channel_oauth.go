@@ -51,7 +51,7 @@ func (s *sAdmin) ChannelOAuthAuthURL(ctx context.Context, req *v1.ChannelOAuthAu
 			scope = oauth.ClaudeScopeInference
 		}
 
-		oauthData, err := oauth.ClaudeCookieAuth(req.SessionKey, scope)
+		oauthData, err := oauth.ClaudeCookieAuth(ctx, req.SessionKey, scope)
 		if err != nil {
 			return nil, gerror.Wrap(err, "Claude Cookie 授权失败")
 		}
@@ -112,13 +112,13 @@ func (s *sAdmin) ChannelOAuthExchange(ctx context.Context, req *v1.ChannelOAuthE
 
 	switch session.Platform {
 	case "claude":
-		oauthData, err = oauth.ClaudeExchangeCode(req.SessionID, req.Code)
+		oauthData, err = oauth.ClaudeExchangeCode(ctx, req.SessionID, req.Code)
 	case "openai":
-		oauthData, err = oauth.OpenAIExchangeCode(req.SessionID, req.Code, req.State)
+		oauthData, err = oauth.OpenAIExchangeCode(ctx, req.SessionID, req.Code, req.State)
 	case "codex":
-		oauthData, err = oauth.OpenAIExchangeCodeForPlatform("codex", req.SessionID, req.Code, req.State)
+		oauthData, err = oauth.OpenAIExchangeCodeForPlatform(ctx, "codex", req.SessionID, req.Code, req.State)
 	case "gemini":
-		oauthData, err = oauth.GeminiExchangeCode(req.SessionID, req.Code)
+		oauthData, err = oauth.GeminiExchangeCode(ctx, req.SessionID, req.Code)
 	default:
 		return nil, gerror.Newf("不支持的平台: %s", session.Platform)
 	}
@@ -182,11 +182,11 @@ func (s *sAdmin) ChannelOAuthRefresh(ctx context.Context, req *v1.ChannelOAuthRe
 	var newToken *oauth.OAuthKeyData
 	switch oauthData.Platform {
 	case "claude":
-		newToken, err = oauth.ClaudeRefreshToken(oauthData.RefreshToken)
+		newToken, err = oauth.ClaudeRefreshToken(ctx, oauthData.RefreshToken)
 	case "openai", "codex":
-		newToken, err = oauth.OpenAIRefreshToken(oauthData.RefreshToken)
+		newToken, err = oauth.OpenAIRefreshToken(ctx, oauthData.RefreshToken)
 	case "gemini":
-		newToken, err = oauth.GeminiRefreshToken(oauthData.RefreshToken)
+		newToken, err = oauth.GeminiRefreshToken(ctx, oauthData.RefreshToken)
 	default:
 		return nil, gerror.Newf("不支持的平台: %s", oauthData.Platform)
 	}

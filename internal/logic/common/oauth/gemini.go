@@ -1,6 +1,7 @@
 package oauth
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -102,7 +103,7 @@ func GeminiGenerateAuthURL(oauthType string) (authURL string, sessionID string, 
 }
 
 // GeminiExchangeCode 用授权码换取 OAuth 令牌
-func GeminiExchangeCode(sessionID, code string) (*OAuthKeyData, error) {
+func GeminiExchangeCode(ctx context.Context, sessionID, code string) (*OAuthKeyData, error) {
 	// 获取会话
 	session, ok := GlobalSessionStore.Get(sessionID)
 	if !ok {
@@ -129,13 +130,13 @@ func GeminiExchangeCode(sessionID, code string) (*OAuthKeyData, error) {
 	data.Set("code_verifier", session.CodeVerifier)
 	data.Set("redirect_uri", session.RedirectURI)
 
-	req, err := http.NewRequest(http.MethodPost, GeminiTokenURL, strings.NewReader(data.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, GeminiTokenURL, strings.NewReader(data.Encode()))
 	if err != nil {
 		return nil, fmt.Errorf("创建令牌请求失败: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := GetHTTPClient().Do(req)
+	resp, err := GetHTTPClient(ctx).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("请求 Google 令牌失败: %w", err)
 	}
@@ -162,7 +163,7 @@ func GeminiExchangeCode(sessionID, code string) (*OAuthKeyData, error) {
 	// 获取 project_id（仅 code_assist 类型）
 	var projectID string
 	if oauthType == "code_assist" {
-		projectID, err = geminiLoadCodeAssist(tokenResp.AccessToken)
+		projectID, err = geminiLoadCodeAssist(ctx, tokenResp.AccessToken)
 		if err != nil {
 			g.Log().Warningf(gctx.New(), "Gemini loadCodeAssist 失败: %v", err)
 			// 不阻断流程，projectID 留空
@@ -170,7 +171,7 @@ func GeminiExchangeCode(sessionID, code string) (*OAuthKeyData, error) {
 	}
 
 	// 获取用户邮箱
-	email, err := geminiGetUserInfo(tokenResp.AccessToken)
+	email, err := geminiGetUserInfo(ctx, tokenResp.AccessToken)
 	if err != nil {
 		g.Log().Warningf(gctx.New(), "Gemini 获取用户信息失败: %v", err)
 	}
@@ -198,8 +199,8 @@ func GeminiExchangeCode(sessionID, code string) (*OAuthKeyData, error) {
 }
 
 // GeminiRefreshToken 使用 refresh_token 刷新访问令牌
-// 内置最多 3 次重试，使用指数退避处理瞬时错误
-func GeminiRefreshToken(refreshToken string) (*OAuthKeyData, error) {
+// 内置最多 3 次重试，使用指数退避处理瞬时错误；退避等待期间感知 ctx 取消
+func GeminiRefreshToken(ctx context.Context, refreshToken string) (*OAuthKeyData, error) {
 	if refreshToken == "" {
 		return nil, fmt.Errorf("refresh_token 不能为空")
 	}
@@ -215,19 +216,23 @@ func GeminiRefreshToken(refreshToken string) (*OAuthKeyData, error) {
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
-			// 指数退避: 1s, 2s
+			// 指数退避: 1s, 2s（等待期间可被 ctx 取消打断）
 			backoff := time.Duration(1<<uint(attempt-1)) * time.Second
-			time.Sleep(backoff)
+			select {
+			case <-ctx.Done():
+				return nil, fmt.Errorf("Google 令牌刷新被取消: %w", ctx.Err())
+			case <-time.After(backoff):
+			}
 		}
 
-		req, err := http.NewRequest(http.MethodPost, GeminiTokenURL, strings.NewReader(data.Encode()))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, GeminiTokenURL, strings.NewReader(data.Encode()))
 		if err != nil {
 			lastErr = fmt.Errorf("创建刷新请求失败: %w", err)
 			continue
 		}
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-		resp, err := GetHTTPClient().Do(req)
+		resp, err := GetHTTPClient(ctx).Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("请求 Google 令牌失败: %w", err)
 			continue
@@ -290,10 +295,10 @@ func GeminiRefreshToken(refreshToken string) (*OAuthKeyData, error) {
 }
 
 // geminiLoadCodeAssist 调用 Google Code Assist API 获取 GCP 项目 ID
-func geminiLoadCodeAssist(accessToken string) (projectID string, err error) {
+func geminiLoadCodeAssist(ctx context.Context, accessToken string) (projectID string, err error) {
 	reqBody := `{"metadata":{"ideType":"ANTIGRAVITY","ideVersion":"1.20.6","ideName":"antigravity"}}`
 
-	req, err := http.NewRequest("POST", "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist", strings.NewReader(reqBody))
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist", strings.NewReader(reqBody))
 	if err != nil {
 		return "", fmt.Errorf("创建 loadCodeAssist 请求失败: %w", err)
 	}
@@ -301,7 +306,7 @@ func geminiLoadCodeAssist(accessToken string) (projectID string, err error) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "GeminiCLI/0.1.5 (Windows; AMD64)")
 
-	resp, err := GetHTTPClient().Do(req)
+	resp, err := GetHTTPClient(ctx).Do(req)
 	if err != nil {
 		return "", fmt.Errorf("请求 loadCodeAssist 失败: %w", err)
 	}
@@ -329,14 +334,14 @@ func geminiLoadCodeAssist(accessToken string) (projectID string, err error) {
 }
 
 // geminiGetUserInfo 获取 Google 用户信息（邮箱）
-func geminiGetUserInfo(accessToken string) (email string, err error) {
-	req, err := http.NewRequest("GET", "https://www.googleapis.com/oauth2/v2/userinfo", nil)
+func geminiGetUserInfo(ctx context.Context, accessToken string) (email string, err error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", "https://www.googleapis.com/oauth2/v2/userinfo", nil)
 	if err != nil {
 		return "", fmt.Errorf("创建 userinfo 请求失败: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
-	resp, err := GetHTTPClient().Do(req)
+	resp, err := GetHTTPClient(ctx).Do(req)
 	if err != nil {
 		return "", fmt.Errorf("请求 userinfo 失败: %w", err)
 	}

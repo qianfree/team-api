@@ -206,26 +206,36 @@ func (s *sTenant) TicketReply(ctx context.Context, req *v1.TenantTicketReplyReq)
 		return nil, common.NewBadRequestError("工单已关闭，请重新打开后再回复")
 	}
 
+	newStatus := ticket.Status
+	if ticket.Status == "processing" || ticket.Status == "pending" {
+		newStatus = "replied"
+	}
+
+	// 先条件更新状态再写回复（对齐 TicketClose 的三键条件更新）：
+	// 若并发方在读取校验后关闭了工单，此处 affected=0 直接报错，
+	// 避免回复落库后状态又被本次写回 replied（已关闭工单被「复活」）。
+	result, err := dao.SptTickets.Ctx(ctx).
+		Where("id", req.Id).
+		Where("tenant_id", tenantID).
+		Where("user_id", userID).
+		Where("status != ?", "closed").
+		Data(do.SptTickets{
+			Status: newStatus,
+		}).Update()
+	if err != nil {
+		return nil, err
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return nil, common.NewBadRequestError("工单已关闭，请重新打开后再回复")
+	}
+
 	_, err = dao.SptReplies.Ctx(ctx).Insert(do.SptReplies{
 		TicketId: req.Id,
 		UserId:   userID,
 		UserType: "tenant",
 		Content:  req.Content,
 	})
-	if err != nil {
-		return nil, err
-	}
-
-	newStatus := ticket.Status
-	if ticket.Status == "processing" || ticket.Status == "pending" {
-		newStatus = "replied"
-	}
-
-	_, err = dao.SptTickets.Ctx(ctx).
-		Where("id", req.Id).
-		Data(do.SptTickets{
-			Status: newStatus,
-		}).Update()
 	if err != nil {
 		return nil, err
 	}

@@ -219,9 +219,9 @@ func (a *MjAdaptor) GetChannelName() string {
 }
 
 // FetchImage 代理获取 MJ 图片
-func FetchImage(baseURL, apiKey, upstreamTaskID string) (*http.Response, error) {
+func FetchImage(ctx context.Context, baseURL, apiKey, upstreamTaskID string) (*http.Response, error) {
 	url := fmt.Sprintf("%s/mj/image/%s", strings.TrimRight(baseURL, "/"), upstreamTaskID)
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err
 	}

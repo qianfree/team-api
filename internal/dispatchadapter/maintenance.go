@@ -59,8 +59,16 @@ func startMaintenance(ctx context.Context, stop <-chan struct{}) {
 			case <-ticker.C:
 				runMaintenance(ctx)
 			case channelID := <-healthRefresh:
-				time.Sleep(healthRefreshDelay)
-				refreshChannelHealth(ctx, channelID)
+				// 去抖等待放独立 goroutine：原在 select 分支内 Sleep，500ms 等待期间
+				// ticker 任务与后续按需重算信号全部被拖延；改出后主循环立即回到 select
+				safego.Run(ctx, "dispatch:health_refresh", func(ctx context.Context) {
+					select {
+					case <-time.After(healthRefreshDelay):
+					case <-stop:
+						return
+					}
+					refreshChannelHealth(ctx, channelID)
+				})
 			case <-stop:
 				return
 			}

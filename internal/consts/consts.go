@@ -249,6 +249,9 @@ const (
 	// JS plugin management (jsplugin 渠道插件上传/激活/启停/删除的用户可修复校验错误，
 	// 文案中文自解释，凭 message 区分场景)
 	CodeJSPluginOperation = 10419
+
+	// Update check（检查更新失败：网络/解析异常，细节进日志不透出）
+	CodeUpdateCheckFailed = 10420
 )
 
 // Common error messages

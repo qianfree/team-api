@@ -13,6 +13,7 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 	"github.com/shopspring/decimal"
 
+	"github.com/qianfree/team-api/internal/consts"
 	"github.com/qianfree/team-api/internal/dao"
 	do "github.com/qianfree/team-api/internal/model/do"
 
@@ -273,7 +274,9 @@ func (s *sTenant) OrderPay(ctx context.Context, req *v1.TenantOrderPayReq) (*v1.
 
 	cfg, err := payment.GetChannelConfigAndProvider(ctx, req.PaymentChannel)
 	if err != nil {
-		return nil, lcommon.NewBusinessError(422, err.Error())
+		// 渠道配置细节（密钥缺失/格式错误等）只进日志，不透给客户端
+		g.Log().Warningf(ctx, "获取支付渠道配置失败 channel=%s: %v", req.PaymentChannel, err)
+		return nil, lcommon.NewBusinessError(consts.CodePaymentInvalidConfig, consts.MsgPaymentInvalidConfig)
 	}
 
 	provider := payment.GetProvider(req.PaymentChannel)
@@ -473,7 +476,9 @@ func (s *sTenant) RechargeCreate(ctx context.Context, req *v1.TenantRechargeCrea
 	}
 	cfg, err := payment.GetChannelConfigAndProvider(ctx, req.PaymentChannel)
 	if err != nil {
-		return nil, lcommon.NewBusinessError(422, err.Error())
+		// 渠道配置细节（密钥缺失/格式错误等）只进日志，不透给客户端
+		g.Log().Warningf(ctx, "获取支付渠道配置失败 channel=%s: %v", req.PaymentChannel, err)
+		return nil, lcommon.NewBusinessError(consts.CodePaymentInvalidConfig, consts.MsgPaymentInvalidConfig)
 	}
 
 	provider := payment.GetProvider(req.PaymentChannel)

@@ -303,12 +303,11 @@ func runInterruptGuarded(rt *goja.Runtime, d time.Duration, fn func() error) err
 }
 
 // isInterruptedErr 判断是否 goja 中断错误（超时/Interrupt 触发）。
+// 只认类型化断言：goja 的中断错误必然是 *goja.InterruptedError，
+// 字符串匹配 "interrupted" 会把插件自己抛的同名文案误判为引擎中断。
 func isInterruptedErr(err error) bool {
 	var interrupted *goja.InterruptedError
-	if gerror.As(err, &interrupted) {
-		return true
-	}
-	return strings.Contains(err.Error(), "interrupted")
+	return gerror.As(err, &interrupted)
 }
 
 // invoke 执行 JS 调用并做 JSON 边界转换，含 panic 与中断恢复。

@@ -237,7 +237,7 @@ func setCheckCache(ctx context.Context, result *CheckResult) {
 		return
 	}
 	ttl := int64(redisCacheTTL.Seconds())
-	// TODO: read from config update_check_interval_hours
+	// TODO(qian): 检查间隔改为配置项 update_check_interval_hours，替代编译期常量
 	g.Redis().Do(ctx, "SETEX", redisCacheKey, ttl, string(data))
 }
 

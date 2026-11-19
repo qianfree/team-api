@@ -19,7 +19,13 @@ type CronJob struct {
 	DisplayName string // 中文展示名，供管理后台列表展示；空则前端回退到 Name
 	Schedule    string // cron expression, e.g. "0 0 * * *" for daily at midnight
 	Handler     func(ctx context.Context) error
+	// Timeout 单次执行的最长时限；0 = 默认 10 分钟（对齐分布式锁 TTL——
+	// 超过锁 TTL 的任务下一轮会被放行并发执行，超时兜底防单轮无限挂起）
+	Timeout time.Duration
 }
+
+// defaultJobTimeout cron 任务默认超时（对齐锁 TTL 10 分钟）。
+const defaultJobTimeout = 10 * time.Minute
 
 // JobInfo contains info about a registered job for listing.
 type JobInfo struct {
@@ -260,9 +266,19 @@ func (cs *CronScheduler) runJobInternal(ctx context.Context, name, triggeredBy s
 	}
 	defer releaseCronLock(ctx, name, lockToken)
 
+	// 统一执行超时（2026-11 审计 §3.10）：裸 gctx.New() 无 deadline，长任务理论上
+	// 可无限跑（仅锁 TTL 兜底放行下一轮，本进程不中断）。默认 10 分钟对齐锁 TTL，
+	// 任务可通过 CronJob.Timeout 覆盖（聚合类长任务按需放宽）。
+	timeout := job.Timeout
+	if timeout <= 0 {
+		timeout = defaultJobTimeout
+	}
+	execCtx, execCancel := context.WithTimeout(ctx, timeout)
+	defer execCancel()
+
 	// Execute job
 	startTime := time.Now()
-	handlerErr := runHandlerSafely(ctx, job)
+	handlerErr := runHandlerSafely(execCtx, job)
 	duration := time.Since(startTime)
 
 	status := "succeeded"

@@ -206,17 +206,38 @@ func StreamScannerHandler(
 	timeoutTimer := time.NewTimer(streamTimeout)
 	defer timeoutTimer.Stop()
 
+	// shutdown 收尾序列：通知所有协程停止（先 signal 再 wait），各退出分支直接调用后 return
+	// （原 goto shutdown 写法违反规范禁令 goto，重构为闭包 + 早返回，行为不变）
+	shutdown := func() {
+		safeSendBool(stopChan)
+
+		waitDone := make(chan struct{})
+		go func() {
+			wg.Wait()
+			close(waitDone)
+		}()
+
+		select {
+		case <-waitDone:
+		case <-time.After(shutdownWaitTimeout):
+			g.Log().Warning(ctx, "StreamScanner: goroutine shutdown timeout")
+		}
+	}
+
 	for {
 		select {
 		case <-timeoutTimer.C:
 			info.StreamStatus.SetEndReason(common.StreamEndReasonTimeout,
 				fmt.Errorf("stream idle timeout: no data received for %v", streamTimeout))
-			goto shutdown
+			shutdown()
+			return
 		case <-stopChan:
-			goto shutdown
+			shutdown()
+			return
 		case <-ctx.Done():
 			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, ctx.Err())
-			goto shutdown
+			shutdown()
+			return
 		case <-resetChan:
 			// scanner 每读一行都通知重置
 			if !timeoutTimer.Stop() {
@@ -227,22 +248,6 @@ func StreamScannerHandler(
 			}
 			timeoutTimer.Reset(streamTimeout)
 		}
-	}
-
-shutdown:
-	// 通知所有协程停止（先 signal 再 wait）
-	safeSendBool(stopChan)
-
-	waitDone := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(waitDone)
-	}()
-
-	select {
-	case <-waitDone:
-	case <-time.After(shutdownWaitTimeout):
-		g.Log().Warning(ctx, "StreamScanner: goroutine shutdown timeout")
 	}
 }
 

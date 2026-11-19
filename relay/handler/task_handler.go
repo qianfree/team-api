@@ -393,7 +393,13 @@ func HandleTaskSubmit(
 		if err := billingProvider.SettleTaskFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount); err != nil {
 			g.Log().Errorf(ctx, "HandleTaskSubmit: SettleTaskFailed error, requestID=%s, amount=%.6f, err=%v", rc.RequestID, preDeductAmount.InexactFloat64(), err)
 		}
-		g.Log().Warningf(ctx, "HandleTaskSubmit: upstream response error, model=%s, status=%d, message=%q, body=%s", modelName, taskErr.StatusCode, taskErr.Message, string(taskData))
+		// 上游 body 原文可能携带上游域名/IP（RedactMessage 脱敏）且体积不可控（截断 2KB），
+		// 完整原文已在渠道调试日志（dbgAttempt）按需留存
+		leakedBody := helper.RedactMessage(string(taskData))
+		if len(leakedBody) > 2048 {
+			leakedBody = leakedBody[:2048] + "...(truncated)"
+		}
+		g.Log().Warningf(ctx, "HandleTaskSubmit: upstream response error, model=%s, status=%d, message=%q, body=%s", modelName, taskErr.StatusCode, taskErr.Message, leakedBody)
 		dbgAttempt.MarkFinal(taskErr)
 		writeTaskError(rc.Writer, taskErr.StatusCode, taskErr.Message, taskErr.ErrCode)
 		return
@@ -719,7 +725,7 @@ func HandleMjImageProxy(
 	}
 
 	// 代理获取图片
-	resp, err := midjourney.FetchImage(channel.BaseURL, channel.ApiKey, private.UpstreamTaskID)
+	resp, err := midjourney.FetchImage(ctx, channel.BaseURL, channel.ApiKey, private.UpstreamTaskID)
 	if err != nil {
 		writeTaskError(writer, http.StatusBadGateway, "fetch image failed: "+err.Error(), "")
 		return

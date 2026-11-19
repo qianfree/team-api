@@ -16,9 +16,9 @@ var (
 	proxyClientValue *http.Client
 )
 
-// GetHTTPClient returns an HTTP client configured with proxy if channel_proxy_url is set in system settings.
-// Rebuilds on each call so runtime config changes take effect.
-func GetHTTPClient() *http.Client {
+// GetHTTPClient 返回按系统设置 channel_proxy_url 配置了代理的 HTTP 客户端。
+// 每次调用都会复用已构建实例，运行时配置变更通过 ResetHTTPClient 生效。
+func GetHTTPClient(ctx context.Context) *http.Client {
 	proxyClientMu.RLock()
 	client := proxyClientValue
 	proxyClientMu.RUnlock()
@@ -28,11 +28,11 @@ func GetHTTPClient() *http.Client {
 
 	proxyClientMu.Lock()
 	defer proxyClientMu.Unlock()
-	// Double-check after acquiring write lock
+	// 拿到写锁后再做双重检查
 	if proxyClientValue != nil {
 		return proxyClientValue
 	}
-	proxyClientValue = buildProxyClient()
+	proxyClientValue = buildProxyClient(ctx)
 	return proxyClientValue
 }
 
@@ -43,17 +43,18 @@ func ResetHTTPClient() {
 	proxyClientValue = nil
 }
 
-func buildProxyClient() *http.Client {
+// buildProxyClient 构建带代理配置的 HTTP 客户端，配置读取与日志均透传调用方 ctx
+func buildProxyClient(ctx context.Context) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 
-	proxyURL := common.Config().GetString(context.Background(), "channel_proxy_url")
+	proxyURL := common.Config().GetString(ctx, "channel_proxy_url")
 	if proxyURL != "" {
 		parsed, err := url.Parse(proxyURL)
 		if err != nil {
-			g.Log().Warningf(context.Background(), "oauth: invalid proxy URL %q: %v", proxyURL, err)
+			g.Log().Warningf(ctx, "oauth: invalid proxy URL %q: %v", proxyURL, err)
 		} else {
 			transport.Proxy = http.ProxyURL(parsed)
-			g.Log().Infof(context.Background(), "oauth: using proxy %s", proxyURL)
+			g.Log().Infof(ctx, "oauth: using proxy %s", proxyURL)
 		}
 	}
 

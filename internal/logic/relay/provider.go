@@ -1263,11 +1263,11 @@ func refreshOAuthKeyLocked(ctx context.Context, keyID int64, encKey []byte) (str
 
 	switch oauthData.Platform {
 	case "claude":
-		newToken, err = loauth.ClaudeRefreshToken(oauthData.RefreshToken)
+		newToken, err = loauth.ClaudeRefreshToken(ctx, oauthData.RefreshToken)
 	case "openai", "codex":
-		newToken, err = loauth.OpenAIRefreshToken(oauthData.RefreshToken)
+		newToken, err = loauth.OpenAIRefreshToken(ctx, oauthData.RefreshToken)
 	case "gemini":
-		newToken, err = loauth.GeminiRefreshToken(oauthData.RefreshToken)
+		newToken, err = loauth.GeminiRefreshToken(ctx, oauthData.RefreshToken)
 	default:
 		return "", fmt.Errorf("unknown oauth platform: %s", oauthData.Platform)
 	}

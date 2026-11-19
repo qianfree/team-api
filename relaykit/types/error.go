@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 
@@ -403,7 +404,8 @@ func ErrOptionWithStatusCode(statusCode int) NewAPIErrorOptions {
 func ErrOptionWithHideErrMsg(replaceStr string) NewAPIErrorOptions {
 	return func(e *NewAPIError) {
 		if kitutil.Debug.Load() {
-			fmt.Printf("ErrOptionWithHideErrMsg: %s, origin error: %s", replaceStr, e.Err)
+			// 调试开关下的原错误留痕：走 stderr 标准日志（不污染 stdout 管道输出）
+			log.Printf("[relaykit] ErrOptionWithHideErrMsg: %s, origin error: %v", replaceStr, e.Err)
 		}
 		e.Err = errors.New(replaceStr)
 	}

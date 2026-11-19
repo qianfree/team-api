@@ -1,6 +1,7 @@
 package oauth
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
@@ -97,12 +98,12 @@ func OpenAIGenerateAuthURLForPlatform(platform string) (authURL string, sessionI
 }
 
 // OpenAIExchangeCode 使用授权码换取 OAuth 凭证
-func OpenAIExchangeCode(sessionID, code, state string) (*OAuthKeyData, error) {
-	return OpenAIExchangeCodeForPlatform("openai", sessionID, code, state)
+func OpenAIExchangeCode(ctx context.Context, sessionID, code, state string) (*OAuthKeyData, error) {
+	return OpenAIExchangeCodeForPlatform(ctx, "openai", sessionID, code, state)
 }
 
 // OpenAIExchangeCodeForPlatform 使用授权码换取 OAuth 凭证（支持 openai/codex platform 标记）。
-func OpenAIExchangeCodeForPlatform(platform, sessionID, code, state string) (*OAuthKeyData, error) {
+func OpenAIExchangeCodeForPlatform(ctx context.Context, platform, sessionID, code, state string) (*OAuthKeyData, error) {
 	session, ok := GlobalSessionStore.Get(sessionID)
 	if !ok {
 		return nil, fmt.Errorf("无效的会话 ID: %s", sessionID)
@@ -122,14 +123,14 @@ func OpenAIExchangeCodeForPlatform(platform, sessionID, code, state string) (*OA
 	form.Set("redirect_uri", OpenAIDefaultRedirectURI)
 	form.Set("code_verifier", session.CodeVerifier)
 
-	req, err := http.NewRequest(http.MethodPost, OpenAITokenURL, strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, OpenAITokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return nil, fmt.Errorf("创建 token 请求失败: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", "codex-cli/0.91.0")
 
-	resp, err := GetHTTPClient().Do(req)
+	resp, err := GetHTTPClient(ctx).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("请求 token 端点失败: %w", err)
 	}
@@ -141,8 +142,13 @@ func OpenAIExchangeCodeForPlatform(platform, sessionID, code, state string) (*OA
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		g.Log().Warningf(gctx.New(), "OpenAI token 交换失败, status=%d, body=%s", resp.StatusCode, string(body))
-		return nil, fmt.Errorf("token 交换失败 (HTTP %d): %s", resp.StatusCode, string(body))
+		// 上游 body 原文可能回显请求参数，截断后入日志，不整段倾倒
+		snippet := string(body)
+		if len(snippet) > 512 {
+			snippet = snippet[:512] + "...(truncated)"
+		}
+		g.Log().Warningf(ctx, "OpenAI token 交换失败, status=%d, body=%s", resp.StatusCode, snippet)
+		return nil, fmt.Errorf("token 交换失败 (HTTP %d): %s", resp.StatusCode, snippet)
 	}
 
 	var tokenResp openaiTokenResponse
@@ -178,21 +184,21 @@ func OpenAIExchangeCodeForPlatform(platform, sessionID, code, state string) (*OA
 }
 
 // OpenAIRefreshToken 使用 refresh token 刷新 OAuth 凭证
-func OpenAIRefreshToken(refreshToken string) (*OAuthKeyData, error) {
+func OpenAIRefreshToken(ctx context.Context, refreshToken string) (*OAuthKeyData, error) {
 	form := url.Values{}
 	form.Set("grant_type", "refresh_token")
 	form.Set("refresh_token", refreshToken)
 	form.Set("client_id", OpenAIClientID)
 	form.Set("scope", OpenAIRefreshScopes)
 
-	req, err := http.NewRequest(http.MethodPost, OpenAITokenURL, strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, OpenAITokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return nil, fmt.Errorf("创建 refresh 请求失败: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", "codex-cli/0.91.0")
 
-	resp, err := GetHTTPClient().Do(req)
+	resp, err := GetHTTPClient(ctx).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("请求 refresh 端点失败: %w", err)
 	}
@@ -204,8 +210,13 @@ func OpenAIRefreshToken(refreshToken string) (*OAuthKeyData, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		g.Log().Warningf(gctx.New(), "OpenAI token 刷新失败, status=%d, body=%s", resp.StatusCode, string(body))
-		return nil, fmt.Errorf("token 刷新失败 (HTTP %d): %s", resp.StatusCode, string(body))
+		// 上游 body 原文可能回显请求参数，截断后入日志，不整段倾倒
+		snippet := string(body)
+		if len(snippet) > 512 {
+			snippet = snippet[:512] + "...(truncated)"
+		}
+		g.Log().Warningf(ctx, "OpenAI token 刷新失败, status=%d, body=%s", resp.StatusCode, snippet)
+		return nil, fmt.Errorf("token 刷新失败 (HTTP %d): %s", resp.StatusCode, snippet)
 	}
 
 	var tokenResp openaiTokenResponse

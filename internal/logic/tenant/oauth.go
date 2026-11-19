@@ -554,7 +554,7 @@ func (p *GitHubProvider) ExchangeToken(ctx context.Context, code string) (*OAuth
 }
 
 func (p *GitHubProvider) GetUserInfo(ctx context.Context, token string) (*OAuthUserInfo, error) {
-	req, _ := http.NewRequest("GET", "https://api.github.com/user", nil)
+	req, _ := http.NewRequestWithContext(ctx, "GET", "https://api.github.com/user", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
 
@@ -579,7 +579,7 @@ func (p *GitHubProvider) GetUserInfo(ctx context.Context, token string) (*OAuthU
 
 	// GitHub 用户邮箱私密时 /user 返回空邮箱，需要调用 /user/emails 获取主邮箱
 	if email == "" {
-		email = githubFetchPrimaryEmail(token)
+		email = githubFetchPrimaryEmail(ctx, token)
 	}
 
 	return &OAuthUserInfo{
@@ -593,8 +593,8 @@ func (p *GitHubProvider) GetUserInfo(ctx context.Context, token string) (*OAuthU
 }
 
 // githubFetchPrimaryEmail fetches the primary verified email from GitHub /user/emails API.
-func githubFetchPrimaryEmail(token string) string {
-	req, _ := http.NewRequest("GET", "https://api.github.com/user/emails", nil)
+func githubFetchPrimaryEmail(ctx context.Context, token string) string {
+	req, _ := http.NewRequestWithContext(ctx, "GET", "https://api.github.com/user/emails", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
 
@@ -660,7 +660,7 @@ func (p *GoogleProvider) ExchangeToken(ctx context.Context, code string) (*OAuth
 }
 
 func (p *GoogleProvider) GetUserInfo(ctx context.Context, token string) (*OAuthUserInfo, error) {
-	req, _ := http.NewRequest("GET", "https://www.googleapis.com/oauth2/v2/userinfo", nil)
+	req, _ := http.NewRequestWithContext(ctx, "GET", "https://www.googleapis.com/oauth2/v2/userinfo", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := oauthHTTPClient.Do(req)

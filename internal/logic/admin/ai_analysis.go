@@ -74,6 +74,8 @@ func (s *sAdmin) AiAnalysisCreate(ctx context.Context, req *v1.AiAnalysisCreateR
 
 // AiAnalysisReportList 报告列表（联查租户/用户名）。
 func (s *sAdmin) AiAnalysisReportList(ctx context.Context, req *v1.AiAnalysisReportListReq) (*v1.AiAnalysisReportListRes, error) {
+	// 走统一分页入口：PageSize 无 v: 上限规则，超大 size 会被拖库，NormalizePagination 封顶 100
+	req.Page, req.PageSize = common.NormalizePagination(req.Page, req.PageSize)
 	m := g.DB().Model(aianalysis.TableReports+" AS r").Ctx(ctx).
 		LeftJoin("tnt_tenants t", "t.id = r.tenant_id").
 		LeftJoin("tnt_users u", "u.id = r.target_user_id")
@@ -200,6 +202,8 @@ func (s *sAdmin) AiAnalysisReportDelete(ctx context.Context, req *v1.AiAnalysisR
 
 // AiAnalysisJobList 任务列表与进度。
 func (s *sAdmin) AiAnalysisJobList(ctx context.Context, req *v1.AiAnalysisJobListReq) (*v1.AiAnalysisJobListRes, error) {
+	// 走统一分页入口（PageSize 无 v: 上限规则，NormalizePagination 封顶 100）
+	req.Page, req.PageSize = common.NormalizePagination(req.Page, req.PageSize)
 	m := g.DB().Model(aianalysis.TableJobs).Ctx(ctx)
 	if req.Status != "" {
 		m = m.Where("status", req.Status)

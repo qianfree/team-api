@@ -46,9 +46,16 @@ func HandlePaymentEpayReturn(r *ghttp.Request) {
 	// 异步 notify 可能晚于浏览器回跳到达：最多轮询约 4 秒等待回调入账。
 	// 仍未到账不一定是失败（回调可能仍在途），引导到"处理中"页由前端继续刷新，
 	// 避免给用户展示误导性的"失败"。
+	// 等待用 select 感知取消：客户端关页后立即停止轮询，不再占满 8 个周期
+	// （回调入账由异步 notify 完成，与浏览器是否等待无关）。
 	paid := payment.QueryOrderPaid(ctx, orderNo)
 	for i := 0; !paid && i < 8; i++ {
-		time.Sleep(500 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			// 浏览器已断开：跳转目标写不进去，直接结束
+			return
+		case <-time.After(500 * time.Millisecond):
+		}
 		paid = payment.QueryOrderPaid(ctx, orderNo)
 	}
 

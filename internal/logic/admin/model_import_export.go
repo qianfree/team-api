@@ -312,9 +312,25 @@ func (s *sAdmin) ImportModelsPreview(ctx context.Context, req *v1.ModelImportPre
 		return nil, gerror.NewCode(gcode.New(consts.CodeModelImportBadVersion, consts.MsgModelImportBadVersion, nil), consts.MsgModelImportBadVersion)
 	}
 
+	// 批量查询已存在模型（WhereIn 一次往返），替代循环逐模型 Count 的 N+1
+	modelIDs := make([]string, 0, len(exportData.Models))
 	for i := range exportData.Models {
-		count, _ := dao.MdlModels.Ctx(ctx).Where("model_id", exportData.Models[i].ModelId).Count()
-		if count > 0 {
+		modelIDs = append(modelIDs, exportData.Models[i].ModelId)
+	}
+	existing := make(map[string]bool, len(modelIDs))
+	if len(modelIDs) > 0 {
+		var rows []struct {
+			ModelId string `json:"model_id"`
+		}
+		if err := dao.MdlModels.Ctx(ctx).WhereIn("model_id", modelIDs).Fields("model_id").Scan(&rows); err != nil {
+			return nil, err
+		}
+		for _, r := range rows {
+			existing[r.ModelId] = true
+		}
+	}
+	for i := range exportData.Models {
+		if existing[exportData.Models[i].ModelId] {
 			exportData.Models[i].Conflict = "exists"
 		}
 	}
