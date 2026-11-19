@@ -1,0 +1,34 @@
+# relaykit 独立 module 的 golangci-lint v2 配置（与主模块同口径，无 GoFrame 生成目录）
+version: "2"
+
+run:
+  timeout: 10m
+
+linters:
+  default: standard
+  enable:
+    - misspell
+    - copyloopvar
+    - unconvert
+    - bodyclose
+    - rowserrcheck
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
+          - bodyclose
+          - rowserrcheck
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/qianfree/team-api/relaykit
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

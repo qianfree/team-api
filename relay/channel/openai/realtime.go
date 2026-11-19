@@ -130,35 +130,35 @@ func (p *RealtimeProxy) Proxy(ctx context.Context) (*common.Usage, error) {
 		errChan      = make(chan error, 2)
 	)
 
-		// Client → Upstream
-		safego.Run(ctx, "openai_realtime:client_pump", func(context.Context) {
-			defer close(clientClosed)
-			for {
-				_, message, err := p.clientConn.ReadMessage()
-				if err != nil {
-					if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-						g.Log().Debugf(ctx, "[Realtime] client read error: %v", err)
-					}
-					return
+	// Client → Upstream
+	safego.Run(ctx, "openai_realtime:client_pump", func(context.Context) {
+		defer close(clientClosed)
+		for {
+			_, message, err := p.clientConn.ReadMessage()
+			if err != nil {
+				if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+					g.Log().Debugf(ctx, "[Realtime] client read error: %v", err)
 				}
+				return
+			}
 
-				if err := p.targetConn.WriteMessage(websocket.TextMessage, message); err != nil {
-					g.Log().Debugf(ctx, "[Realtime] upstream write error: %v", err)
-					return
-				}
+			if err := p.targetConn.WriteMessage(websocket.TextMessage, message); err != nil {
+				g.Log().Debugf(ctx, "[Realtime] upstream write error: %v", err)
+				return
+			}
 
-				// 累计 input tokens
-				var event dto.RealtimeEvent
-				if json.Unmarshal(message, &event) == nil {
-					// input_audio_buffer.append 或 conversation.item.create 等事件可计入 input
-					if event.Type == "conversation.item.create" {
-						usageMu.Lock()
-						estimateInputFromEvent(&sumUsage, message)
-						usageMu.Unlock()
-					}
+			// 累计 input tokens
+			var event dto.RealtimeEvent
+			if json.Unmarshal(message, &event) == nil {
+				// input_audio_buffer.append 或 conversation.item.create 等事件可计入 input
+				if event.Type == "conversation.item.create" {
+					usageMu.Lock()
+					estimateInputFromEvent(&sumUsage, message)
+					usageMu.Unlock()
 				}
 			}
-		})
+		}
+	})
 
 	// Upstream → Client
 	safego.Run(ctx, "openai_realtime:upstream_pump", func(context.Context) {

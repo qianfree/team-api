@@ -482,23 +482,23 @@ func (s *sAdmin) UpdateModel(ctx context.Context, req *v1.ModelUpdateReq) (*v1.M
 		invalidateTenantsForModel(ctx, req.ID)
 
 		// 状态从 active → deprecated 时额外发送通知
-			if req.Status == "deprecated" && oldModel.Status == "active" {
-				safego.Run(ctx, "admin:model_deprecation_notify", func(context.Context) {
-					bgCtx := context.Background()
-					variables := g.Map{
-						"model_name":        oldModel.ModelId,
-						"sunset_date":       "",
-						"replacement_model": req.ReplacementModel,
-					}
-					if req.SunsetDate != nil {
-						variables["sunset_date"] = *req.SunsetDate
-					}
-					engine := common.NewNotificationEngine()
-					if err := engine.SendToAllTenants(bgCtx, "model_deprecated", variables, ""); err != nil {
-						g.Log().Errorf(bgCtx, "[ModelDeprecation] send notification for %s failed: %v", oldModel.ModelId, err)
-					}
-				})
-			}
+		if req.Status == "deprecated" && oldModel.Status == "active" {
+			safego.Run(ctx, "admin:model_deprecation_notify", func(context.Context) {
+				bgCtx := context.Background()
+				variables := g.Map{
+					"model_name":        oldModel.ModelId,
+					"sunset_date":       "",
+					"replacement_model": req.ReplacementModel,
+				}
+				if req.SunsetDate != nil {
+					variables["sunset_date"] = *req.SunsetDate
+				}
+				engine := common.NewNotificationEngine()
+				if err := engine.SendToAllTenants(bgCtx, "model_deprecated", variables, ""); err != nil {
+					g.Log().Errorf(bgCtx, "[ModelDeprecation] send notification for %s failed: %v", oldModel.ModelId, err)
+				}
+			})
+		}
 	}
 
 	return nil, nil

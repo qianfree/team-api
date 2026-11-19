@@ -9,12 +9,12 @@ import (
 	"github.com/qianfree/team-api/relaykit/relayconvert/convmeta"
 )
 
-func ptrInt(v int) *int { return &v }
+func ptrInt(v int) *int       { return &v }
 func ptrStr(v string) *string { return &v }
 
 func benchOAIRequest() *dto.GeneralOpenAIRequest {
 	return &dto.GeneralOpenAIRequest{
-		Model:    "gpt-4",
+		Model:     "gpt-4",
 		MaxTokens: ptrInt(512),
 		Messages: []dto.Message{
 			{Role: "system", Content: "You are a helpful assistant."},

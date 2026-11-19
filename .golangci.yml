@@ -1,0 +1,47 @@
+# golangci-lint v2 配置（对照 docs/Go与GoFrame代码开发规范.md 附录 B 裁剪）
+# 首期以「报告模式」运行（CI continue-on-error），存量问题清零后再转阻塞门禁。
+# 本地运行：golangci-lint run（需 v2.x）；relaykit 子模块有独立配置。
+version: "2"
+
+run:
+  timeout: 10m
+
+linters:
+  # standard = errcheck + govet + ineffassign + staticcheck + unused
+  default: standard
+  enable:
+    - misspell
+    - copyloopvar
+    - unconvert
+    - bodyclose
+    - rowserrcheck
+  exclusions:
+    rules:
+      # 脚手架生成目录（gf gen ctrl/service/dao），禁止手改、不走 lint
+      - path: internal/(controller|service|dao|model)/
+        linters:
+          - all
+      # 打包资源（编译期生成）
+      - path: internal/packed/
+        linters:
+          - all
+      # 测试文件放宽：资源关闭/错误返回的断言密度低于生产代码属正常取舍
+      - path: _test\.go
+        linters:
+          - errcheck
+          - bodyclose
+          - rowserrcheck
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/qianfree/team-api
+
+issues:
+  # 存量清理期输出完整清单，不截断
+  max-issues-per-linter: 0
+  max-same-issues: 0

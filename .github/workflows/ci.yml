@@ -1,0 +1,47 @@
+# CI 质量门禁（对照 docs/Go与GoFrame代码开发规范.md §6 提交前三件套）
+# - gofmt 检查 + 单元测试：阻塞（单测无需 DB/Redis，集成/e2e 由 build tag 隔离）
+# - golangci-lint：首期报告模式（continue-on-error），存量问题清零后转阻塞
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: gofmt check
+        run: |
+          unformatted=$(gofmt -l main.go internal relay relaykit plugins web)
+          if [ -n "$unformatted" ]; then
+            echo "以下文件未通过 gofmt："
+            echo "$unformatted"
+            exit 1
+          fi
+
+      # golangci-lint 主 module（报告模式：先跑通并产出存量清单，不阻塞）
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          args: --timeout 10m
+        continue-on-error: true
+
+      # golangci-lint relaykit 子 module（独立 go.mod，独立配置）
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          working-directory: relaykit
+          args: --timeout 10m
+        continue-on-error: true
+
+      - name: unit tests
+        run: |
+          go build ./...
+          go test ./internal/... ./relay/...
+          cd relaykit && go build ./... && go test ./...
