@@ -739,7 +739,13 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			if errors.Is(err, common.ErrBillingFormulaEval) {
 				return nil, nil, constant.NewRequestError(common.ErrBillingFormulaEval.Error()+": "+v.modelName, err)
 			}
-			return nil, nil, constant.NewQuotaError("insufficient balance", err)
+			// 钱包余额不足（Lua 返回码 0 哨兵）：402；其余（DB/Redis/定价查询故障）是
+			// 内部错误，冒充 402 会误导排障方向且向客户端泄露内部细节，一律 500。
+			// 402 不带 Cause：客户端只见干净文案，完整错误链留在写出器 5xx 日志中。
+			if errors.Is(err, common.ErrInsufficientBalance) {
+				return nil, nil, constant.NewQuotaError("insufficient balance", nil)
+			}
+			return nil, nil, constant.NewInternalError("billing temporarily unavailable", err)
 		}
 		preDeductAmount = amt
 		v.billingResult.PreDeductAmount = amt
@@ -749,11 +755,11 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		//（该场景已被上游 QPS 限流兜底），故移除。
 		if err := billing.CheckApiKeyQuota(ctx, rc.ApiKeyID, amt); err != nil {
 			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, amt)
-			return nil, nil, constant.NewQuotaError("API key quota exceeded", err)
+			return nil, nil, constant.NewQuotaError("API key quota exceeded", nil)
 		}
 		if err := billing.CheckMemberQuota(ctx, rc.TenantID, rc.UserID, amt); err != nil {
 			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, amt)
-			return nil, nil, constant.NewQuotaError("member quota exceeded", err)
+			return nil, nil, constant.NewQuotaError("member quota exceeded", nil)
 		}
 	}
 

@@ -334,8 +334,15 @@ func HandleTaskSubmit(
 
 	preDeductAmount, err := billingProvider.PreDeductTask(ctx, rc.TenantID, rc.RequestID, estimatedCost, modelName)
 	if err != nil {
-		g.Log().Warningf(ctx, "HandleTaskSubmit: pre-deduct failed, model=%s, err=%v", modelName, err)
-		writeTaskError(rc.Writer, http.StatusPaymentRequired, "insufficient balance", "")
+		// 钱包余额不足 → 402；其余（DB/Redis 故障）为内部错误 → 500，
+		// 冒充 402 会误导排障方向（与 RelayHandler 预扣段同口径）
+		if errors.Is(err, common.ErrInsufficientBalance) {
+			g.Log().Warningf(ctx, "HandleTaskSubmit: pre-deduct rejected, model=%s, err=%v", modelName, err)
+			writeTaskError(rc.Writer, http.StatusPaymentRequired, "insufficient balance", "")
+			return
+		}
+		g.Log().Errorf(ctx, "HandleTaskSubmit: pre-deduct internal error, model=%s, err=%v", modelName, err)
+		writeTaskError(rc.Writer, http.StatusInternalServerError, "billing temporarily unavailable", "")
 		return
 	}
 

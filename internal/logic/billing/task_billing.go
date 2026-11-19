@@ -189,7 +189,7 @@ func (b *TaskBillingProviderImpl) PreDeductTask(ctx context.Context, tenantID in
 	ok, err := PreDeduct(ctx, tenantID, estimatedFloat, requestID, modelName)
 	if !ok {
 		if err == nil {
-			return Zero, fmt.Errorf("pre-deduct task failed: insufficient balance")
+			return Zero, fmt.Errorf("pre-deduct task failed: %w", common.ErrInsufficientBalance)
 		}
 		return Zero, fmt.Errorf("pre-deduct task failed: %w", err)
 	}

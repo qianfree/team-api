@@ -15,6 +15,7 @@ import (
 
 	"github.com/qianfree/team-api/internal/dao"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
+	"github.com/qianfree/team-api/relay/common"
 )
 
 const (
@@ -360,7 +361,8 @@ func PreDeduct(ctx context.Context, tenantID int64, amount float64, requestID st
 
 	switch code {
 	case 0:
-		return false, gerror.New("insufficient balance")
+		// 哨兵错误：handler 层 errors.Is 识别后返回 402（其余预扣错误一律 500）
+		return false, common.ErrInsufficientBalance
 	case 2:
 		// 幂等：同一 request_id 已预扣过
 		return true, nil

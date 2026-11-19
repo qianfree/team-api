@@ -282,18 +282,23 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 			if errors.Is(billErr, common.ErrBillingFormulaEval) {
 				return nil, nil, constant.NewRequestError(common.ErrBillingFormulaEval.Error()+": "+modelName, billErr)
 			}
-			return nil, nil, constant.NewQuotaError("insufficient balance", billErr)
+			// 钱包余额不足 → 402；其余（DB/Redis/定价查询故障）为内部错误 → 500，
+			// 与 RelayHandler 同口径（见 relay_handler.go 预扣段注释）
+			if errors.Is(billErr, common.ErrInsufficientBalance) {
+				return nil, nil, constant.NewQuotaError("insufficient balance", nil)
+			}
+			return nil, nil, constant.NewInternalError("billing temporarily unavailable", billErr)
 		}
 		preDeductAmount = amt
 		// 成员/Key 额度检查只做这一次（带实际预扣额），与 RelayHandler 一致：
 		// 预扣前的 Check(0) 快速闸门对全量请求多付 Redis 往返，收益不成比例，已移除。
 		if err := billing.CheckApiKeyQuota(ctx, rc.ApiKeyID, amt); err != nil {
 			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, amt)
-			return nil, billingResult, constant.NewQuotaError("API key quota exceeded", err)
+			return nil, billingResult, constant.NewQuotaError("API key quota exceeded", nil)
 		}
 		if err := billing.CheckMemberQuota(ctx, rc.TenantID, rc.UserID, amt); err != nil {
 			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, amt)
-			return nil, billingResult, constant.NewQuotaError("member quota exceeded", err)
+			return nil, billingResult, constant.NewQuotaError("member quota exceeded", nil)
 		}
 	}
 

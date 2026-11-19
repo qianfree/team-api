@@ -113,7 +113,13 @@ func HandleSyncImageSubmit(r *ghttp.Request, body []byte, rc *relay_handler.Task
 	}
 	preDeduct, err := taskBillingProvider.PreDeductTask(ctx, rc.TenantID, rc.RequestID, estimatedCost, modelName)
 	if err != nil {
-		writeSyncImageError(w, http.StatusPaymentRequired, "insufficient balance")
+		// 钱包余额不足 → 402；其余（DB/Redis 故障）为内部错误 → 500（与 RelayHandler 预扣段同口径）
+		if errors.Is(err, relay_common.ErrInsufficientBalance) {
+			writeSyncImageError(w, http.StatusPaymentRequired, "insufficient balance")
+			return
+		}
+		g.Log().Errorf(ctx, "sync_image: pre-deduct internal error, tenant=%d, model=%s, err=%v", rc.TenantID, modelName, err)
+		writeSyncImageError(w, http.StatusInternalServerError, "billing temporarily unavailable")
 		return
 	}
 
