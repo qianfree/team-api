@@ -239,7 +239,9 @@ func (c *ClaudeToGeminiStreamConverter) ConvertStreamResponse(
 	}
 
 	// 收尾 chunk：finishReason + usageMetadata（与 Gemini 出站的既有形态一致），
-	// 同时携带 Claude 计费口径的用量供宿主捕获（input 不含缓存、cache_creation 独立计价）；
+	// 计费侧信道（StreamEvent.Usage）须为含缓存口径：宿主桥接层统一置
+	// CacheIncludedInPrompt=true 并按明细扣减缓存还原 base input，发 Claude 口径
+	//（不含缓存）会被双重扣减导致输入少计；
 	// 服务端工具调用计数（web_search 等）经 ToolCalls 侧信道随收尾帧一并透出
 	finalChunk := &dto.GeminiChatResponse{
 		ModelName: modelName,
@@ -253,7 +255,7 @@ func (c *ClaudeToGeminiStreamConverter) ConvertStreamResponse(
 	}
 	return chunkWriter(&relayconvert.StreamEvent{
 		Data:      finalChunk,
-		Usage:     claudeBillingUsage(&usage),
+		Usage:     claudeVisibleUsage(&usage),
 		ToolCalls: shared.ServerToolCallsFromClaudeUsage(&usage),
 	})
 }

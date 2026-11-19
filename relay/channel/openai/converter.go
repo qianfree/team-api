@@ -1042,12 +1042,13 @@ func ResponsesResponseToChatCompletions(resp *dto.OpenAIResponsesResponse, id st
 		}
 		if resp.Usage.InputTokensDetails != nil {
 			usage.PromptTokensDetails = &dto.TokenDetails{
-				CachedTokens:        resp.Usage.InputTokensDetails.CachedTokens,
-				CachedTokensDetails: resp.Usage.InputTokensDetails.CachedTokensDetails,
-				CacheWriteTokens:    resp.Usage.InputTokensDetails.CacheWriteTokens,
-				AudioTokens:         resp.Usage.InputTokensDetails.AudioTokens,
-				TextTokens:          resp.Usage.InputTokensDetails.TextTokens,
-				ImageTokens:         resp.Usage.InputTokensDetails.ImageTokens,
+				CachedTokens:            resp.Usage.InputTokensDetails.CachedTokens,
+				CachedTokensDetails:     resp.Usage.InputTokensDetails.CachedTokensDetails,
+				CacheWriteTokens:        resp.Usage.InputTokensDetails.CacheWriteTokens,
+				CacheWriteTokensDetails: resp.Usage.InputTokensDetails.CacheWriteTokensDetails,
+				AudioTokens:             resp.Usage.InputTokensDetails.AudioTokens,
+				TextTokens:              resp.Usage.InputTokensDetails.TextTokens,
+				ImageTokens:             resp.Usage.InputTokensDetails.ImageTokens,
 			}
 		}
 		if resp.Usage.OutputTokenDetails != nil {

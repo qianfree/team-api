@@ -111,16 +111,17 @@ func TestGenerateBillingSnapshot_BasicFields(t *testing.T) {
 
 func TestGenerateBillingSnapshot_CachePrices(t *testing.T) {
 	pricing := &PricingResult{
-		InputPrice:         1.0,
-		OutputPrice:        2.0,
-		BaseInputPrice:     1.0,
-		BaseOutputPrice:    2.0,
-		BillingMode:        "token",
-		CacheReadPrice:     0.1,
-		CacheCreationPrice: 0.3,
-		TenantMultiplier:   1.0,
-		ModelMultiplier:    1.0,
-		DiscountRatio:      1.0,
+		InputPrice:           1.0,
+		OutputPrice:          2.0,
+		BaseInputPrice:       1.0,
+		BaseOutputPrice:      2.0,
+		BillingMode:          "token",
+		CacheReadPrice:       0.1,
+		CacheCreationPrice:   0.3,
+		CacheCreation5mPrice: 0.3, // 与生产 GetModelPrice 口径一致：5m 桶价 = 创建基准价
+		TenantMultiplier:     1.0,
+		ModelMultiplier:      1.0,
+		DiscountRatio:        1.0,
 	}
 
 	// With cache tokens → should populate CachePrices
@@ -753,4 +754,65 @@ func TestGenerateBillingSnapshot_CachePrices1h(t *testing.T) {
 		t.Fatal("expected CachePrices")
 	}
 	assertFloat(t, snapshot.CachePrices.CacheCreation1hPrice, 6.0, "snapshot 1h price")
+}
+
+// TestGenerateBillingSnapshot_CachePrices1hTiered 阶梯模式下快照 1h 单价取命中档价：
+// 与 computeCost 同口径（档内价优先、缺省回退锚点），保证快照「单价 × token」可复算
+func TestGenerateBillingSnapshot_CachePrices1hTiered(t *testing.T) {
+	p20 := 20.0
+	pricing := &PricingResult{
+		InputPrice: 1.0, OutputPrice: 2.0, BillingMode: "tiered",
+		CacheReadPrice: 0.1, CacheCreationPrice: 3.75,
+		CacheCreation5mPrice: 3.75, CacheCreation1hPrice: 6.0,
+		TenantMultiplier: 1.0, ModelMultiplier: 1.0,
+		CustomTiers: []PricingTierRow{
+			{MinTokens: 0, MaxTokens: nil, InputPrice: 1, OutputPrice: 2, CacheCreation1hPrice: &p20},
+		},
+	}
+	breakdown := &CostBreakdown{InputTokens: 200_000, CacheCreationTokens: 100, CacheCreation1hTokens: 100}
+
+	snapshot := GenerateBillingSnapshot(pricing, breakdown, nil, nil)
+	if snapshot.CachePrices == nil {
+		t.Fatal("expected CachePrices")
+	}
+	assertFloat(t, snapshot.CachePrices.CacheCreation1hPrice, 20.0, "snapshot 1h price follows hit tier")
+}
+
+// TestGenerateBillingSnapshot_CachePricesTiered 阶梯模式下快照缓存单价三项均取命中档价：
+// 与 computeCost 同口径（档内价优先、缺省回退锚点），保证快照「单价 × token」可复算；
+// token_costs 各缓存分项单价同样随档（含 5m/1h 分桶）
+func TestGenerateBillingSnapshot_CachePricesTiered(t *testing.T) {
+	read2, create2, create1h2 := 0.4, 9.0, 12.0
+	pricing := &PricingResult{
+		InputPrice: 1.0, OutputPrice: 2.0, BillingMode: "tiered",
+		CacheReadPrice: 0.1, CacheCreationPrice: 3.75,
+		CacheCreation5mPrice: 3.75, CacheCreation1hPrice: 6.0,
+		TenantMultiplier: 1.0, ModelMultiplier: 1.0,
+		CustomTiers: []PricingTierRow{
+			{MinTokens: 0, MaxTokens: nil, InputPrice: 1, OutputPrice: 2},
+			{MinTokens: 100_000, MaxTokens: nil, InputPrice: 1, OutputPrice: 2,
+				CacheReadPrice: &read2, CacheCreationPrice: &create2, CacheCreation1hPrice: &create1h2},
+		},
+	}
+	// 完整输入 200.2K 命中第二档
+	breakdown := &CostBreakdown{InputTokens: 200_000, CacheReadTokens: 100, CacheCreationTokens: 100, CacheCreation5mTokens: 50, CacheCreation1hTokens: 50}
+
+	snapshot := GenerateBillingSnapshot(pricing, breakdown, nil, nil)
+	if snapshot.CachePrices == nil {
+		t.Fatal("expected CachePrices")
+	}
+	assertFloat(t, snapshot.CachePrices.CacheReadPrice, 0.4, "snapshot read price follows hit tier")
+	assertFloat(t, snapshot.CachePrices.CacheCreationPrice, 9.0, "snapshot creation price follows hit tier")
+	assertFloat(t, snapshot.CachePrices.CacheCreation1hPrice, 12.0, "snapshot 1h price follows hit tier")
+
+	// token_costs 缓存分项单价同口径（阶梯命中档价）
+	if tc, ok := snapshot.TokenCosts["cache_read"]; !ok || tc.UnitPrice != 0.4 {
+		t.Errorf("token_costs cache_read = %+v ok=%v, want unitPrice=0.4", tc, ok)
+	}
+	if tc, ok := snapshot.TokenCosts["cache_creation_5m"]; !ok || tc.UnitPrice != 9.0 {
+		t.Errorf("token_costs cache_creation_5m = %+v ok=%v, want unitPrice=9.0", tc, ok)
+	}
+	if tc, ok := snapshot.TokenCosts["cache_creation_1h"]; !ok || tc.UnitPrice != 12.0 {
+		t.Errorf("token_costs cache_creation_1h = %+v ok=%v, want unitPrice=12.0", tc, ok)
+	}
 }

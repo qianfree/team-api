@@ -246,12 +246,14 @@ func TestClaudeToResponsesStream_TextAndToolCall(t *testing.T) {
 		t.Errorf("completed output 不对: %+v", out)
 	}
 
-	// 计费用量随 completed 帧携带，按 Claude 口径（input 不含缓存，cache 明细独立）
+	// 计费用量随 completed 帧携带，须为含缓存口径（prompt = input 10 + cache_read 4）：
+	// 宿主桥接层置 CacheIncludedInPrompt=true 并按明细扣减还原 base input（=10），
+	// 发不含缓存的 Claude 口径会被双重扣减导致输入少计
 	if events[11].Usage == nil {
 		t.Fatal("completed 帧必须携带计费用量")
 	}
-	if events[11].Usage.PromptTokens != 10 || events[11].Usage.CompletionTokens != 7 {
-		t.Errorf("billing usage = %+v, want prompt=10 completion=7", events[11].Usage)
+	if events[11].Usage.PromptTokens != 14 || events[11].Usage.CompletionTokens != 7 {
+		t.Errorf("billing usage = %+v, want prompt=14(included cache) completion=7", events[11].Usage)
 	}
 	if events[11].Usage.PromptTokensDetails == nil || events[11].Usage.PromptTokensDetails.CachedTokens != 4 {
 		t.Errorf("billing usage cache detail = %+v, want cached_tokens=4", events[11].Usage.PromptTokensDetails)

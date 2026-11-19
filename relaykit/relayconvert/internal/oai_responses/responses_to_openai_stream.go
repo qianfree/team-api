@@ -374,9 +374,12 @@ func responsesUsageToUsageWithDetails(u *dto.ResponsesUsage) dto.UsageWithDetail
 			CachedTokens:        d.CachedTokens,
 			CachedTokensDetails: d.CachedTokensDetails,
 			CacheWriteTokens:    d.CacheWriteTokens,
-			TextTokens:          d.TextTokens,
-			AudioTokens:         d.AudioTokens,
-			ImageTokens:         d.ImageTokens,
+			// TTL 细分必透传：宿主 NormalizeCacheWriteTTL 据此把 12h 写入归一到长时桶
+			//（2.5×）计价，丢失则全落短桶（1.25×）少收
+			CacheWriteTokensDetails: d.CacheWriteTokensDetails,
+			TextTokens:              d.TextTokens,
+			AudioTokens:             d.AudioTokens,
+			ImageTokens:             d.ImageTokens,
 		}
 	}
 	if d := u.OutputTokenDetails; d != nil {

@@ -467,3 +467,44 @@ func TestClaudeToOpenAIResponseConverter_ModelNameFallback(t *testing.T) {
 		t.Errorf("Model = %q, want %q (fallback from info)", openaiResp.Model, "gpt-4")
 	}
 }
+
+// TestClaudeCacheTokenDetails_OfficialTTLKeys Claude→OpenAI 出站缓存写入键对位：
+// 官方键 cache_write_tokens(+details.ttl_30m/ttl_12h，短桶 5m→30m、长桶 1h→12h 归一)
+// 与扩展键 cached_creation_5m/1h_tokens 并存——官方键供 OpenAI SDK 原生解析，
+// 扩展键保留字面 TTL 真相并兼容存量消费方。
+func TestClaudeCacheTokenDetails_OfficialTTLKeys(t *testing.T) {
+	u := &dto.ClaudeUsage{
+		CacheReadInputTokens:     4000,
+		CacheCreationInputTokens: 7000,
+		CacheCreation: &dto.ClaudeCacheUsage{
+			Ephemeral5mInputTokens: 3000,
+			Ephemeral1hInputTokens: 4000,
+		},
+	}
+	td := claudeCacheTokenDetails(u)
+
+	if td.CacheWriteTokens != 7000 {
+		t.Errorf("CacheWriteTokens = %d, want 7000 (官方总量键)", td.CacheWriteTokens)
+	}
+	if td.CachedCreation5mTokens != 3000 || td.CachedCreation1hTokens != 4000 {
+		t.Errorf("扩展键细分 = 5m:%d 1h:%d, want 3000/4000", td.CachedCreation5mTokens, td.CachedCreation1hTokens)
+	}
+	if td.CacheWriteTokensDetails == nil {
+		t.Fatal("expected 官方 TTL 细分键 cache_write_tokens_details")
+	}
+	if td.CacheWriteTokensDetails.TTL30mTokens != 3000 || td.CacheWriteTokensDetails.TTL12hTokens != 4000 {
+		t.Errorf("官方 TTL 键 = 30m:%d 12h:%d, want 3000/4000", td.CacheWriteTokensDetails.TTL30mTokens, td.CacheWriteTokensDetails.TTL12hTokens)
+	}
+
+	// Claude 旧协议（无 TTL 细分）：不出官方 details 键，总量与扩展总量照常
+	legacy := claudeCacheTokenDetails(&dto.ClaudeUsage{
+		CacheReadInputTokens:     100,
+		CacheCreationInputTokens: 200,
+	})
+	if legacy.CacheWriteTokens != 200 {
+		t.Errorf("legacy CacheWriteTokens = %d, want 200", legacy.CacheWriteTokens)
+	}
+	if legacy.CacheWriteTokensDetails != nil {
+		t.Errorf("legacy 不应产出 TTL 细分键, got %+v", legacy.CacheWriteTokensDetails)
+	}
+}

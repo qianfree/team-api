@@ -16,6 +16,8 @@ type ModelListReq struct {
 	Status        string `json:"status" dc:"状态筛选：active/deprecated/offline"`
 	Search        string `json:"search" dc:"搜索关键词（模型名或显示名）"`
 	PricingStatus string `json:"pricing_status" dc:"定价状态筛选：priced/unpriced"`
+	IsRecommended string `json:"is_recommended" dc:"广场推荐位筛选：true=在推荐位/false=不在，空=不过滤"`
+	IsNew         string `json:"is_new" dc:"广场上新位筛选：true=在上新位/false=不在，空=不过滤"`
 }
 
 // ModelListRes 模型列表响应

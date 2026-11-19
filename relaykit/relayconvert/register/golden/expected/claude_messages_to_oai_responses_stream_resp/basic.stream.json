@@ -194,11 +194,11 @@
     "event": "response.completed",
     "usage": {
       "completion_tokens": 7,
-      "prompt_tokens": 12,
+      "prompt_tokens": 16,
       "prompt_tokens_details": {
         "cached_tokens": 4
       },
-      "total_tokens": 19
+      "total_tokens": 23
     }
   }
 ]

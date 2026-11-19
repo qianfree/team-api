@@ -109,16 +109,40 @@ func (c *OpenAIToClaudeResponseConverter) ConvertResponse(
 		stopReason = mapOpenAIFinishReasonToClaude(openaiResp.Choices[0].FinishReason)
 	}
 
-	// OpenAI 的 prompt_tokens 已含 cached（子集语义），Claude 的 input_tokens 不含 cache_read，
-	// 需扣减后映射，否则 Claude 客户端按本协议语义计账时缓存部分被重复计入。
+	// OpenAI 的 prompt_tokens 已含 cached/cache_write（子集语义），Claude 的 input_tokens
+	// 不含 cache_read 与 cache_creation（三项并列报告），两者都需扣减后映射，否则 Claude
+	// 客户端按本协议语义计账时缓存部分被重复计入。
 	// PromptTokensDetails 可能为 nil（多数 OpenAI 兼容上游不返回该字段），必须判空。
-	cachedTokens := 0
+	cachedTokens, cacheWriteTokens := 0, 0
+	var ttlDetails *dto.CacheWriteTokensDetail
 	if openaiResp.Usage.PromptTokensDetails != nil {
 		cachedTokens = openaiResp.Usage.PromptTokensDetails.CachedTokens
+		cacheWriteTokens = openaiResp.Usage.PromptTokensDetails.CacheWriteTokens
+		ttlDetails = openaiResp.Usage.PromptTokensDetails.CacheWriteTokensDetails
 	}
-	inputTokens := openaiResp.Usage.PromptTokens - cachedTokens
+	// 写入总量防御：官方不变式 ttl_30m + ttl_12h = cache_write，细分大于总量时取大者
+	cacheCreationTotal := cacheWriteTokens
+	if ttlDetails != nil && ttlDetails.TTL30mTokens+ttlDetails.TTL12hTokens > cacheCreationTotal {
+		cacheCreationTotal = ttlDetails.TTL30mTokens + ttlDetails.TTL12hTokens
+	}
+	inputTokens := openaiResp.Usage.PromptTokens - cachedTokens - cacheCreationTotal
 	if inputTokens < 0 {
 		inputTokens = 0
+	}
+
+	claudeUsage := &dto.ClaudeUsage{
+		InputTokens:              inputTokens,
+		OutputTokens:             openaiResp.Usage.CompletionTokens,
+		CacheReadInputTokens:     cachedTokens,
+		CacheCreationInputTokens: cacheCreationTotal,
+	}
+	// TTL 细分归一回写：GPT 30m → ephemeral_5m（短桶）、12h → ephemeral_1h（长桶），
+	// 与 Claude 官方 cache_creation 结构对位，客户端无感跨供应商差异
+	if ttlDetails != nil && (ttlDetails.TTL30mTokens > 0 || ttlDetails.TTL12hTokens > 0) {
+		claudeUsage.CacheCreation = &dto.ClaudeCacheUsage{
+			Ephemeral5mInputTokens: ttlDetails.TTL30mTokens,
+			Ephemeral1hInputTokens: ttlDetails.TTL12hTokens,
+		}
 	}
 
 	return &dto.ClaudeResponse{
@@ -129,11 +153,7 @@ func (c *OpenAIToClaudeResponseConverter) ConvertResponse(
 		StopReason:   stopReason,
 		StopSequence: nil,
 		Model:        modelName,
-		Usage: &dto.ClaudeUsage{
-			InputTokens:          inputTokens,
-			OutputTokens:         openaiResp.Usage.CompletionTokens,
-			CacheReadInputTokens: cachedTokens,
-		},
+		Usage:        claudeUsage,
 	}, nil
 }
 

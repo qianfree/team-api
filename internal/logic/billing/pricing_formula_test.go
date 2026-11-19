@@ -151,12 +151,11 @@ func TestValidatePricingConfiguredFormula(t *testing.T) {
 
 // TestHasTenantCustomPriceFormula formula 模型租户行不构成一口价（折扣乘数保持生效）
 func TestHasTenantCustomPriceFormula(t *testing.T) {
-	customPrice := 0.5
 	tm := &tenantModelRow{
-		CustomInputPrice: &customPrice,
-		Enabled:          true,
+		CustomPricing: `{"input_price":0.5}`,
+		Enabled:       true,
 	}
-	if hasTenantCustomPrice(tm, BillingModeFormula, nil) {
+	if hasTenantCustomPrice(buildTenantOverrideView(tm), BillingModeFormula) {
 		t.Fatal("formula 模式租户自定义 token 价不应构成一口价")
 	}
 }

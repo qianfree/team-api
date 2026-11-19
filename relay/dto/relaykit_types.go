@@ -125,6 +125,7 @@ type Usage = relaykitdto.Usage
 type UsageWithDetails = relaykitdto.UsageWithDetails
 type TokenDetails = relaykitdto.TokenDetails
 type CachedTokenDetails = relaykitdto.CachedTokenDetails
+type CacheWriteTokensDetail = relaykitdto.CacheWriteTokensDetail
 type CompletionsRequest = relaykitdto.CompletionsRequest
 type CompletionsResponse = relaykitdto.CompletionsResponse
 type CompletionsChoice = relaykitdto.CompletionsChoice

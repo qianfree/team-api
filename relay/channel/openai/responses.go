@@ -190,6 +190,10 @@ func BuildResponsesUsageMap(usage *common.Usage) map[string]any {
 		if usage.PromptTokensDetails.CachedTokensDetails != nil {
 			inputDetails["cached_tokens_details"] = usage.PromptTokensDetails.CachedTokensDetails
 		}
+		// cache_write_tokens TTL 细分（官方键 ttl_30m/ttl_12h）：上游报了才透传
+		if usage.PromptTokensDetails.CacheWriteTokensDetails != nil {
+			inputDetails["cache_write_tokens_details"] = usage.PromptTokensDetails.CacheWriteTokensDetails
+		}
 	}
 	if usage.CompletionTokenDetails != nil {
 		outputDetails = map[string]any{
@@ -227,13 +231,16 @@ func responsesUsageToCommon(u *dto.ResponsesUsage) *common.Usage {
 	usage.TotalTokens = u.TotalTokens
 	if d := u.InputTokensDetails; d != nil {
 		usage.PromptTokensDetails = &common.TokenDetails{
-			CachedTokens:        d.CachedTokens,
-			CachedTokensDetails: (*common.CachedTokenDetails)(d.CachedTokensDetails),
-			CacheWriteTokens:    d.CacheWriteTokens,
-			TextTokens:          d.TextTokens,
-			AudioTokens:         d.AudioTokens,
-			ImageTokens:         d.ImageTokens,
+			CachedTokens:            d.CachedTokens,
+			CachedTokensDetails:     (*common.CachedTokenDetails)(d.CachedTokensDetails),
+			CacheWriteTokens:        d.CacheWriteTokens,
+			CacheWriteTokensDetails: (*common.CacheWriteTokensDetail)(d.CacheWriteTokensDetails),
+			TextTokens:              d.TextTokens,
+			AudioTokens:             d.AudioTokens,
+			ImageTokens:             d.ImageTokens,
 		}
+		// OpenAI TTL 细分（ttl_30m/ttl_12h）归一到 5m/1h 双桶，计费按桶计价
+		usage.PromptTokensDetails.NormalizeCacheWriteTTL()
 	}
 	if d := u.OutputTokenDetails; d != nil {
 		usage.CompletionTokenDetails = &common.TokenDetails{

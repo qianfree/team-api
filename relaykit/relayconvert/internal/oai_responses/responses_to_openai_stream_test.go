@@ -36,7 +36,7 @@ func TestResponsesToOpenAIStream_TextWithUsage(t *testing.T) {
 		``,
 		`data: {"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"content_index":0,"delta":"lo"}`,
 		``,
-		`data: {"type":"response.completed","response":{"id":"resp_up","object":"response","created_at":123,"status":"completed","model":"gpt-4o-real","usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15,"input_tokens_details":{"cached_tokens":2},"output_tokens_details":{"reasoning_tokens":1}}}}`,
+		`data: {"type":"response.completed","response":{"id":"resp_up","object":"response","created_at":123,"status":"completed","model":"gpt-4o-real","usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15,"input_tokens_details":{"cached_tokens":2,"cache_write_tokens":3,"cache_write_tokens_details":{"ttl_30m_tokens":1,"ttl_12h_tokens":2}},"output_tokens_details":{"reasoning_tokens":1}}}}`,
 		``,
 		`data: [DONE]`,
 		``,
@@ -77,6 +77,11 @@ func TestResponsesToOpenAIStream_TextWithUsage(t *testing.T) {
 	}
 	if d := usageChunk.Usage.PromptTokensDetails; d == nil || d.CachedTokens != 2 {
 		t.Errorf("prompt details = %+v（缓存明细不能丢）", usageChunk.Usage.PromptTokensDetails)
+	}
+	// cache_write TTL 细分透传：宿主按 TTL 分桶计价（12h→长时桶 2.5×），丢失则少收
+	if wd := usageChunk.Usage.PromptTokensDetails.CacheWriteTokensDetails; wd == nil ||
+		wd.TTL30mTokens != 1 || wd.TTL12hTokens != 2 {
+		t.Errorf("cache_write_tokens_details = %+v, want ttl_30m=1 ttl_12h=2", usageChunk.Usage.PromptTokensDetails.CacheWriteTokensDetails)
 	}
 	if d := usageChunk.Usage.CompletionTokenDetails; d == nil || d.ReasoningTokens != 1 {
 		t.Errorf("completion details = %+v", usageChunk.Usage.CompletionTokenDetails)

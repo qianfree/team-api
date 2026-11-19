@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/qianfree/team-api/relay/channel/claude"
@@ -102,6 +103,9 @@ func (a *Adaptor) DoRequest(ctx context.Context, info *common.RelayInfo, request
 
 // DoResponse 处理上游响应。
 // Claude 入站委托 claude.Adaptor 原生直通；其他格式委托 openai.Adaptor。
+// OpenAI 系路径补读 Kimi 缓存写入 TTL 响应头（Msh-Usage-Cache-Write-Tokens-5m/1h）：
+// Kimi Chat/Responses 的 usage JSON 只报写入总量（cache_write_tokens），TTL 细分仅在
+// 响应头，不读头则 1h 写入全部按短桶基础价计费（官方 1h 价为短桶 2×，少收一半）
 func (a *Adaptor) DoResponse(ctx context.Context, resp *http.Response, info *common.RelayInfo, writer http.ResponseWriter) (*common.Usage, error) {
 	if info.GetOriginalClientFormat() == constant.RelayFormatClaude {
 		delegate := &claude.Adaptor{}
@@ -109,9 +113,61 @@ func (a *Adaptor) DoResponse(ctx context.Context, resp *http.Response, info *com
 		return delegate.DoResponse(ctx, resp, info, writer)
 	}
 
+	ttl5m, ttl1h := cacheWriteTTLFromHeader(resp.Header)
 	delegate := &openai.Adaptor{}
 	delegate.Init(info)
-	return delegate.DoResponse(ctx, resp, info, writer)
+	usage, err := delegate.DoResponse(ctx, resp, info, writer)
+	if err != nil {
+		return usage, err
+	}
+	applyCacheWriteTTL(ttl5m, ttl1h, usage)
+	return usage, nil
+}
+
+// Kimi 缓存写入 TTL 响应头：各档本次写入的 token 数（全命中无新增写入时为 0）
+const (
+	mshHeaderCacheWrite5m = "Msh-Usage-Cache-Write-Tokens-5m"
+	mshHeaderCacheWrite1h = "Msh-Usage-Cache-Write-Tokens-1h"
+)
+
+// cacheWriteTTLFromHeader 读取 TTL 响应头（缺失/非法/负值按 0 处理）
+func cacheWriteTTLFromHeader(h http.Header) (fiveMin, oneHour int) {
+	parse := func(key string) int {
+		v, err := strconv.Atoi(h.Get(key))
+		if err != nil || v < 0 {
+			return 0
+		}
+		return v
+	}
+	return parse(mshHeaderCacheWrite5m), parse(mshHeaderCacheWrite1h)
+}
+
+// applyCacheWriteTTL 将响应头 TTL 写入量填入计费双桶。Kimi 的 TTL 就是 5m/1h，
+// 与双桶字面同构，无需归一换算。防御：
+//   - usage 已带 TTL 细分（上游开始在 JSON 里报）不覆盖；
+//   - 头值与 JSON 写入总量矛盾（和大于 cache_write_tokens 且总量 > 0）时丢弃，
+//     回退 resolveTokenCounts 合并桶口径，不重复计费；
+//   - JSON 未报写入总量时以头值补齐，保证 usage_logs/合并桶口径完整
+func applyCacheWriteTTL(ttl5m, ttl1h int, usage *common.Usage) {
+	if usage == nil || (ttl5m <= 0 && ttl1h <= 0) {
+		return
+	}
+	d := usage.PromptTokensDetails
+	if d == nil {
+		d = &common.TokenDetails{}
+		usage.PromptTokensDetails = d
+	}
+	if d.CachedCreation5mTokens > 0 || d.CachedCreation1hTokens > 0 {
+		return
+	}
+	if d.CacheWriteTokens > 0 && ttl5m+ttl1h > d.CacheWriteTokens {
+		return
+	}
+	d.CachedCreation5mTokens = ttl5m
+	d.CachedCreation1hTokens = ttl1h
+	if d.CacheWriteTokens < ttl5m+ttl1h {
+		d.CacheWriteTokens = ttl5m + ttl1h
+	}
 }
 
 func (a *Adaptor) GetChannelName() string {

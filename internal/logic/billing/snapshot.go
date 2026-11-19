@@ -242,10 +242,14 @@ func GenerateBillingSnapshot(
 
 	// Cache 比率（仅当有 cache token 时填充）
 	if breakdown.CacheReadTokens > 0 || breakdown.CacheCreationTokens > 0 {
+		// 缓存单价与计费同口径：阶梯模式三项均取命中档价（档内未配置回退锚点），
+		// 保证快照「单价 × token」可复算
+		tierInputTokens := breakdown.InputTokens + breakdown.CacheReadTokens + breakdown.CacheCreationTokens
+		cacheReadPrice, cacheCreationPrice, cacheCreation1hPrice := effectiveCachePrices(pricing, tierInputTokens)
 		snapshot.CachePrices = &BillingSnapshotCachePrices{
-			CacheReadPrice:       pricing.CacheReadPrice,
-			CacheCreationPrice:   pricing.CacheCreationPrice,
-			CacheCreation1hPrice: pricing.CacheCreation1hPrice,
+			CacheReadPrice:       cacheReadPrice,
+			CacheCreationPrice:   cacheCreationPrice,
+			CacheCreation1hPrice: cacheCreation1hPrice,
 		}
 	}
 
@@ -384,21 +388,27 @@ func buildTokenCosts(pricing *PricingResult, breakdown *CostBreakdown) map[strin
 		"output": detail(breakdown.OutputTokens, pricing.OutputPrice, breakdown.OutputCost),
 	}
 
+	// 缓存单价与计费同口径（effectiveCachePrices）：阶梯模式取命中档价（档内未配置
+	// 回退锚点），保证缓存分项「tokens/1M × unit_price × multiplier = cost」自洽复算
+	tierInputTokens := breakdown.InputTokens + breakdown.CacheReadTokens + breakdown.CacheCreationTokens
+	cacheReadPrice, cacheCreation5mPrice, cacheCreation1hPrice := effectiveCachePrices(pricing, tierInputTokens)
+
 	if breakdown.CacheReadTokens > 0 {
 		// direct cache price
-		costs["cache_read"] = detail(breakdown.CacheReadTokens, pricing.CacheReadPrice, breakdown.CacheReadCost)
+		costs["cache_read"] = detail(breakdown.CacheReadTokens, cacheReadPrice, breakdown.CacheReadCost)
 	}
 
 	if breakdown.CacheCreationTokens > 0 {
-		// direct cache creation price（含 OpenAI cache_write 并入的写入 token，合并桶）
-		costs["cache_creation"] = detail(breakdown.CacheCreationTokens, pricing.CacheCreationPrice, breakdown.CacheCreationCost)
+		// direct cache creation price（含 OpenAI cache_write 并入的写入 token，合并桶；
+		// 单价取 5m 生效价，1h token 与 5m 价不同时合并桶单价为近似展示，分桶行为精确值）
+		costs["cache_creation"] = detail(breakdown.CacheCreationTokens, cacheCreation5mPrice, breakdown.CacheCreationCost)
 		// TTL 分桶明细（观测细分；OpenAI cache_write 与无细分报文全落 5m 桶，1h 桶仅
 		// Claude ephemeral_1h 触发。前端日志页已预置这两个键的展示标签）
 		if breakdown.CacheCreation5mTokens > 0 {
-			costs["cache_creation_5m"] = detail(breakdown.CacheCreation5mTokens, pricing.CacheCreation5mPrice, breakdown.CacheCreation5mCost)
+			costs["cache_creation_5m"] = detail(breakdown.CacheCreation5mTokens, cacheCreation5mPrice, breakdown.CacheCreation5mCost)
 		}
 		if breakdown.CacheCreation1hTokens > 0 {
-			costs["cache_creation_1h"] = detail(breakdown.CacheCreation1hTokens, pricing.CacheCreation1hPrice, breakdown.CacheCreation1hCost)
+			costs["cache_creation_1h"] = detail(breakdown.CacheCreation1hTokens, cacheCreation1hPrice, breakdown.CacheCreation1hCost)
 		}
 	}
 
@@ -485,9 +495,11 @@ func GenerateBillingSummary(ctx context.Context, snapshot *BillingSnapshot) stri
 			{"缓存读取", "cache_read"},
 		}
 		if _, has5m := snapshot.TokenCosts["cache_creation_5m"]; has5m {
+			// 桶标签按 TTL 语义命名（归一双桶）：标准 = Claude/Kimi 5m、GPT 30m；
+			// 长时 = Claude/Kimi 1h、GPT 12h——字面 TTL 跨供应商不统一，语义桶才与计价对齐
 			tokenRows = append(tokenRows,
-				struct{ label, key string }{"缓存创建(5分钟)", "cache_creation_5m"},
-				struct{ label, key string }{"缓存创建(1小时)", "cache_creation_1h"},
+				struct{ label, key string }{"缓存创建(标准TTL)", "cache_creation_5m"},
+				struct{ label, key string }{"缓存创建(长时TTL)", "cache_creation_1h"},
 			)
 		} else {
 			tokenRows = append(tokenRows, struct{ label, key string }{"缓存创建", "cache_creation"})

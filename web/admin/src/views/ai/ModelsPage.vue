@@ -31,11 +31,26 @@ const filterVendor = ref<string | null>(null)
 const filterStatus = ref<string | null>(null)
 const filterSearch = ref('')
 const filterPricingStatus = ref<string | null>(null)
+const filterRecommended = ref<string | null>(null)
+const filterIsNew = ref<string | null>(null)
 
 const pricingStatusOptions = [
   { label: '全部定价', value: '' },
   { label: '已定价', value: 'priced' },
   { label: '未定价', value: 'unpriced' },
+]
+
+// 广场展示位筛选（值为 'true'/'false' 字符串，与后端布尔筛选约定一致）
+const recommendedOptions = [
+  { label: '全部推荐位', value: '' },
+  { label: '在推荐位', value: 'true' },
+  { label: '不在推荐位', value: 'false' },
+]
+
+const isNewOptions = [
+  { label: '全部上新位', value: '' },
+  { label: '在上新位', value: 'true' },
+  { label: '不在上新位', value: 'false' },
 ]
 
 // 定价抽屉
@@ -320,6 +335,8 @@ async function fetchData() {
     if (filterStatus.value) params.status = filterStatus.value
     if (filterSearch.value) params.search = filterSearch.value
     if (filterPricingStatus.value) params.pricing_status = filterPricingStatus.value
+    if (filterRecommended.value) params.is_recommended = filterRecommended.value
+    if (filterIsNew.value) params.is_new = filterIsNew.value
 
     const res: any = await request.get('/admin/models', { params })
     data.value = res.data?.data?.list || res.data?.list || []
@@ -677,6 +694,7 @@ function resetImport() {
           导出配置{{ selectedRowKeys.length > 0 ? ` (${selectedRowKeys.length})` : '' }}
         </AButton>
         <AButton type="outline" @click="openImportModal">导入配置</AButton>
+        <AButton type="outline" @click="router.push({ name: 'AdminModelToolPricing' })">工具价格</AButton>
         <ADropdown trigger="hover">
           <AButton :loading="exporting">导出报表</AButton>
           <template #content>
@@ -684,7 +702,6 @@ function resetImport() {
             <ADoption @click="exportFile('xlsx')">导出 Excel</ADoption>
           </template>
         </ADropdown>
-        <AButton type="outline" @click="router.push({ name: 'AdminModelToolPricing' })">工具价格</AButton>
       </template>
     </PageHeader>
 
@@ -723,6 +740,22 @@ function resetImport() {
           placeholder="定价状态"
           allow-clear
           style="width: 120px"
+          @change="handleFilter"
+        />
+        <ASelect
+          v-model="filterRecommended"
+          :options="recommendedOptions"
+          placeholder="广场推荐位"
+          allow-clear
+          style="width: 130px"
+          @change="handleFilter"
+        />
+        <ASelect
+          v-model="filterIsNew"
+          :options="isNewOptions"
+          placeholder="广场上新位"
+          allow-clear
+          style="width: 130px"
           @change="handleFilter"
         />
         <AInput
