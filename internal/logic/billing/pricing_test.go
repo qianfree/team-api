@@ -66,6 +66,8 @@ func TestAvailableBalance_NilPanic(t *testing.T) {
 
 func ptrInt64(v int64) *int64 { return &v }
 
+func ptrFloat64(v float64) *float64 { return &v }
+
 func TestCalculateTieredCostFromTiers_EmptyTiers(t *testing.T) {
 	got := calculateTieredCostFromTiers(nil, 1000, true)
 	if got != 0 {
@@ -284,6 +286,130 @@ func TestCalculateTieredCostFromTiers_TableDriven(t *testing.T) {
 			got := calculateTieredCostFromTiers(tiers, tt.tokens, tt.isInput)
 			assertFloat(t, got, tt.want, "cost")
 		})
+	}
+}
+
+// TestEffectiveCachePrices_Tiered 档内缓存价三元组的回退与推导：
+// 档内重定 5m 基准价时 1h 未显式配置须按本档 5m ×1.6 推导（锚点 1h 价相对
+// 新档基准无意义），锚点兜底仅在档内未配置时生效
+func TestEffectiveCachePrices_Tiered(t *testing.T) {
+	anchorRead, anchor5m, anchor1h := 0.1, 3.75, 6.0 // 锚点：显式 1h 价 6（≠ 3.75×1.6）
+
+	tests := []struct {
+		name     string
+		tiers    []PricingTierRow
+		wantRead float64
+		want5m   float64
+		want1h   float64
+	}{
+		{
+			name: "档内配 5m 未配 1h，按本档 5m×1.6 推导而非锚点",
+			tiers: []PricingTierRow{{
+				MinTokens:          0,
+				CacheCreationPrice: ptrFloat64(7.5),
+			}},
+			wantRead: anchorRead, want5m: 7.5, want1h: 12.0, // 7.5×1.6=12，不是锚点 6
+		},
+		{
+			name: "档内显式 1h 价胜出",
+			tiers: []PricingTierRow{{
+				MinTokens:            0,
+				CacheCreationPrice:   ptrFloat64(7.5),
+				CacheCreation1hPrice: ptrFloat64(9.0),
+			}},
+			wantRead: anchorRead, want5m: 7.5, want1h: 9.0,
+		},
+		{
+			name: "档内未配置回退锚点（存量阶梯数据口径不变）",
+			tiers: []PricingTierRow{{
+				MinTokens:   0,
+				InputPrice:  5.0,
+				OutputPrice: 15.0,
+			}},
+			wantRead: anchorRead, want5m: anchor5m, want1h: anchor1h,
+		},
+		{
+			name:     "档内缓存读价覆盖",
+			tiers:    []PricingTierRow{{MinTokens: 0, CacheReadPrice: ptrFloat64(0.05)}},
+			wantRead: 0.05, want5m: anchor5m, want1h: anchor1h,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &PricingResult{
+				BillingMode:          "tiered",
+				CacheReadPrice:       anchorRead,
+				CacheCreation5mPrice: anchor5m,
+				CacheCreation1hPrice: anchor1h,
+				CustomTiers:          tt.tiers,
+			}
+			read, c5m, c1h := effectiveCachePrices(p, 1_000_000)
+			assertFloat(t, read, tt.wantRead, "read")
+			assertFloat(t, c5m, tt.want5m, "creation5m")
+			assertFloat(t, c1h, tt.want1h, "creation1h")
+		})
+	}
+
+	// 非 tiered 模式恒用锚点价（档内字段不参与）
+	p := &PricingResult{
+		BillingMode:          "token",
+		CacheReadPrice:       anchorRead,
+		CacheCreation5mPrice: anchor5m,
+		CacheCreation1hPrice: anchor1h,
+		CustomTiers:          []PricingTierRow{{MinTokens: 0, CacheReadPrice: ptrFloat64(0.05), CacheCreationPrice: ptrFloat64(7.5)}},
+	}
+	read, c5m, c1h := effectiveCachePrices(p, 1_000_000)
+	assertFloat(t, read, anchorRead, "token read")
+	assertFloat(t, c5m, anchor5m, "token creation5m")
+	assertFloat(t, c1h, anchor1h, "token creation1h")
+}
+
+// TestStripTierCacheAnchors 租户重定缓存价锚点时的平台档内缓存价剥离：
+// 读/写体系独立剥离，创建体系任一键覆盖即整体系（5m+1h）剥离；
+// 返回新切片不改入参（缓存共享安全）；无覆盖时原样返回
+func TestStripTierCacheAnchors(t *testing.T) {
+	read := 0.1
+	c5m := 3.75
+	c1h := 6.0
+	tiers := []PricingTierRow{
+		{MinTokens: 0, CacheReadPrice: &read, CacheCreationPrice: &c5m},
+		{MinTokens: 100_000, CacheReadPrice: &read, CacheCreationPrice: &c5m, CacheCreation1hPrice: &c1h},
+	}
+
+	got := stripTierCacheAnchors(tiers, true, false)
+	for i, tier := range got {
+		if tier.CacheReadPrice != nil {
+			t.Errorf("tier[%d] 读价未剥离: %+v", i, tier.CacheReadPrice)
+		}
+		if tier.CacheCreationPrice != &c5m {
+			t.Errorf("tier[%d] 创建价不应剥离（仅读锚点）", i)
+		}
+	}
+	if got[1].CacheCreation1hPrice != &c1h {
+		t.Error("tier[1] 1h 价不应剥离（仅读锚点）")
+	}
+
+	got = stripTierCacheAnchors(tiers, false, true)
+	for i, tier := range got {
+		if tier.CacheReadPrice == nil {
+			t.Errorf("tier[%d] 读价不应剥离（仅写锚点）", i)
+		}
+		if tier.CacheCreationPrice != nil || tier.CacheCreation1hPrice != nil {
+			t.Errorf("tier[%d] 创建价未整体系剥离: %+v", i, tier)
+		}
+	}
+
+	// 入参不被修改（剥离返回新切片）
+	if tiers[0].CacheReadPrice == nil || tiers[1].CacheCreation1hPrice == nil {
+		t.Error("入参 tiers 被就地修改")
+	}
+	// 无覆盖原样返回（同一切片，避免无谓分配）
+	if same := stripTierCacheAnchors(tiers, false, false); &same[0] != &tiers[0] {
+		t.Error("无覆盖时应原样返回入参切片")
+	}
+	if got := stripTierCacheAnchors(nil, true, true); got != nil {
+		t.Error("nil tiers 应返回 nil")
 	}
 }
 

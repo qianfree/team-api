@@ -600,8 +600,10 @@ func settleSuccessfulRequest(
 		// Claude 为 cache_creation_input_tokens，OpenAI 为 cache_write_tokens（同一物理事件，
 		// 计费侧 resolveTokenCounts 合并桶按 CacheCreationPrice 计价）。
 		// 两条来源路径互斥填充、相加恒为单次值：原生 Claude 通道只填顶层
-		// CacheCreationTokens（details 不含 CacheWriteTokens）；relaykit 转换路径只填
-		// details.CacheWriteTokens（bridge 不填顶层，防同源双计）。
+		// CacheCreationTokens（details 不含 CacheWriteTokens）；relaykit 转换路径
+		// 由 bridge 只映射 details.CacheWriteTokens（不填顶层，防同源双计）——Claude 系
+		// 转换器 details 内 CachedCreationTokens 与 CacheWriteTokens 同值并存，本列只
+		// 读后者，计费侧取分桶/max 亦不叠加。
 		// 5m/1h 分桶列为 TTL 归一双桶（短桶含 GPT 30m、长桶含 GPT 12h，见 common.NormalizeCacheWriteTTL）
 		CacheCreationTokens: usage.CacheCreationTokens +
 			tokenDetailField(usage.PromptTokensDetails, func(d *common.TokenDetails) int { return d.CacheWriteTokens }),

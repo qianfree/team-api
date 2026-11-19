@@ -301,24 +301,26 @@ func (s *sAdmin) UpdateTenantModel(ctx context.Context, req *v1.TenantModelUpdat
 		if err != nil {
 			return nil, err
 		}
+		// 旧行（折扣供互斥校验、旧覆盖供矩阵模式守卫与价格键清除审计）
+		var oldRow struct {
+			DiscountRatio *float64 `json:"discount_ratio"`
+			CustomPricing string   `json:"custom_pricing"`
+		}
+		if err := dao.MdlTenantModels.Ctx(ctx).
+			Where("tenant_id", req.TenantID).
+			Where("model_id", req.ModelID).
+			Fields("discount_ratio, custom_pricing").
+			Scan(&oldRow); err != nil {
+			return nil, gerror.Wrap(err, "查询租户模型覆盖")
+		}
+		oldBlob := billing.ParsePricingBlob(oldRow.CustomPricing)
+
 		// 互斥校验的折扣口径（本次动作三态：值=null 外的数值 / 显式 null=清除后无折扣 /
 		// 省略=读行内现有值），防「先设折扣再补价格键」的两步绕过
 		var effectiveRatio *float64
 		if req.DiscountRatio != nil && *req.DiscountRatio != nil {
 			effectiveRatio = *req.DiscountRatio
-		} else if explicitNulls["discount_ratio"] {
-			effectiveRatio = nil // 本次显式清除折扣
-		} else {
-			var oldRow struct {
-				DiscountRatio *float64 `json:"discount_ratio"`
-			}
-			if err := dao.MdlTenantModels.Ctx(ctx).
-				Where("tenant_id", req.TenantID).
-				Where("model_id", req.ModelID).
-				Fields("discount_ratio").
-				Scan(&oldRow); err != nil {
-				return nil, gerror.Wrap(err, "查询租户模型折扣")
-			}
+		} else if !explicitNulls["discount_ratio"] {
 			effectiveRatio = oldRow.DiscountRatio
 		}
 		if err := billing.ValidateTenantPricingBlob(blob, effectiveRatio); err != nil {
@@ -326,23 +328,19 @@ func (s *sAdmin) UpdateTenantModel(ctx context.Context, req *v1.TenantModelUpdat
 		}
 		// 按秒矩阵覆盖守卫：最终生效计费模式必须是 per_second/special
 		if len(blob.Prices) > 0 {
-			var oldRow struct {
-				CustomPricing string `json:"custom_pricing"`
-			}
-			if err := dao.MdlTenantModels.Ctx(ctx).
-				Where("tenant_id", req.TenantID).
-				Where("model_id", req.ModelID).
-				Fields("custom_pricing").
-				Scan(&oldRow); err != nil {
-				return nil, gerror.Wrap(err, "查询租户模型覆盖")
-			}
-			rowMode := (*string)(nil)
-			if old := billing.ParsePricingBlob(oldRow.CustomPricing); old != nil {
-				rowMode = old.BillingMode
+			var rowMode *string
+			if oldBlob != nil {
+				rowMode = oldBlob.BillingMode
 			}
 			if err := assertTenantMatrixModeAllowed(ctx, req.ModelID, blob.BillingMode, rowMode); err != nil {
 				return nil, err
 			}
+		}
+		// 专属价被整体清除的审计日志：全量替换语义下，管理员主动清除是合法操作，
+		// 但前端漏传价格键也表现为同一形态（曾因此静默丢价），留痕便于事后追查
+		if oldBlob.HasPriceOverride() && !blob.HasPriceOverride() {
+			g.Log().Warningf(ctx, "UpdateTenantModel: 租户专属价被清除 tenant_id=%d model_id=%d old_custom_pricing=%s",
+				req.TenantID, req.ModelID, oldRow.CustomPricing)
 		}
 		// formula 模型拒绝租户级时段/参数覆盖（与平台写侧同口径）
 		if err := assertTenantPatchFormulaAllowed(ctx, req.ModelID, blob); err != nil {

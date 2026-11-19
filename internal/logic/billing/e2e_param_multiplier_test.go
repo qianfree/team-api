@@ -81,7 +81,7 @@ func TestE2EParamMultiplier(t *testing.T) {
 	//    费用 = 0.5(720p) × 12s × 1.5 × 2.0 = 18.0；ratios 注入 param_multiplier=3 / param_matched
 	body := []byte(`{"model":"` + tmpModel + `","prompt":"p","seconds":"12","metadata":{"image":"https://x","duration":12,"resolution":"720p"}}`)
 	ratios := map[string]any{"spec.duration": 12.0, "spec.resolution": "720p"}
-	cost, err := provider.EstimateTaskCost(ctx, tmpTenant, tmpModel, ratios, body)
+	cost, err := provider.EstimateTaskCost(ctx, tmpTenant, tmpModel, ratios, body, nil)
 	if err != nil {
 		t.Fatalf("estimate: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestE2EParamMultiplier(t *testing.T) {
 	// 2. 纯文生视频（无图、5 秒）：不命中任何规则，无注入；费用 = 0.5 × 5 = 2.5
 	ratios2 := map[string]any{"spec.duration": 5.0}
 	body2 := []byte(`{"model":"` + tmpModel + `","prompt":"p","seconds":"5"}`)
-	cost2, err := provider.EstimateTaskCost(ctx, tmpTenant, tmpModel, ratios2, body2)
+	cost2, err := provider.EstimateTaskCost(ctx, tmpTenant, tmpModel, ratios2, body2, nil)
 	if err != nil {
 		t.Fatalf("estimate2: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestE2EParamMultiplier(t *testing.T) {
 	// 3. 视频输入折扣（[*] 路径）+ 1080p：费用 = 1.0 × 8 × 0.609 = 4.872
 	ratios3 := map[string]any{"spec.duration": 8.0, "spec.resolution": "1080p"}
 	body3 := []byte(`{"model":"` + tmpModel + `","prompt":"p","metadata":{"resolution":"1080p","duration":8,"content":[{"type":"video_url","video_url":{"url":"v"}}]}}`)
-	cost3, err := provider.EstimateTaskCost(ctx, tmpTenant, tmpModel, ratios3, body3)
+	cost3, err := provider.EstimateTaskCost(ctx, tmpTenant, tmpModel, ratios3, body3, nil)
 	if err != nil {
 		t.Fatalf("estimate3: %v", err)
 	}
@@ -116,6 +116,6 @@ func TestE2EParamMultiplier(t *testing.T) {
 
 	// 4. 定价缓存命中路径同样生效（第二次调用走 600s 缓存里的 ParamMultipliers）
 	ratios4 := map[string]any{"spec.duration": 12.0, "spec.resolution": "720p"}
-	cost4, _ := provider.EstimateTaskCost(ctx, tmpTenant, tmpModel, ratios4, body)
+	cost4, _ := provider.EstimateTaskCost(ctx, tmpTenant, tmpModel, ratios4, body, nil)
 	assertDecimal(t, cost4, 18.0, "e2e cached param multiplier cost")
 }

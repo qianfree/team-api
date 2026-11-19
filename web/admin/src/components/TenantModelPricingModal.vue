@@ -48,9 +48,6 @@ function discountLabel(d: number): string {
   return `${pct % 10 === 0 ? pct / 10 : pct}折`
 }
 
-// 回显装载期间抑制 pricingMode watch 的联动清理（装载完成前模式切换不得清空表单）
-let suppressBillingWatch = false
-
 const form = reactive({
   enabled: true,
   discount_ratio: null as number | null,
@@ -103,6 +100,40 @@ const platformModeLabel = computed(() => {
   const labels: Record<string, string> = { token: '按量', per_request: '按次', tiered: '阶梯', per_second: '按秒' }
   return labels[mode] || '按量'
 })
+
+// 计费模式单选框的 v-model 适配：Arco ARadio 的 value 不接受 null（回退为默认值 true），
+// 「跟随平台」用字符串哨兵承载，读写时与 form.billing_mode 的 null 互转
+const FOLLOW_PLATFORM = '__platform__'
+const billingModeRadio = computed<string>({
+  get: () => form.billing_mode || FOLLOW_PLATFORM,
+  set: (v) => { form.billing_mode = v === FOLLOW_PLATFORM ? null : v },
+})
+
+// 平台计费模式（scheme 声明的特殊方案归 special）
+const platformMode = computed<string | null>(() => {
+  if (platformPricing.value?.scheme) return 'special'
+  return platformPricing.value?.list?.[0]?.billing_mode || null
+})
+
+// 回显装载的租户覆盖 blob（推断「跟随平台」时的展示模式用）
+const loadedPricing = ref<any>(null)
+
+// 按 blob 已有价格键推断计费模式：与旧数据落库时的含义一致（存量行常见「模式跟随平台 + 扁平价」）
+function inferModeFromBlob(p: any): string | null {
+  if (!p) return null
+  if (Array.isArray(p.tiers) && p.tiers.length > 0) return 'tiered'
+  if ((p.price ?? null) !== null) return 'per_request'
+  if (['input_price', 'output_price', 'cache_read_price', 'cache_creation_price', 'cache_creation_1h_price']
+    .some((k) => (p[k] ?? null) !== null)) return 'token'
+  return null
+}
+
+// 价格区块的展示模式。与 form.billing_mode（提交给后端的覆盖模式）解耦：
+// 「跟随平台」不写 billing_mode 键，但价格输入仍须按实际生效模式展示——否则存量
+// 「跟随平台 + 专属价」行的价格框被隐藏、保存时漏传价格键，后端全量替换即静默清价
+const displayMode = computed<string>(() =>
+  form.billing_mode || inferModeFromBlob(loadedPricing.value) || platformMode.value || 'token',
+)
 
 const platformTimeSegCount = computed(() => (platformPricing.value?.time_segments || []).length)
 const platformParamRuleCount = computed(() => (platformPricing.value?.param_multipliers || []).length)
@@ -180,10 +211,11 @@ function applyOfficialRef(source: any) {
   const p = source?.pricing
   if (!p) return
   pricingMode.value = 'custom'
-  if (form.billing_mode === 'per_request') {
+  if (displayMode.value === 'per_request') {
     form.per_request_price = toBasePrice(p.output_price)
   } else {
-    form.billing_mode = 'token'
+    // 已按 token 展示（含跟随平台）时不改覆盖模式，避免把「跟随平台」写死为 token
+    if (displayMode.value !== 'token') form.billing_mode = 'token'
     form.input_price = toBasePrice(p.input_price)
     form.output_price = toBasePrice(p.output_price)
     if ((Number(p.cache_read_price) || 0) > 0) form.cache_read_price = toBasePrice(p.cache_read_price)
@@ -243,40 +275,10 @@ function addTenantTier() {
   }
 }
 
-// 定价方式切换：互斥清理——discount↔custom 切换时清空对方字段（防折上折歧义配置）
-watch(pricingMode, (mode) => {
-  if (suppressBillingWatch) return
-  if (mode === 'discount') {
-    clearCustomPriceFields()
-  } else if (mode === 'custom') {
-    form.discount_ratio = null
-  } else {
-    form.discount_ratio = null
-    clearCustomPriceFields()
-  }
-})
-
-// 计费模式切回「跟随平台」时清专属价格字段
-watch(() => form.billing_mode, (mode) => {
-  if (suppressBillingWatch || mode) return
-  clearCustomPriceFields()
-})
-
-function clearCustomPriceFields() {
-  form.input_price = null
-  form.output_price = null
-  form.cache_read_price = null
-  form.cache_creation_price = null
-  form.cache_creation_1h_price = null
-  form.per_request_price = null
-  form.tiers = []
-  perSecondMode.value = 'inherit'
-  customPerSecondRows.value = []
-}
-
-// 三态切换时清行数组（off/inherit 不携带残留数据；切回 custom 重新填写）
-watch(timeSegMode, () => { if (timeSegMode.value !== 'custom') customTimeSegRows.value = [] })
-watch(paramMode, () => { if (paramMode.value !== 'custom') customParamRules.value = [] })
+// 定价方式/计费模式/三态切换均不清理表单字段：误切换不丢已填数据，切回即恢复。
+// 互斥与拣选在保存时收口——折扣仅 pricingMode=discount 时提交、价格键仅按
+// displayMode 对应组提交、时段/参数仅 custom/off 态提交（见 onSave），
+// 残留的其他组字段不会入库，不会产生「专属价叠加折扣」的混合配置
 
 // blob 是否含价格键（定价方式回显判定：有价格键=custom；无但有折扣=discount；否则 inherit）
 function blobHasPriceKey(p: any): boolean {
@@ -293,13 +295,13 @@ function blobHasPriceKey(p: any): boolean {
 watch(() => props.visible, (v) => {
   if (!v || !props.model) return
   const record = props.model
-  suppressBillingWatch = true
   form.enabled = record.enabled
   form.discount_ratio = record.discount_ratio || null
   form.max_concurrency = record.max_concurrency ?? 5
 
   // 定价覆盖回显（record.pricing = custom_pricing blob 的 API 形态）
   const p: any = record.pricing || null
+  loadedPricing.value = p
   const hasPrice = blobHasPriceKey(p)
   pricingMode.value = hasPrice ? 'custom' : (record.discount_ratio ? 'discount' : 'inherit')
   form.billing_mode = p?.billing_mode || null
@@ -342,7 +344,6 @@ watch(() => props.visible, (v) => {
 
   platformPricing.value = null
   officialRefData.value = null
-  suppressBillingWatch = false
   fetchPlatformPricing(record.model_id)
 })
 
@@ -392,18 +393,23 @@ async function onSave() {
   if (paramMode.value === 'custom') pricing.param_multipliers = paramPayload
   else if (paramMode.value === 'off') pricing.param_multipliers = []
   if (pricingMode.value === 'custom') {
-    if (form.billing_mode) pricing.billing_mode = form.billing_mode
-    if (form.billing_mode === 'token') {
+    // billing_mode 键只在显式选择时写入（null=跟随平台，不得写死为当前平台模式）；
+    // 价格键按展示模式取，保证「跟随平台 + 专属价」的存量行保存后价格不丢
+    if (['token', 'tiered', 'per_request'].includes(form.billing_mode as string)) {
+      pricing.billing_mode = form.billing_mode
+    }
+    const mode = displayMode.value
+    if (mode === 'token') {
       if ((form.input_price ?? 0) > 0) pricing.input_price = form.input_price
       if ((form.output_price ?? 0) > 0) pricing.output_price = form.output_price
       if ((form.cache_read_price ?? 0) > 0) pricing.cache_read_price = form.cache_read_price
       if ((form.cache_creation_price ?? 0) > 0) pricing.cache_creation_price = form.cache_creation_price
       if ((form.cache_creation_1h_price ?? 0) > 0) pricing.cache_creation_1h_price = form.cache_creation_1h_price
     }
-    if (form.billing_mode === 'per_request' && (form.per_request_price ?? 0) > 0) {
+    if (mode === 'per_request' && (form.per_request_price ?? 0) > 0) {
       pricing.price = form.per_request_price
     }
-    if (form.billing_mode === 'tiered' && form.tiers.length > 0) {
+    if (mode === 'tiered' && form.tiers.length > 0) {
       pricing.tiers = form.tiers
     }
     if (perSecondPayload) pricing.prices = perSecondPayload
@@ -595,16 +601,19 @@ async function onSave() {
               专属价为一口价：不与折扣比例、租户等级折扣叠加——最终价即所填价格
             </div>
             <div class="billing-mode-row">
-              <ARadioGroup v-model="form.billing_mode" type="button">
-                <ARadio :value="null">跟随平台模式</ARadio>
+              <ARadioGroup v-model="billingModeRadio" type="button">
+                <ARadio :value="FOLLOW_PLATFORM">跟随平台模式</ARadio>
                 <ARadio value="token">Token</ARadio>
                 <ARadio value="per_request">按次</ARadio>
                 <ARadio value="tiered">阶梯</ARadio>
               </ARadioGroup>
             </div>
+            <div v-if="!form.billing_mode" class="section-note">
+              跟随平台模式（当前：{{ platformModeLabel }}），平台调整计费模式时租户随之切换；下方按当前生效模式填写专属价
+            </div>
 
           <!-- Token 模式 -->
-          <template v-if="form.billing_mode === 'token'">
+          <template v-if="displayMode === 'token'">
             <div class="billing-mode-tools-row">
               <div class="section-note" style="margin-bottom: 0">留空则使用模型基础定价</div>
               <!-- 官方价轻量参考（只读 + 直填，完整折扣换算在平台「模型管理 → 定价」） -->
@@ -667,7 +676,7 @@ async function onSave() {
           </template>
 
           <!-- 按次计费 -->
-          <template v-if="form.billing_mode === 'per_request'">
+          <template v-if="displayMode === 'per_request'">
             <div class="section-note">自定义按次单价为一口价，不再乘折扣比例与租户等级折扣系数</div>
             <AFormItem label="按次单价">
               <AInputNumber v-model="form.per_request_price" :min="0" :precision="4" placeholder="每次调用价格" class="w-full">
@@ -677,7 +686,7 @@ async function onSave() {
           </template>
 
           <!-- 阶梯计费 -->
-          <template v-if="form.billing_mode === 'tiered'">
+          <template v-if="displayMode === 'tiered'">
             <div class="section-note">按 Token 用量分段设置不同价格，留空则使用模型基础阶梯定价；自定义阶梯为一口价，不再乘折扣比例与租户等级折扣系数</div>
             <div v-for="(tier, index) in form.tiers" :key="index" class="tier-card">
               <!-- Token 区间内联在档位标题行：标题行管区间划分，下方网格只管本档价格 -->

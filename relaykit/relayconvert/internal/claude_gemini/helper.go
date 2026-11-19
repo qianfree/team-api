@@ -127,7 +127,10 @@ func claudeVisibleUsage(u *dto.ClaudeUsage) *dto.UsageWithDetails {
 }
 
 // claudeUsageToTokenDetails 将 ClaudeUsage 转换为 TokenDetails（含 cache token 细分），
-// 与宿主同名函数等价
+// 与宿主同名函数等价。CacheWriteTokens 必填：宿主日志列 cache_creation_tokens 顶层与
+// details.CacheWriteTokens 互斥相加，bridge 不填顶层，漏填此键该方向日志恒为 0
+// （计费侧取分桶/max 兜底不受影响）。TTL 双桶对位同 native_responses：
+// 官方键 cache_write_tokens(+details.ttl_30m/12h) + 扩展键 cached_creation_5m/1h 并存
 func claudeUsageToTokenDetails(u *dto.ClaudeUsage) *dto.TokenDetails {
 	if u == nil {
 		return nil
@@ -135,10 +138,17 @@ func claudeUsageToTokenDetails(u *dto.ClaudeUsage) *dto.TokenDetails {
 	td := &dto.TokenDetails{
 		CachedTokens:         u.CacheReadInputTokens,
 		CachedCreationTokens: u.CacheCreationInputTokens,
+		CacheWriteTokens:     u.CacheCreationInputTokens,
 	}
 	if u.CacheCreation != nil {
 		td.CachedCreation5mTokens = u.CacheCreation.Ephemeral5mInputTokens
 		td.CachedCreation1hTokens = u.CacheCreation.Ephemeral1hInputTokens
+		if u.CacheCreation.Ephemeral5mInputTokens > 0 || u.CacheCreation.Ephemeral1hInputTokens > 0 {
+			td.CacheWriteTokensDetails = &dto.CacheWriteTokensDetail{
+				TTL30mTokens: u.CacheCreation.Ephemeral5mInputTokens,
+				TTL12hTokens: u.CacheCreation.Ephemeral1hInputTokens,
+			}
+		}
 	}
 	return td
 }

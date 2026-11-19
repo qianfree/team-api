@@ -535,6 +535,8 @@ func GetModelPriceAt(ctx context.Context, tenantID int64, modelName string, bill
 	var customTiers []PricingTierRow
 	var tenantMultiplier, discountRatio float64
 	var customPriced, ratioExplicit bool
+	// 租户重定缓存价锚点标记：平台阶梯兜底时对应档内缓存价失效（见 2.5 兜底处剥离）
+	var tenantAnchoredCacheRead, tenantAnchoredCacheWrite bool
 
 	if tm != nil && tm.Enabled {
 		billingSource = "tenant_custom"
@@ -557,18 +559,21 @@ func GetModelPriceAt(ctx context.Context, tenantID int64, modelName string, bill
 		}
 		if ov.CacheReadPrice != nil && *ov.CacheReadPrice > 0 {
 			cacheReadPrice = *ov.CacheReadPrice
+			tenantAnchoredCacheRead = true
 		}
 		if ov.CacheCreationPrice != nil && *ov.CacheCreationPrice > 0 {
 			cacheCreationPrice = *ov.CacheCreationPrice
 			// 租户重定缓存创建基准价 = 重定整套缓存创建价格体系：平台的显式 1h 价
 			// 不再适用（锚点已换，旧 1h 价相对新基准无意义），回落按租户基准 ×1.6 推导
 			cacheCreation1hPrice = nil
+			tenantAnchoredCacheWrite = true
 		}
 		// 租户显式覆盖长时缓存创建价（长 TTL 桶：Claude 1h / GPT 12h）：
 		// 在基准重定（推导兜底）之上优先生效——官方长 TTL 写入价为输入价 2~2.5×，
 		// 推导 ×1.6 会低估，需要精确覆盖能力的租户显式配置
 		if ov.CacheCreation1hPrice != nil && *ov.CacheCreation1hPrice > 0 {
 			cacheCreation1hPrice = ov.CacheCreation1hPrice
+			tenantAnchoredCacheWrite = true
 		}
 
 		// 阶梯整体替换（空=走平台阶梯兜底）
@@ -607,9 +612,13 @@ func GetModelPriceAt(ctx context.Context, tenantID int64, modelName string, bill
 	}
 
 	// 2.5 平台阶梯兜底：租户未自定义阶梯时使用平台阶梯（pricing JSONB tiers 数组）。
-	// 计费模式非 tiered 时 computeCost 不会读取 CustomTiers，无副作用
+	// 计费模式非 tiered 时 computeCost 不会读取 CustomTiers，无副作用。
+	// 租户重定缓存价锚点时剥离平台档内缓存价——档内值是相对旧锚点的差异化配置，
+	// 新锚点下无意义，剥离后档内键缺失回退（已含租户覆盖的）锚点价；不剥离则
+	// 平台档内价盖掉租户覆盖、租户被按平台价多收。租户自有阶梯不剥离（档内值
+	// 是租户自己的绝对价体系，最具体者胜）
 	if len(customTiers) == 0 {
-		customTiers = platformTiers
+		customTiers = stripTierCacheAnchors(platformTiers, tenantAnchoredCacheRead, tenantAnchoredCacheWrite)
 	}
 
 	// 3.5 级别折扣 fallback：仅当租户×模型维度完全未配置折扣时使用租户级别的
@@ -1352,6 +1361,17 @@ func (b *PricingBlob) HasAnyOverride() bool {
 		b.TimeSegments != nil || b.ParamMultipliers != nil
 }
 
+// HasPriceOverride blob 是否携带价格类覆盖键（五价/按次/阶梯/按秒矩阵，键存在即算，
+// 与前端 blobHasPriceKey 同口径）。时段/参数倍率/模式键不算价格
+func (b *PricingBlob) HasPriceOverride() bool {
+	if b == nil {
+		return false
+	}
+	return b.InputPrice != nil || b.OutputPrice != nil || b.CacheReadPrice != nil ||
+		b.CacheCreationPrice != nil || b.CacheCreation1hPrice != nil || b.Price != nil ||
+		len(b.Tiers) > 0 || len(b.Prices) > 0
+}
+
 // ValidateTenantPricingBlob 租户定价覆盖 blob 写侧校验（定价方式三态互斥的 API 层防线）。
 // 规则：
 //   - 白名单：scheme/scheme_config/formula/formula_rules/unit 为平台运营键，租户禁写
@@ -1543,6 +1563,29 @@ func hitTierFor(tiers []PricingTierRow, tierInputTokens int) *PricingTierRow {
 	return hit
 }
 
+// stripTierCacheAnchors 平台阶梯兜底时的档内缓存价剥离（租户重定缓存价锚点语义）：
+// 租户覆盖了缓存读价 / 创建价任一键 = 重定该价格体系锚点，平台档内的对应缓存价
+// 相对旧锚点配置，新锚点下无意义——剥离后 effectiveCachePrices 档内键缺失回退到
+// （已含租户覆盖的）锚点价。创建体系 5m 基准与显式 1h 任一覆盖即整体系重定（与
+// 锚点级「重定 5m 基准价丢弃平台显式 1h 价」同构）。返回新切片，不改入参
+func stripTierCacheAnchors(tiers []PricingTierRow, read, write bool) []PricingTierRow {
+	if len(tiers) == 0 || (!read && !write) {
+		return tiers
+	}
+	stripped := make([]PricingTierRow, len(tiers))
+	copy(stripped, tiers)
+	for i := range stripped {
+		if read {
+			stripped[i].CacheReadPrice = nil
+		}
+		if write {
+			stripped[i].CacheCreationPrice = nil
+			stripped[i].CacheCreation1hPrice = nil
+		}
+	}
+	return stripped
+}
+
 // effectiveCachePrices 结算用缓存价三元组（读取 / 5m 创建 / 1h 创建）：
 // tiered 且配置了档位时，三项缓存价均按命中档取价（tierInputTokens 与输入/输出选档同一依据），
 // 档内未配置（nil/0）回退锚点，保证存量阶梯数据（档内无缓存键）价格口径不变、
@@ -1560,6 +1603,10 @@ func effectiveCachePrices(pricing *PricingResult, tierInputTokens int) (read, cr
 		}
 		if tier.CacheCreationPrice != nil && *tier.CacheCreationPrice > 0 {
 			creation5m = *tier.CacheCreationPrice
+			// 档内重定 5m 基准价 = 重定本档整套创建价格体系：1h 未显式配置时按本档
+			// 5m ×1.6 推导（锚点 1h 价相对新档基准无意义，与租户重定基准价时丢弃
+			// 平台显式 1h 价的语义同构），否则长桶写入按锚点价计费会低估
+			creation1h = resolveCacheCreation1hPrice(*tier.CacheCreationPrice, tier.CacheCreation1hPrice)
 		}
 		if tier.CacheCreation1hPrice != nil && *tier.CacheCreation1hPrice > 0 {
 			creation1h = *tier.CacheCreation1hPrice
