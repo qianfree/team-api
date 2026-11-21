@@ -71,3 +71,47 @@ func TestTruncateUTF8SafeAllCutPoints(t *testing.T) {
 		}
 	}
 }
+
+// TestTruncateUTF8SafeInvalidInput 输入本身含非法 UTF-8（上游 GBK/二进制错误页）时，
+// 不得一路回退到空串把排障线索全丢掉：最多回退 utf8.UTFMax-1 字节仍找不到合法边界，
+// 就退化为原始字节截断（乱码但可辨认，与旧的字节截断行为一致）。
+//
+// 回归背景：初版回退循环没有上限，GBK 输入会逐字节退到 0 字节——
+// "GBK错误 + upstream error 500" 截断后日志里只剩 "...(truncated)"，内容全丢。
+func TestTruncateUTF8SafeInvalidInput(t *testing.T) {
+	// GBK「错误」（4 字节非法序列）+ ASCII，共 23 字节
+	gbk := "\xb4\xed\xce\xf3" + " upstream error 500"
+	if got := truncateUTF8Safe(gbk, 20); got != gbk[:20] {
+		t.Fatalf("GBK 输入应退化为字节截断: got %q want %q", got, gbk[:20])
+	}
+	if got := truncateUTF8Safe(gbk, 2); got != gbk[:2] {
+		t.Fatalf("GBK 短截断应退化为字节截断: got %q want %q", got, gbk[:2])
+	}
+	// 二进制前缀：回退满 3 字节仍非法，同样退化
+	bin := "\x00\xff\xfe\x01abc"
+	if got := truncateUTF8Safe(bin, 5); got != bin[:5] {
+		t.Fatalf("二进制输入应退化为字节截断: got %q want %q", got, bin[:5])
+	}
+	// 非法字节在截断点之后：截断点本身合法，正常返回合法前缀
+	tailInvalid := "abc\xb4\xed"
+	if got := truncateUTF8Safe(tailInvalid, 3); got != "abc" {
+		t.Fatalf("非法字节在截断点后应正常截断: got %q want %q", got, "abc")
+	}
+	// 混合：合法 UTF-8 前缀 + 非法字节恰在截断点前 1 字节——回退 1 字节即达
+	// 合法边界「中文」，正常返回（不触发退化）
+	mixed := "中文" + "\xff\xfe" + "tail"
+	if got := truncateUTF8Safe(mixed, 7); got != "中文" {
+		t.Fatalf("混合输入应回退到合法边界: got %q want %q", got, "中文")
+	}
+	// 混合：非法字节距截断点超过 utf8.UTFMax-1 字节，回退够不到边界——退化
+	// 为原始字节截断，ASCII 部分仍完整保留
+	farInvalid := "中" + "\xff" + "abcdefgh"
+	if got := truncateUTF8Safe(farInvalid, 9); got != farInvalid[:9] {
+		t.Fatalf("远距非法字节应退化为字节截断: got %q want %q", got, farInvalid[:9])
+	}
+	// 合法输入但 max 小于首字符宽度：返回空串，不输出半个字符
+	tinyMax := "中文abc"
+	if got := truncateUTF8Safe(tinyMax, 2); got != "" {
+		t.Fatalf("max 小于首字符宽度应返回空串: got %q", got)
+	}
+}

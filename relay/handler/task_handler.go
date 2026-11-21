@@ -747,7 +747,7 @@ func HandleMjImageProxy(
 }
 
 // truncateUTF8Safe 按字节上限截断并回退到完整 rune 边界，避免切断多字节字符产生乱码。
-// 仅用于日志截断等非资金路径场景；算法与 internal/response/error_log.go 的 truncateString 一致。
+// 仅用于日志截断等非资金路径场景。
 func truncateUTF8Safe(s string, max int) string {
 	if len(s) <= max {
 		return s
@@ -757,8 +757,25 @@ func truncateUTF8Safe(s string, max int) string {
 	// continuation byte），也可能恰好是某个字符的最后一个字节（此时 cut 本身
 	// 已合法、无需回退）。不能用 !utf8.RuneStart(末字节) 判断——完整字符的最后
 	// 一个字节同样是 continuation byte，会把它误判成"被切断"而多删一截。
-	for len(cut) > 0 && !utf8.ValidString(cut) {
+	//
+	// 回退上限 utf8.UTFMax-1 字节：合法 UTF-8 字符至多 4 字节，对**合法输入**，
+	// 切在字符中间至多回退 3 字节必达边界。回退满 3 字节仍非法，只可能是
+	// 区间内含非法 UTF-8（上游 GBK/二进制错误页）——不得继续回退（会一路退到
+	// 空串，把排障线索全丢掉），退化为原始字节截断，保留乱码但可辨认的内容。
+	for i := 0; i < utf8.UTFMax-1 && len(cut) > 0 && !utf8.ValidString(cut); i++ {
 		cut = cut[:len(cut)-1]
+	}
+	if !utf8.ValidString(cut) {
+		return s[:max]
+	}
+	if len(cut) == 0 && max > 0 {
+		// 回退到空：max 区间内没有任何完整合法字符。两种情况——
+		//   - 原串开头是合法多字节字符而 max 小于其宽度：返回空串，不输出半个字符；
+		//   - 原串开头本身就是非法序列（GBK/二进制）：退化为原始字节截断保留线索。
+		if r, size := utf8.DecodeRuneInString(s); !(r == utf8.RuneError && size == 1) && max < size {
+			return ""
+		}
+		return s[:max]
 	}
 	return cut
 }

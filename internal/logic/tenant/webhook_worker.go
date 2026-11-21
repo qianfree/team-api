@@ -8,7 +8,9 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
@@ -207,9 +209,23 @@ func recordDeliveryLog(ctx context.Context, evt entity.OpnWebhookEvents, config 
 	}
 }
 
+// truncateString 截断到 maxLen 字节，供 opn_webhook_delivery_logs 落库使用。
+// 输出必须恒为合法 UTF-8：respBody 是接收方 HTTP 响应的原始字节（可能是 GBK/
+// 二进制错误页），纯字节截断或非法序列会被 PostgreSQL（UTF8 库）拒收，
+// 整条投递日志丢失。算法与 internal/response/error_log.go 的 truncateString
+// 同族（归一化 + rune 边界回退），差异仅在本函数不加 "..." 后缀。
 func truncateString(s string, maxLen int) string {
+	// 非法 UTF-8 先归一化为替换字符（连续非法段 → 单个 U+FFFD）
+	if !utf8.ValidString(s) {
+		s = strings.ToValidUTF8(s, "\uFFFD")
+	}
 	if len(s) <= maxLen {
 		return s
 	}
-	return s[:maxLen]
+	cut := s[:maxLen]
+	// 合法输入的多字节字符至多 4 字节，切在中间至多回退 3 字节必达边界
+	for i := 0; i < utf8.UTFMax-1 && len(cut) > 0 && !utf8.ValidString(cut); i++ {
+		cut = cut[:len(cut)-1]
+	}
+	return cut
 }
