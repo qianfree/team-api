@@ -299,7 +299,11 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 			}
 			var id int64
 			if billingResult != nil {
-				id, _ = billingResult.LastInsertId()
+				var idErr error
+				if id, idErr = billingResult.LastInsertId(); idErr != nil {
+					// 计费记录已落库（钱已由 Lua 扣），仅流水 RelatedId 关联断裂，留痕排障
+					g.Log().Warningf(ctx, "task billing: 取计费记录 ID 失败（流水 RelatedId 将为 0）: %v", idErr)
+				}
 			}
 			return id, nil
 		},

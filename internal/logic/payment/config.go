@@ -116,7 +116,11 @@ func RequireCallbackBaseURL(ctx context.Context) error {
 func ListAllChannels(ctx context.Context) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(channelTypes))
 	for _, ct := range channelTypes {
-		_, cfg, _ := LoadChannelConfig(ctx, ct)
+		_, cfg, loadErr := LoadChannelConfig(ctx, ct)
+		if loadErr != nil {
+			// 渠道配置读不出来会在管理端无声消失（item 无 is_enabled/config 字段），留痕排障
+			g.Log().Warningf(ctx, "payment: 加载渠道配置失败 channel=%s: %v", ct, loadErr)
+		}
 		item := map[string]interface{}{
 			"channel": ct,
 		}

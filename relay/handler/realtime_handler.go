@@ -371,6 +371,16 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 				billing.IncrMemberQuotaUsed(ctx, rc.TenantID, rc.UserID, settleResult.ActualCost)
 				billing.IncrApiKeyQuotaUsed(ctx, rc.ApiKeyID, settleResult.ActualCost)
 			}
+			if settleResult == nil {
+				// 结算失败：对齐 HTTP 成功路径（settleSuccessfulRequest），尝试释放预扣冻结，
+				// 失败等 prededuct_sweep 每 2 分钟自愈
+				g.Log().Warningf(ctx, "[RealtimeHandler] Settlement failed for request=%s model=%s, refunding pre-deduct amount=%.6f",
+					rc.RequestID, modelName, preDeductAmount)
+				if rErr := billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount); rErr != nil {
+					g.Log().Errorf(ctx, "[RealtimeHandler] Refund pre-deduct failed after settlement failure (needs reconciliation): request=%s tenant=%d err=%v",
+						rc.RequestID, rc.TenantID, rErr)
+				}
+			}
 		}
 	}
 	recordRealtimeUsage(provider, rc, r, selection, modelName, usage, settleResult, proxyErr, int(time.Since(realtimeStart).Milliseconds()))

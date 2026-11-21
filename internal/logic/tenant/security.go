@@ -46,7 +46,7 @@ func (s *sTenant) Verify2FA(ctx context.Context, req *v1.Tenant2FAVerifyReq) (*v
 	if !valid {
 		// 审计补全：2FA 步失败此前不入登录历史，造成租户登录审计空洞
 		// （失败计数已在 common.Verify2FACode 内完成，此处只补审计记录）
-		_ = common.RecordLoginHistory(ctx, "tenant", claims.UserID, claims.TenantID, "totp", ipAddress, ua, deviceFP, false, "验证码错误")
+		recordLoginHistorySafe(ctx, "tenant", claims.UserID, claims.TenantID, "totp", ipAddress, ua, deviceFP, false, "验证码错误")
 		return nil, common.NewBusinessError(consts.CodeTotpInvalid, consts.MsgTotpInvalid)
 	}
 
@@ -87,7 +87,7 @@ func (s *sTenant) Verify2FA(ctx context.Context, req *v1.Tenant2FAVerifyReq) (*v
 		LastLoginIp: ipAddress,
 	}).Update()
 
-	_ = common.RecordLoginHistory(ctx, "tenant", user.Id, user.TenantId, "totp", ipAddress, ua, deviceFP, true, "")
+	recordLoginHistorySafe(ctx, "tenant", user.Id, user.TenantId, "totp", ipAddress, ua, deviceFP, true, "")
 
 	// Get tenant info
 	var tenant *entity.TntTenants

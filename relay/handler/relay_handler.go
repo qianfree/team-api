@@ -520,6 +520,7 @@ func releasePreDeduct(ctx context.Context, billing common.BillingProvider, tenan
 
 // settleSuccessfulRequest 成功路径的计费结算、健康度更新和用量记录。
 func settleSuccessfulRequest(
+	ctx context.Context,
 	rc *RelayContext,
 	v *relayValidation,
 	usage *common.Usage,
@@ -532,8 +533,9 @@ func settleSuccessfulRequest(
 	path string,
 ) *BillingResult {
 	// 16. 结算费用（使用完整 Usage 含 cache token）
-	// 重新创建 context，上游 DoResponse 可能耗时很长（长文本流式输出）
-	postCtx, postCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// 重新创建 context，上游 DoResponse 可能耗时很长（长文本流式输出）；
+	// WithoutCancel 保留 request_id 等链路值，超时预算从结算时刻起算（与 newSettleContext 同口径）
+	postCtx, postCancel := newSettleContext(ctx)
 	defer postCancel()
 
 	// 上游未返回 usage 时回退请求侧估算（仅 embeddings/rerank），避免漏计费
@@ -1137,7 +1139,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		trace.ModelMapped = selection.IsModelMapped
 		rc.ForwardingTrace = trace
 
-		result := settleSuccessfulRequest(rc, v, usage, info, selection, preDeductAmount, provider, billing, headers, path)
+		result := settleSuccessfulRequest(ctx, rc, v, usage, info, selection, preDeductAmount, provider, billing, headers, path)
 		return usage, result, nil
 	}
 }

@@ -98,7 +98,10 @@ func FulfillOrder(ctx context.Context, orderID int64) error {
 				snapRate, creditAmount, orderID); err != nil {
 				return gerror.Wrapf(err, "snapshot exchange rate failed")
 			}
-			_ = billing.CheckAndUpgradeLevel(ctx, order.TenantID)
+			if levelErr := billing.CheckAndUpgradeLevel(ctx, order.TenantID); levelErr != nil {
+				// 升级失败不阻断履约（钱已入账），但等级权益不生效必须留痕
+				g.Log().Warningf(ctx, "fulfill: 充值后租户等级升级检查失败 tenant=%d order=%d: %v", order.TenantID, orderID, levelErr)
+			}
 			// 充值后检查是否需要重置低余额预警标记
 			billing.ResetLowBalanceNotified(ctx, order.TenantID)
 

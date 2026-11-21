@@ -69,7 +69,11 @@ func StartAsyncPolling(ctx context.Context) {
 				g.Log().Info(ctx, "Async task polling stopped")
 				return
 			case <-ticker.C:
-				pollOnce(ctx)
+				// 逐轮 Guard：单轮轮询异常只丢当轮（任务由下一轮或超时网兜底），
+				// 轮询器存活继续调度；wg 计数循环不能用 RunLoop 重启（会二次 Done）
+				safego.Guard(ctx, "task:poll_once", func() {
+					pollOnce(ctx)
+				})
 			}
 		}
 	})
@@ -548,8 +552,10 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 	taskData, mErr := json.Marshal(taskDataMap)
 	if mErr != nil {
 		// taskDataMap 的值多来自上游 JSON（已 json.Valid 预校验），失败概率极低；
-		// 但失败时 taskData 为 null 字节会原样发给上游 FetchTask，必须留痕
-		g.Log().Warningf(ctx, "async_polling: 序列化 taskData 失败 task=%d: %v", task.ID, mErr)
+		// 此时 taskData 为 null 字节，原样发给上游 FetchTask 无意义，跳过本轮
+		//（任务保持非终态，下一轮重试；30 分钟超时网兜底）
+		g.Log().Warningf(ctx, "async_polling: 序列化 taskData 失败，跳过本轮轮询 task=%d: %v", task.ID, mErr)
+		return
 	}
 
 	// 渠道调试日志（轮询记录，仅段2/段3——后台轮询无客户端交互）：

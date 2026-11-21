@@ -218,13 +218,16 @@ func HandleSyncImageSubmit(r *ghttp.Request, body []byte, rc *relay_handler.Task
 	}
 	if !task.EnqueueSyncImageJob(job) {
 		releaseSyncImagePreDeduct(ctx, rc, preDeduct)
-		_ = taskDataProvider.UpdateTaskCAS(ctx, &relay_common.AsyncTask{
+		if casErr := taskDataProvider.UpdateTaskCAS(ctx, &relay_common.AsyncTask{
 			ID:             created.ID,
 			Status:         "FAILURE",
 			FailReason:     "sync image worker queue full",
 			BillingSettled: true,
 			FinishTime:     &now,
-		}, "QUEUED")
+		}, "QUEUED"); casErr != nil {
+			// CAS 失败任务会滞留 QUEUED 无排障线索（预扣已释放、已向客户端返回 429），必须留痕
+			g.Log().Errorf(ctx, "sync_image: 队列满回滚任务状态失败 task=%s request=%s: %v", publicTaskID, rc.RequestID, casErr)
+		}
 		task.DecrActiveTask()
 		rc.TaskID = ""
 		writeSyncImageError(w, http.StatusTooManyRequests, "server busy, please retry later")

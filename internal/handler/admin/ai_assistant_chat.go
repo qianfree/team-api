@@ -231,9 +231,13 @@ func allowChatRate(ctx context.Context, adminID int64, limit int) bool {
 		return true // Redis 故障不阻断对话（认证已兜底）
 	}
 	if v.Int64() == 1 {
-		// EXPIRE 失败会导致限流计数键永不过期（该管理员被永久限流），必须留痕
+		// EXPIRE 失败会导致限流计数键永不过期（该管理员被永久限流）：
+		// 可用性优先，删除计数键回退到未限流状态并留痕
 		if _, expErr := redis.Do(ctx, "EXPIRE", key, 60); expErr != nil {
-			g.Log().Errorf(ctx, "ai assistant: 设置限流键过期失败（计数键可能永不过期）admin=%d: %v", adminID, expErr)
+			g.Log().Errorf(ctx, "ai assistant: 设置限流键过期失败，删除计数键兜底 admin=%d: %v", adminID, expErr)
+			if _, delErr := redis.Do(ctx, "DEL", key); delErr != nil {
+				g.Log().Errorf(ctx, "ai assistant: 删除限流计数键失败（该管理员可能被限流至重启）admin=%d: %v", adminID, delErr)
+			}
 		}
 	}
 	return v.Int64() <= int64(limit)
