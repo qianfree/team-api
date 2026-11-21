@@ -291,9 +291,10 @@ func (c *Catalog) Start(ctx context.Context) {
 	c.Rebuild(rebuildCtx)
 	cancel()
 
-	// 长驻循环统一走 safego 启动：循环体 panic 只丢当次刷新，不击穿进程
-	safego.Run(ctx, "dispatch:catalog_refresh", c.refreshLoop)
-	safego.Run(ctx, "dispatch:catalog_subscribe", c.subscribeInvalidate)
+	// 长驻循环统一走 safego 启动；渠道目录是调度数据源，panic 退出会整体降级
+	//（无渠道可选、失效不感知），RunLoop 自愈重启
+	safego.RunLoop(ctx, "dispatch:catalog_refresh", c.refreshLoop)
+	safego.RunLoop(ctx, "dispatch:catalog_subscribe", c.subscribeInvalidate)
 }
 
 // Stop 停止后台刷新。

@@ -51,8 +51,8 @@ func InitWebhookDispatcher(ctx context.Context) {
 			d.worker()
 		})
 	}
-	safego.Run(ctx, "webhook:sweep_loop", func(context.Context) { d.sweepLoop() })
-	safego.Run(ctx, "webhook:cleanup_loop", func(context.Context) { d.cleanupLoop() })
+	safego.RunLoop(ctx, "webhook:sweep_loop", func(context.Context) { d.sweepLoop() })
+	safego.RunLoop(ctx, "webhook:cleanup_loop", func(context.Context) { d.cleanupLoop() })
 
 	// Recover any pending events left from a previous crash
 	safego.Run(ctx, "webhook:recover_pending", func(context.Context) { d.recoverPending() })
@@ -80,7 +80,11 @@ func (d *WebhookDispatcher) worker() {
 		case <-d.stopCh:
 			return
 		case eventID := <-d.eventCh:
-			deliverEventByID(d.ctx, eventID)
+			// 逐事件 Guard：单次投递异常只丢当次（sweep 周期兜底重投），
+			// worker 存活继续消费；wg 计数循环不能用 RunLoop 重启（会二次 Done）
+			safego.Guard(d.ctx, "webhook:deliver", func() {
+				deliverEventByID(d.ctx, eventID)
+			})
 		}
 	}
 }

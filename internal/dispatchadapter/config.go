@@ -115,7 +115,8 @@ func buildTenantPolicy(globalRaw, tenantRaw string) (*dispatch.RoutingPolicy, er
 // StartPolicyRefresher 周期重载策略并热更新到全部协调器（主 + 影子）。
 // 非法配置拒绝生效并告警，继续用上一份有效配置。
 func StartPolicyRefresher(ctx context.Context, stop <-chan struct{}, cos ...*dispatch.Coordinator) {
-	safego.Run(ctx, "dispatch:policy_refresher", func(ctx context.Context) {
+	// 策略刷新循环 panic 退出会冻结在旧策略（新配置永不生效），RunLoop 自愈重启
+	safego.RunLoop(ctx, "dispatch:policy_refresher", func(ctx context.Context) {
 		ticker := time.NewTicker(policyRefreshInterval)
 		defer ticker.Stop()
 		for {

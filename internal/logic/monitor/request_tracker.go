@@ -179,7 +179,7 @@ func InitRequestTracker() {
 
 	tracker = t
 	trackerStop = make(chan struct{})
-	safego.Run(context.Background(), "monitor:request_sampler", func(context.Context) {
+	safego.RunLoop(context.Background(), "monitor:request_sampler", func(context.Context) {
 		t.runSampler(trackerStop)
 	})
 }

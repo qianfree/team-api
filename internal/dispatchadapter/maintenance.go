@@ -51,7 +51,8 @@ func RequestHealthSnapshot(channelID int64) {
 
 // startMaintenance 启动维护循环（wire 组装时调用一次）。
 func startMaintenance(ctx context.Context, stop <-chan struct{}) {
-	safego.Run(ctx, "dispatch:maintenance_loop", func(ctx context.Context) {
+	// 维护循环 panic 退出会停掉预扣清扫/健康快照（冻结残留不自愈），RunLoop 自愈重启
+	safego.RunLoop(ctx, "dispatch:maintenance_loop", func(ctx context.Context) {
 		ticker := time.NewTicker(maintenanceInterval)
 		defer ticker.Stop()
 		for {

@@ -400,7 +400,8 @@ func (s *ConfigService) Warmup(ctx context.Context) {
 // StartSubscriber subscribes to Redis Pub/Sub for cross-instance cache invalidation.
 // Called once at startup in cmd.go.
 func (s *ConfigService) StartSubscriber(ctx context.Context) {
-	safego.Run(ctx, "config:settings_subscriber", func(ctx context.Context) {
+	// 设置变更订阅 panic 退出会让本实例配置缓存永不失效，RunLoop 自愈重启
+	safego.RunLoop(ctx, "config:settings_subscriber", func(ctx context.Context) {
 		var reconnectCount int
 		for {
 			conn, _, err := g.Redis().Subscribe(ctx, "settings:changed")

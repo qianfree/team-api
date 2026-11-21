@@ -406,7 +406,8 @@ func PublishInvalidation(ctx context.Context, fullKey string) {
 // 不可见，广播模式由各实例对本地 L1 全量匹配清除。
 // 在 cmd.go 启动时调用一次；断线自动重连，语义与 ConfigService.StartSubscriber 一致。
 func StartCacheInvalidationSubscriber(ctx context.Context) {
-	safego.Run(ctx, "cache:invalidation_subscriber", func(ctx context.Context) {
+	// 缓存失效订阅 panic 退出会让本实例 L1 缓存永不失效（脏读到旧配置），RunLoop 自愈重启
+	safego.RunLoop(ctx, "cache:invalidation_subscriber", func(ctx context.Context) {
 		var reconnectCount int
 		for {
 			conn, _, err := g.Redis().Subscribe(ctx, cacheInvalidateChannel, cacheInvalidatePatternChannel)

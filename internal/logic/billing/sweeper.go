@@ -41,7 +41,8 @@ func walletMaterializeInterval(ctx context.Context) time.Duration {
 //   - 覆盖期间产生的新变动会重新 SADD 脏标记，下个 tick 收敛（最终一致）。
 func StartWalletMaterializer(ctx context.Context) {
 	interval := walletMaterializeInterval(ctx)
-	safego.Run(ctx, "billing:wallet_materializer", func(ctx context.Context) {
+	// 钱包物化器 panic 静默退出会让 DB 余额长期滞后，RunLoop 自愈重启
+	safego.RunLoop(ctx, "billing:wallet_materializer", func(ctx context.Context) {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		g.Log().Infof(ctx, "[WALLET MATERIALIZER] started, interval=%s", interval)

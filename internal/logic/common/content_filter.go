@@ -58,7 +58,8 @@ func ContentFilter() *ContentFilterEngine {
 func InitContentFilter(ctx context.Context) {
 	engine := ContentFilter()
 	engine.Rebuild(ctx)
-	safego.Run(ctx, "content_filter:subscriber", engine.startSubscriber)
+	// 敏感词库订阅 panic 退出会让词库变更永不生效（旧词库一直跑），RunLoop 自愈重启
+	safego.RunLoop(ctx, "content_filter:subscriber", engine.startSubscriber)
 	g.Log().Info(ctx, "content filter engine initialized")
 }
 

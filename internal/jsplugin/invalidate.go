@@ -78,7 +78,8 @@ func (r *Registry) StartInvalidateSubscriber() {
 	}
 	stop := invalidateStop
 	invalidateMu.Unlock()
-	safego.Run(context.Background(), "jsplugin:invalidate", func(context.Context) {
+	// 插件失效订阅 panic 退出会让本实例插件代码永不更新（旧代码一直跑），RunLoop 自愈重启
+	safego.RunLoop(context.Background(), "jsplugin:invalidate", func(context.Context) {
 		r.subscribeInvalidate(stop)
 	})
 }
