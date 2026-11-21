@@ -20,7 +20,7 @@ jobs:
 
       - name: gofmt check
         run: |
-          unformatted=$(gofmt -l main.go internal relay relaykit plugins web)
+          unformatted=$(gofmt -l main.go internal relay relaykit plugins web tests scripts)
           if [ -n "$unformatted" ]; then
             echo "以下文件未通过 gofmt："
             echo "$unformatted"
@@ -28,8 +28,10 @@ jobs:
           fi
 
       # golangci-lint 主 module（报告模式：先跑通并产出存量清单，不阻塞）
+      # version 固定与本地开发版本一致，避免 action 默认装最新版导致规则口径漂移
       - uses: golangci/golangci-lint-action@v8
         with:
+          version: v2.15
           args: --timeout 10m
         continue-on-error: true
 
@@ -37,6 +39,7 @@ jobs:
       - uses: golangci/golangci-lint-action@v8
         with:
           working-directory: relaykit
+          version: v2.15
           args: --timeout 10m
         continue-on-error: true
 

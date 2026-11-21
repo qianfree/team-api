@@ -54,7 +54,7 @@ tidy:
 
 # 格式化两个 module 的全部 Go 代码（提交前三件套之一）
 fmt:
-	gofmt -l -w main.go internal relay relaykit plugins web
+	gofmt -l -w main.go internal relay relaykit plugins web tests scripts
 
 # golangci-lint 静态检查（主 module + relaykit 子 module，需 golangci-lint v2.x）
 # 安装：go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
