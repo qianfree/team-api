@@ -38,7 +38,7 @@ func (s *sAdmin) wbCollectAvailability(ctx context.Context) ([]v1.WorkbenchModel
 		})
 		for _, b := range av.Breaking {
 			breakers = append(breakers, v1.WorkbenchBreaker{
-				ChannelId:    b.ChannelID,
+				ChannelID:    b.ChannelID,
 				ChannelName:  b.ChannelName,
 				Model:        b.Model,
 				ChannelLevel: b.ChannelLevel,
@@ -67,7 +67,7 @@ func (s *sAdmin) wbCollectAvailability(ctx context.Context) ([]v1.WorkbenchModel
 	chLevel := map[int64]string{}
 	for _, b := range breakers {
 		if b.ChannelLevel && !b.HalfOpen {
-			chLevel[b.ChannelId] = b.ChannelName
+			chLevel[b.ChannelID] = b.ChannelName
 		}
 	}
 	for id, name := range chLevel {

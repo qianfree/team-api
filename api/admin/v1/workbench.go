@@ -70,7 +70,7 @@ type WorkbenchModelAvail struct {
 
 // WorkbenchBreaker 正在熔断的渠道×模型。
 type WorkbenchBreaker struct {
-	ChannelId    int64  `json:"channel_id"`
+	ChannelID    int64  `json:"channel_id"`
 	ChannelName  string `json:"channel_name"`
 	Model        string `json:"model"`
 	ChannelLevel bool   `json:"channel_level" dc:"true=渠道级熔断（该渠道所有模型受影响）；false=仅该模型被隔离"`
@@ -85,7 +85,7 @@ type AdminWorkbenchSummaryReq struct {
 
 type AdminWorkbenchSummaryRes struct {
 	Metrics     []WorkbenchMetric     `json:"metrics" dc:"首屏关键数字"`
-	Items       []WorkbenchItem       `json:"items" dc:"待办列表（已按 p0→p1→p2 排序，已剔除静音项）"`
+	Todos       []WorkbenchItem       `json:"todos" dc:"待办列表（已按 p0→p1→p2 排序，已剔除静音项）"`
 	Domains     []WorkbenchDomainStat `json:"domains" dc:"分域计数"`
 	Models      []WorkbenchModelAvail `json:"models" dc:"模型可用渠道速览"`
 	Breakers    []WorkbenchBreaker    `json:"breakers" dc:"正在熔断的渠道×模型"`

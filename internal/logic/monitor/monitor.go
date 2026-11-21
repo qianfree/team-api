@@ -72,7 +72,7 @@ func (s *sMonitor) ModelPerformance(ctx context.Context, req *v1.MonitorModelPer
 	}
 	startDate, endDate := normalizeMonitorDateRange(req.StartDate, req.EndDate)
 	// 渠道/模型为可选过滤（channel_id=0、model_name 空 = 不过滤），透传给聚合层拼 SQL 条件
-	list, err := GetModelPerformance(ctx, startDate, endDate, req.ChannelId, req.ModelName)
+	list, err := GetModelPerformance(ctx, startDate, endDate, req.ChannelID, req.ModelName)
 	if err != nil {
 		return nil, err
 	}
@@ -286,28 +286,28 @@ func (s *sMonitor) UpdateAlertRule(ctx context.Context, req *v1.AlertRuleUpdateR
 		updates.NotifyUserIds = req.NotifyUserIDs
 	}
 
-	if err := UpdateAlertRule(ctx, req.Id, updates); err != nil {
+	if err := UpdateAlertRule(ctx, req.ID, updates); err != nil {
 		return nil, err
 	}
 	return nil, nil
 }
 
 func (s *sMonitor) DeleteAlertRule(ctx context.Context, req *v1.AlertRuleDeleteReq) (*v1.AlertRuleDeleteRes, error) {
-	if err := DeleteAlertRule(ctx, req.Id); err != nil {
+	if err := DeleteAlertRule(ctx, req.ID); err != nil {
 		return nil, err
 	}
 	return nil, nil
 }
 
 func (s *sMonitor) ToggleAlertRule(ctx context.Context, req *v1.AlertRuleToggleReq) (*v1.AlertRuleToggleRes, error) {
-	if err := ToggleAlertRule(ctx, req.Id); err != nil {
+	if err := ToggleAlertRule(ctx, req.ID); err != nil {
 		return nil, err
 	}
 	return nil, nil
 }
 
 func (s *sMonitor) AlertTest(ctx context.Context, req *v1.AlertTestReq) (*v1.AlertTestRes, error) {
-	if err := SendTestAlert(ctx, req.Id); err != nil {
+	if err := SendTestAlert(ctx, req.ID); err != nil {
 		return nil, err
 	}
 	return &v1.AlertTestRes{Message: "测试通知已发送"}, nil
@@ -333,7 +333,7 @@ func (s *sMonitor) AlertEventList(ctx context.Context, req *v1.AlertEventListReq
 
 func (s *sMonitor) AcknowledgeAlert(ctx context.Context, req *v1.AlertEventAcknowledgeReq) (*v1.AlertEventAcknowledgeRes, error) {
 	adminID := middleware.GetUserID(ctx)
-	if err := AcknowledgeAlert(ctx, req.Id, adminID); err != nil {
+	if err := AcknowledgeAlert(ctx, req.ID, adminID); err != nil {
 		return nil, err
 	}
 	return nil, nil
@@ -341,7 +341,7 @@ func (s *sMonitor) AcknowledgeAlert(ctx context.Context, req *v1.AlertEventAckno
 
 func (s *sMonitor) ResolveAlert(ctx context.Context, req *v1.AlertEventResolveReq) (*v1.AlertEventResolveRes, error) {
 	adminID := middleware.GetUserID(ctx)
-	if err := ResolveAlert(ctx, req.Id, adminID, req.Notes); err != nil {
+	if err := ResolveAlert(ctx, req.ID, adminID, req.Notes); err != nil {
 		return nil, err
 	}
 	return nil, nil

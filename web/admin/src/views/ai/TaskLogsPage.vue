@@ -255,8 +255,8 @@ async function reloadDetail(id?: number) {
   try {
     const res: any = await request.get(`/admin/tasks/${taskId}`)
     const raw = res.data?.data
-    if (raw?.task) {
-      detailData.value = raw.task
+    if (raw) {
+      detailData.value = raw
     }
   } catch {
     // error handled by interceptor

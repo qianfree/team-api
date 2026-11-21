@@ -14,7 +14,7 @@ type TemplateListReq struct {
 }
 
 type TemplateItem struct {
-	Id           int64       `json:"id"`
+	ID           int64       `json:"id"`
 	Code         string      `json:"code"`
 	Channel      string      `json:"channel"`
 	Subject      string      `json:"subject"`
@@ -38,7 +38,7 @@ type TemplateGetReq struct {
 }
 
 type TemplateGetRes struct {
-	Id           int64       `json:"id"`
+	ID           int64       `json:"id"`
 	Code         string      `json:"code"`
 	Channel      string      `json:"channel"`
 	Subject      string      `json:"subject"`
@@ -88,10 +88,10 @@ type MessageListReq struct {
 }
 
 type MessageItem struct {
-	Id          int64       `json:"id"`
-	TenantId    int64       `json:"tenant_id"`
+	ID          int64       `json:"id"`
+	TenantID    int64       `json:"tenant_id"`
 	TenantName  string      `json:"tenant_name"`
-	UserId      int64       `json:"user_id"`
+	UserID      int64       `json:"user_id"`
 	UserName    string      `json:"user_name"`
 	Type        string      `json:"type"`
 	Title       string      `json:"title"`
@@ -141,7 +141,7 @@ type AnnouncementListReq struct {
 }
 
 type AnnouncementItem struct {
-	Id              int64       `json:"id"`
+	ID              int64       `json:"id"`
 	Title           string      `json:"title"`
 	Type            string      `json:"type"`
 	Content         string      `json:"content"`
@@ -180,7 +180,7 @@ type AnnouncementCreateRes struct {
 
 type AnnouncementUpdateReq struct {
 	g.Meta          `path:"/announcements/{id}" method:"put" mime:"json" tags:"管理后台-公告" summary:"更新公告"`
-	Id              int64  `json:"id" in:"path" v:"required|min:1"`
+	ID              int64  `json:"id" in:"path" v:"required|min:1"`
 	Title           string `json:"title" dc:"标题"`
 	Type            string `json:"type" dc:"类型：info/warning/important"`
 	Content         string `json:"content" dc:"内容"`
@@ -195,14 +195,14 @@ type AnnouncementUpdateRes struct{}
 
 type AnnouncementPublishReq struct {
 	g.Meta `path:"/announcements/{id}/publish" method:"put" mime:"json" tags:"管理后台-公告" summary:"发布公告"`
-	Id     int64 `json:"id" in:"path" v:"required|min:1"`
+	ID     int64 `json:"id" in:"path" v:"required|min:1"`
 }
 
 type AnnouncementPublishRes struct{}
 
 type AnnouncementArchiveReq struct {
 	g.Meta `path:"/announcements/{id}/archive" method:"put" mime:"json" tags:"管理后台-公告" summary:"归档公告"`
-	Id     int64 `json:"id" in:"path" v:"required|min:1"`
+	ID     int64 `json:"id" in:"path" v:"required|min:1"`
 }
 
 type AnnouncementArchiveRes struct{}

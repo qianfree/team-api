@@ -19,13 +19,13 @@ type OrderListReq struct {
 }
 
 type OrderItem struct {
-	Id             int64       `json:"id"`
+	ID             int64       `json:"id"`
 	OrderNo        string      `json:"order_no"`
-	TenantId       int64       `json:"tenant_id"`
+	TenantID       int64       `json:"tenant_id"`
 	TenantName     string      `json:"tenant_name" dc:"租户名称（列表联表填充，详情接口为空）"`
-	UserId         int64       `json:"user_id"`
+	UserID         int64       `json:"user_id"`
 	OrderType      string      `json:"order_type"`
-	PlanId         int64       `json:"plan_id"`
+	PlanID         int64       `json:"plan_id"`
 	Amount         float64     `json:"amount"`
 	DiscountAmount float64     `json:"discount_amount"`
 	FinalAmount    float64     `json:"final_amount"`
@@ -38,7 +38,7 @@ type OrderItem struct {
 	FulfilledAt    *gtime.Time `json:"fulfilled_at"`
 	ExpiredAt      *gtime.Time `json:"expired_at"`
 	CancelledAt    *gtime.Time `json:"cancelled_at"`
-	RelatedOrderId int64       `json:"related_order_id"`
+	RelatedOrderID int64       `json:"related_order_id"`
 	Description    string      `json:"description"`
 	CreatedAt      *gtime.Time `json:"created_at"`
 	UpdatedAt      *gtime.Time `json:"updated_at"`
@@ -53,7 +53,7 @@ type OrderListRes struct {
 
 type OrderDetailReq struct {
 	g.Meta `path:"/orders/{id}" method:"get" mime:"json" tags:"管理后台-订单" summary:"订单详情"`
-	Id     int64 `json:"id" in:"path" v:"required|min:1"`
+	ID     int64 `json:"id" in:"path" v:"required|min:1"`
 }
 
 type OrderDetailRes struct {
@@ -62,7 +62,7 @@ type OrderDetailRes struct {
 
 type OrderRefundReq struct {
 	g.Meta `path:"/orders/{id}/refund" method:"post" mime:"json" tags:"管理后台-订单" summary:"发起退款"`
-	Id     int64  `json:"id" in:"path" v:"required|min:1"`
+	ID     int64  `json:"id" in:"path" v:"required|min:1"`
 	Reason string `json:"reason"`
 }
 
@@ -73,7 +73,7 @@ type OrderRefundRes struct {
 
 type OrderCompleteReq struct {
 	g.Meta `path:"/orders/{id}/complete" method:"post" mime:"json" tags:"管理后台-订单" summary:"手动完成订单"`
-	Id     int64 `json:"id" in:"path" v:"required|min:1"`
+	ID     int64 `json:"id" in:"path" v:"required|min:1"`
 }
 
 type OrderCompleteRes struct{}

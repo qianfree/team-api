@@ -427,7 +427,7 @@ func (s *sAdmin) ListTenantAvailableModels(ctx context.Context, req *v1.TenantAv
 	list := make([]v1.TenantAvailableModelPreview, 0, len(models))
 	for _, m := range models {
 		list = append(list, v1.TenantAvailableModelPreview{
-			ModelId:          m.ModelId,
+			ModelID:          m.ModelId,
 			ModelName:        m.ModelName,
 			Category:         m.Category,
 			MaxContextTokens: m.MaxContextTokens,

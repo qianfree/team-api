@@ -127,7 +127,7 @@ type TenantAvailableModelsPreviewRes struct {
 
 // TenantAvailableModelPreview 租户可用模型预览项
 type TenantAvailableModelPreview struct {
-	ModelId          string `json:"model_id"`
+	ModelID          string `json:"model_id"`
 	ModelName        string `json:"model_name"`
 	Category         string `json:"category"`
 	MaxContextTokens int    `json:"max_context_tokens"`

@@ -462,9 +462,9 @@ func buildUsageLogFilter(f v1.AdminUsageLogFilter) (where string, args []any) {
 		conditions = append(conditions, "u.request_type = ?")
 		args = append(args, f.RequestType)
 	}
-	if f.UpstreamRequestId != "" {
+	if f.UpstreamRequestID != "" {
 		conditions = append(conditions, "u.upstream_request_id = ?")
-		args = append(args, f.UpstreamRequestId)
+		args = append(args, f.UpstreamRequestID)
 	}
 	if f.StartDate != "" {
 		conditions = append(conditions, "u.created_at >= ?")
@@ -559,7 +559,7 @@ func (s *sAdmin) GetAllUsageLogs(ctx context.Context, req *v1.AdminUsageLogListR
 func (s *sAdmin) GetUsageLogDetail(ctx context.Context, req *v1.AdminUsageLogDetailReq) (*v1.AdminUsageLogDetailRes, error) {
 	dataSQL := `SELECT ` + usageLogDetailFields + `
 		 FROM ` + usageLogJoinedFrom + ` WHERE u.id = ? LIMIT 1`
-	result, err := g.DB().Ctx(ctx).Query(ctx, dataSQL, req.Id)
+	result, err := g.DB().Ctx(ctx).Query(ctx, dataSQL, req.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -647,11 +647,11 @@ func (s *sAdmin) GetAllBillingRecords(ctx context.Context, req *v1.AdminBillingR
 
 	// 批量填充名称
 	if len(records) > 0 {
-		tenantIds, userIds, channelIds := make([]int64, 0), make([]int64, 0), make([]int64, 0)
+		tenantIDs, userIDs, channelIDs := make([]int64, 0), make([]int64, 0), make([]int64, 0)
 		for _, r := range records {
-			tenantIds = append(tenantIds, r.TenantId)
-			userIds = append(userIds, r.UserId)
-			channelIds = append(channelIds, r.ChannelId)
+			tenantIDs = append(tenantIDs, r.TenantID)
+			userIDs = append(userIDs, r.UserID)
+			channelIDs = append(channelIDs, r.ChannelID)
 		}
 
 		tenantNames := make(map[int64]string)
@@ -659,7 +659,7 @@ func (s *sAdmin) GetAllBillingRecords(ctx context.Context, req *v1.AdminBillingR
 			Id   int64  `orm:"id"`
 			Name string `orm:"name"`
 		}, 0)
-		if err := dao.TntTenants.Ctx(ctx).Fields("id, name").WhereIn("id", tenantIds).Scan(&tenantNameEntities); err == nil {
+		if err := dao.TntTenants.Ctx(ctx).Fields("id, name").WhereIn("id", tenantIDs).Scan(&tenantNameEntities); err == nil {
 			for _, e := range tenantNameEntities {
 				tenantNames[e.Id] = e.Name
 			}
@@ -670,7 +670,7 @@ func (s *sAdmin) GetAllBillingRecords(ctx context.Context, req *v1.AdminBillingR
 			Id          int64  `orm:"id"`
 			DisplayName string `orm:"display_name"`
 		}, 0)
-		if err := dao.TntUsers.Ctx(ctx).Fields("id, display_name").WhereIn("id", userIds).Scan(&userNameEntities); err == nil {
+		if err := dao.TntUsers.Ctx(ctx).Fields("id, display_name").WhereIn("id", userIDs).Scan(&userNameEntities); err == nil {
 			for _, e := range userNameEntities {
 				userNames[e.Id] = e.DisplayName
 			}
@@ -681,16 +681,16 @@ func (s *sAdmin) GetAllBillingRecords(ctx context.Context, req *v1.AdminBillingR
 			Id   int64  `orm:"id"`
 			Name string `orm:"name"`
 		}, 0)
-		if err := dao.ChnChannels.Ctx(ctx).Fields("id, name").WhereIn("id", channelIds).Scan(&channelNameEntities); err == nil {
+		if err := dao.ChnChannels.Ctx(ctx).Fields("id, name").WhereIn("id", channelIDs).Scan(&channelNameEntities); err == nil {
 			for _, e := range channelNameEntities {
 				channelNames[e.Id] = e.Name
 			}
 		}
 
 		for _, r := range records {
-			r.TenantName = tenantNames[r.TenantId]
-			r.UserName = userNames[r.UserId]
-			r.ChannelName = channelNames[r.ChannelId]
+			r.TenantName = tenantNames[r.TenantID]
+			r.UserName = userNames[r.UserID]
+			r.ChannelName = channelNames[r.ChannelID]
 		}
 	}
 
@@ -980,16 +980,16 @@ func (s *sAdmin) GetWalletTransactions(ctx context.Context, req *v1.AdminWalletT
 		userKeys := make([]string, 0, len(records))
 		seen := make(map[int64]bool, len(records))
 		for _, r := range records {
-			if r.UserId > 0 && !seen[r.UserId] {
-				seen[r.UserId] = true
-				userKeys = append(userKeys, fmt.Sprintf("%d:%d", req.TenantID, r.UserId))
+			if r.UserID > 0 && !seen[r.UserID] {
+				seen[r.UserID] = true
+				userKeys = append(userKeys, fmt.Sprintf("%d:%d", req.TenantID, r.UserID))
 			}
 		}
 		if len(userKeys) > 0 {
 			userMap := common.BatchQueryUserNames(ctx, userKeys)
 			for _, r := range records {
-				if r.UserId > 0 {
-					r.Username = userMap[fmt.Sprintf("%d:%d", req.TenantID, r.UserId)]
+				if r.UserID > 0 {
+					r.Username = userMap[fmt.Sprintf("%d:%d", req.TenantID, r.UserID)]
 				}
 			}
 		}
@@ -1137,7 +1137,7 @@ func (s *sAdmin) GetWalletFrozenItems(ctx context.Context, req *v1.AdminWalletFr
 			RequestID:   it.RequestID,
 			ModelName:   it.ModelName,
 			Amount:      it.Amount,
-			CreatedAt:   createdAt.String(),
+			CreatedAt:   gtime.New(createdAt),
 			AgeSeconds:  int64(age.Seconds()),
 			Releasable:  releasable,
 			NeedForce:   needForce,
@@ -1329,18 +1329,18 @@ func (s *sAdmin) GetAllTransactions(ctx context.Context, req *v1.AdminTransactio
 	list := make([]*v1.AdminTransactionItem, 0, len(records))
 	for _, r := range records {
 		list = append(list, &v1.AdminTransactionItem{
-			Id:           r.Id,
-			TenantId:     r.TenantId,
+			ID:           r.Id,
+			TenantID:     r.TenantId,
 			TenantName:   r.TenantName,
 			Type:         r.Type,
 			Amount:       r.Amount,
 			BalanceAfter: r.BalanceAfter,
 			Description:  r.Description,
-			UserId:       r.UserId,
+			UserID:       r.UserId,
 			Username:     r.Username,
-			RequestId:    r.RequestId,
+			RequestID:    r.RequestId,
 			ModelName:    r.ModelName,
-			CreatedAt:    r.CreatedAt.String(),
+			CreatedAt:    r.CreatedAt,
 		})
 	}
 
@@ -1378,7 +1378,7 @@ func (s *sAdmin) GetDashboardChannelHealth(ctx context.Context, req *v1.AdminDas
 
 // GetDashboardRecentAlerts 获取最近5条告警
 func (s *sAdmin) GetDashboardRecentAlerts(ctx context.Context, req *v1.AdminDashboardRecentAlertsReq) (*v1.AdminDashboardRecentAlertsRes, error) {
-	var alerts []v1.RecentAlertItem
+	alerts := make([]v1.RecentAlertItem, 0) // 预置空切片：Scan 空结果不赋值，避免 "list": null
 	err := dao.OpsAlertEvents.Ctx(ctx).
 		Fields("id, rule_name, level, status, trigger_message, created_at").
 		OrderDesc("created_at").

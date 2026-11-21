@@ -35,7 +35,7 @@ func (s *sAdmin) Login(ctx context.Context, req *v1.AdminLoginReq) (*v1.AdminLog
 	// Get client info early for login history recording
 	ipAddress := g.RequestFromCtx(ctx).GetClientIp()
 	ua := g.RequestFromCtx(ctx).Header.Get("User-Agent")
-	deviceFP := common.DeviceFingerprint(req.DeviceId, ua)
+	deviceFP := common.DeviceFingerprint(req.DeviceID, ua)
 
 	// Find admin user by username
 	var user *entity.SysAdminUsers
@@ -210,7 +210,7 @@ func (s *sAdmin) Login(ctx context.Context, req *v1.AdminLoginReq) (*v1.AdminLog
 			items := make([]*v1.LoginPendingAgreement, 0, len(pending))
 			for _, a := range pending {
 				items = append(items, &v1.LoginPendingAgreement{
-					Id:      a.Id,
+					ID:      a.Id,
 					Code:    a.Code,
 					Title:   a.Title,
 					Version: a.Version,
@@ -349,7 +349,7 @@ func (s *sAdmin) ListSessions(ctx context.Context, req *v1.AdminSessionListReq) 
 	for i, sess := range sessions {
 		items[i] = v1.AdminSessionItem{
 			ID:          sess.Id,
-			UserId:      sess.UserId,
+			UserID:      sess.UserId,
 			Username:    userMap[sess.UserId].Username,
 			DisplayName: userMap[sess.UserId].DisplayName,
 			Role:        userMap[sess.UserId].Role,
@@ -401,7 +401,7 @@ func assertCanOperateSessions(ctx context.Context, targetUserID int64) error {
 // RevokeSession revokes a specific session.
 func (s *sAdmin) RevokeSession(ctx context.Context, req *v1.AdminRevokeSessionReq) (*v1.AdminRevokeSessionRes, error) {
 	// Look up session to get jti for Redis revocation
-	sess, err := common.GetSessionByID(ctx, "admin", req.Id)
+	sess, err := common.GetSessionByID(ctx, "admin", req.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -411,7 +411,7 @@ func (s *sAdmin) RevokeSession(ctx context.Context, req *v1.AdminRevokeSessionRe
 		}
 		common.MarkSessionRevoked(ctx, sess.Jti)
 	}
-	err = common.RevokeSession(ctx, "admin", req.Id)
+	err = common.RevokeSession(ctx, "admin", req.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -420,10 +420,10 @@ func (s *sAdmin) RevokeSession(ctx context.Context, req *v1.AdminRevokeSessionRe
 
 // ForceLogout revokes all sessions for a specific user.
 func (s *sAdmin) ForceLogout(ctx context.Context, req *v1.AdminForceLogoutReq) (*v1.AdminForceLogoutRes, error) {
-	if err := assertCanOperateSessions(ctx, req.Id); err != nil {
+	if err := assertCanOperateSessions(ctx, req.ID); err != nil {
 		return nil, err
 	}
-	err := common.RevokeAllSessions(ctx, "admin", req.Id)
+	err := common.RevokeAllSessions(ctx, "admin", req.ID)
 	if err != nil {
 		return nil, err
 	}

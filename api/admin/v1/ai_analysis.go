@@ -21,7 +21,7 @@ type AiAnalysisCreateReq struct {
 }
 
 type AiAnalysisCreateRes struct {
-	JobId int64 `json:"job_id" dc:"异步任务ID，进度与结果经任务列表查询"`
+	JobID int64 `json:"job_id" dc:"异步任务ID，进度与结果经任务列表查询"`
 }
 
 // ── 报告 ──
@@ -46,7 +46,7 @@ type AiAnalysisReportListRes struct {
 
 type AiAnalysisReportDetailReq struct {
 	g.Meta `path:"/ai-analysis/reports/{id}" method:"get" mime:"json" tags:"管理后台-AI请求分析" summary:"分析报告详情（含发现明细）"`
-	Id     int64 `json:"id" in:"path" v:"required|min:1"`
+	ID     int64 `json:"id" in:"path" v:"required|min:1"`
 }
 
 // AiAnalysisReportDetailRes 详情平铺（json:"-" + MarshalJSON 避免双层 data）。
@@ -61,8 +61,8 @@ func (r *AiAnalysisReportDetailRes) MarshalJSON() ([]byte, error) {
 
 type AiAnalysisReportConversationReq struct {
 	g.Meta    `path:"/ai-analysis/reports/{id}/conversation" method:"get" mime:"json" tags:"管理后台-AI请求分析" summary:"按报告发现还原完整会话"`
-	Id        int64 `json:"id" in:"path" v:"required|min:1" dc:"报告ID"`
-	FindingId int64 `json:"finding_id" v:"required|min:1" dc:"定位锚点日志的发现ID"`
+	ID        int64 `json:"id" in:"path" v:"required|min:1" dc:"报告ID"`
+	FindingID int64 `json:"finding_id" v:"required|min:1" dc:"定位锚点日志的发现ID"`
 }
 
 type AiAnalysisReportConversationRes struct {
@@ -75,7 +75,7 @@ func (r *AiAnalysisReportConversationRes) MarshalJSON() ([]byte, error) {
 
 type AiAnalysisReportDeleteReq struct {
 	g.Meta `path:"/ai-analysis/reports/{id}" method:"delete" mime:"json" tags:"管理后台-AI请求分析" summary:"删除分析报告"`
-	Id     int64 `json:"id" in:"path" v:"required|min:1"`
+	ID     int64 `json:"id" in:"path" v:"required|min:1"`
 }
 
 type AiAnalysisReportDeleteRes struct{}

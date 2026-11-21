@@ -15,11 +15,11 @@ type RedemptionListReq struct {
 }
 
 type RedemptionItem struct {
-	Id           int64       `json:"id"`
+	ID           int64       `json:"id"`
 	Code         string      `json:"code"`
 	Type         string      `json:"type"`
 	Value        float64     `json:"value"`
-	PlanId       int64       `json:"plan_id"`
+	PlanID       int64       `json:"plan_id"`
 	DurationDays int         `json:"duration_days"`
 	MaxUses      int         `json:"max_uses"`
 	UsedCount    int         `json:"used_count"`
@@ -56,30 +56,30 @@ type RedemptionCreateRes struct {
 
 type RedemptionDisableReq struct {
 	g.Meta `path:"/redemptions/{id}/disable" method:"put" mime:"json" tags:"管理后台-兑换码" summary:"禁用兑换码"`
-	Id     int64 `json:"id" in:"path" v:"required|min:1"`
+	ID     int64 `json:"id" in:"path" v:"required|min:1"`
 }
 
 type RedemptionDisableRes struct{}
 
 type RedemptionUsagesReq struct {
 	g.Meta       `path:"/redemptions/usages" method:"get" mime:"json" tags:"管理后台-兑换码" summary:"兑换码使用记录"`
-	RedemptionId int64 `json:"redemption_id" in:"query" d:"0"`
-	TenantId     int64 `json:"tenant_id" in:"query" d:"0"`
+	RedemptionID int64 `json:"redemption_id" in:"query" d:"0"`
+	TenantID     int64 `json:"tenant_id" in:"query" d:"0"`
 	Page         int   `json:"page" in:"query" d:"1"`
 	PageSize     int   `json:"page_size" in:"query" d:"20"`
 }
 
 type RedemptionUsageItem struct {
-	Id            int64       `json:"id"`
-	RedemptionId  int64       `json:"redemption_id"`
+	ID            int64       `json:"id"`
+	RedemptionID  int64       `json:"redemption_id"`
 	Code          string      `json:"code"`
-	TenantId      int64       `json:"tenant_id"`
+	TenantID      int64       `json:"tenant_id"`
 	TenantName    string      `json:"tenant_name"`
-	UserId        int64       `json:"user_id"`
+	UserID        int64       `json:"user_id"`
 	Username      string      `json:"username"`
 	Type          string      `json:"type"`
 	Value         float64     `json:"value"`
-	TransactionId int64       `json:"transaction_id"`
+	TransactionID int64       `json:"transaction_id"`
 	CreatedAt     *gtime.Time `json:"created_at"`
 }
 

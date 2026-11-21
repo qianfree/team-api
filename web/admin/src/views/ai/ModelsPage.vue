@@ -618,7 +618,7 @@ async function handleImportUpload(fileItemList: any[], fileItem: any) {
       timeout: 30000,
     })
     console.log('[ModelImport] 预览响应:', res)
-    const models = res.data?.data?.models || res.data?.models || []
+    const models = res.data?.data?.list || []
     console.log('[ModelImport] 解析到模型数:', models.length)
     importPreviewData.value = models
     // 默认全选

@@ -92,7 +92,7 @@ func (s *sAdmin) ListModelOptions(ctx context.Context, req *v1.ModelOptionsReq) 
 		}
 		list = append(list, v1.ModelOptionItem{
 			ID:        r.ID,
-			ModelId:   r.ModelId,
+			ModelID:   r.ModelId,
 			ModelName: r.ModelName,
 			Category:  r.Category,
 			Status:    r.Status,
@@ -233,7 +233,7 @@ func (s *sAdmin) ListModels(ctx context.Context, req *v1.ModelListReq) (*v1.Mode
 	for _, m := range models {
 		item := v1.ModelItem{
 			ID:           m.ID,
-			ModelId:      m.ModelId,
+			ModelID:      m.ModelId,
 			ModelName:    m.ModelName,
 			Category:     m.Category,
 			Vendor:       m.Vendor,
@@ -299,7 +299,7 @@ func (s *sAdmin) ListModels(ctx context.Context, req *v1.ModelListReq) (*v1.Mode
 
 // CreateModel 创建模型（自动创建默认 token 定价记录）
 func (s *sAdmin) CreateModel(ctx context.Context, req *v1.ModelCreateReq) (*v1.ModelCreateRes, error) {
-	count, err := dao.MdlModels.Ctx(ctx).Where(do.MdlModels{ModelId: req.ModelId}).Count()
+	count, err := dao.MdlModels.Ctx(ctx).Where(do.MdlModels{ModelId: req.ModelID}).Count()
 	if err != nil {
 		return nil, err
 	}
@@ -308,7 +308,7 @@ func (s *sAdmin) CreateModel(ctx context.Context, req *v1.ModelCreateReq) (*v1.M
 	}
 
 	insertData := do.MdlModels{
-		ModelId:          req.ModelId,
+		ModelId:          req.ModelID,
 		ModelName:        req.ModelName,
 		Category:         req.Category,
 		Vendor:           req.Vendor, // 空串=未分类
@@ -614,6 +614,17 @@ func (s *sAdmin) GetModelPricing(ctx context.Context, req *v1.PricingGetReq) (*v
 		discountLabel = derefStr(row.DiscountLabel)
 		priceChangeNote = derefStr(row.PriceChangeNote)
 	}
+	// 无定价行（row==nil）时主三字段兜底为空切片，避免 "list": null。
+	// 官方参考三字段保留 nil=未配置的三态语义（是否配置过以 OfficialItems 是否为 nil 判定）。
+	if result == nil {
+		result = make([]v1.PricingItem, 0)
+	}
+	if timeSegments == nil {
+		timeSegments = make([]v1.TimeSegmentItem, 0)
+	}
+	if paramRules == nil {
+		paramRules = make([]v1.ParamMultiplierItem, 0)
+	}
 	return &v1.PricingGetRes{
 		List:                     result,
 		TimeSegments:             timeSegments,
@@ -699,14 +710,20 @@ func expandPricingBlob(mode string, blob *billing.PricingBlob) ([]v1.PricingItem
 		}
 		items = append(items, item)
 	}
-	// 时段与倍率横切所有计费模式（含 tiered），随 blob 顶层还原
+	// 时段与倍率横切所有计费模式（含 tiered），随 blob 顶层还原；nil 兜底为空切片（list 规范：可为空不可为 null）
 	var segsAPI []v1.TimeSegmentItem
 	if blob.TimeSegments != nil {
 		segsAPI = timeSegmentsToAPI(*blob.TimeSegments)
 	}
+	if segsAPI == nil {
+		segsAPI = make([]v1.TimeSegmentItem, 0)
+	}
 	var rulesAPI []v1.ParamMultiplierItem
 	if blob.ParamMultipliers != nil {
 		rulesAPI = paramMultipliersToAPI(*blob.ParamMultipliers)
+	}
+	if rulesAPI == nil {
+		rulesAPI = make([]v1.ParamMultiplierItem, 0)
 	}
 	return items, segsAPI, rulesAPI
 }

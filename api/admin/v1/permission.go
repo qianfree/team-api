@@ -5,7 +5,7 @@ import "github.com/gogf/gf/v2/frame/g"
 // AdminPermissionListReq 获取管理员权限点请求
 type AdminPermissionListReq struct {
 	g.Meta `path:"/users/{id}/permissions" method:"get" mime:"json" tags:"管理后台-权限管理" summary:"获取管理员权限点"`
-	Id     int64 `json:"id" in:"path" v:"required" dc:"管理员ID"`
+	ID     int64 `json:"id" in:"path" v:"required" dc:"管理员ID"`
 }
 
 type AdminPermissionListRes struct {
@@ -22,7 +22,7 @@ type DataScopeItem struct {
 // AdminPermissionUpdateReq 更新管理员权限点请求
 type AdminPermissionUpdateReq struct {
 	g.Meta      `path:"/users/{id}/permissions" method:"put" mime:"json" tags:"管理后台-权限管理" summary:"更新管理员权限点"`
-	Id          int64    `json:"id" in:"path" v:"required" dc:"管理员ID"`
+	ID          int64    `json:"id" in:"path" v:"required" dc:"管理员ID"`
 	Permissions []string `json:"permissions" dc:"权限点列表"`
 }
 

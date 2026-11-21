@@ -75,7 +75,7 @@ func (s *sAdmin) ErrorLogList(ctx context.Context, req *v1.ErrorLogListReq) (*v1
 // ErrorLogDetail returns the detail of a single error log.
 func (s *sAdmin) ErrorLogDetail(ctx context.Context, req *v1.ErrorLogDetailReq) (*v1.ErrorLogDetailRes, error) {
 	result, err := g.DB().Ctx(ctx).Query(ctx,
-		"SELECT * FROM sys_error_logs WHERE id = ?", req.Id)
+		"SELECT * FROM sys_error_logs WHERE id = ?", req.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +92,7 @@ func (s *sAdmin) ErrorLogDetail(ctx context.Context, req *v1.ErrorLogDetailReq) 
 
 // ErrorLogResolve marks an error log as resolved.
 func (s *sAdmin) ErrorLogResolve(ctx context.Context, req *v1.ErrorLogResolveReq) (*v1.ErrorLogResolveRes, error) {
-	count, err := dao.SysErrorLogs.Ctx(ctx).Where("id", req.Id).Count()
+	count, err := dao.SysErrorLogs.Ctx(ctx).Where("id", req.ID).Count()
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +101,7 @@ func (s *sAdmin) ErrorLogResolve(ctx context.Context, req *v1.ErrorLogResolveReq
 	}
 	userID := common.GetCtxUserID(ctx)
 	_, err = dao.SysErrorLogs.Ctx(ctx).
-		Where("id", req.Id).
+		Where("id", req.ID).
 		Data(do.SysErrorLogs{
 			Resolved:   true,
 			ResolvedBy: userID,

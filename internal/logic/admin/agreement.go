@@ -52,7 +52,7 @@ func (s *sAdmin) CreateAgreement(ctx context.Context, req *v1.AgreementCreateReq
 	}
 
 	id, _ := result.LastInsertId()
-	return &v1.AgreementCreateRes{Id: id}, nil
+	return &v1.AgreementCreateRes{ID: id}, nil
 }
 
 // ListAgreements 协议版本列表
@@ -87,7 +87,7 @@ func (s *sAdmin) ListAgreements(ctx context.Context, req *v1.AgreementListReq) (
 // GetAgreement 协议版本详情
 func (s *sAdmin) GetAgreement(ctx context.Context, req *v1.AgreementGetReq) (*v1.AgreementGetRes, error) {
 	var res *v1.AgreementGetRes
-	err := dao.SysAgreements.Ctx(ctx).Where("id", req.Id).Scan(&res)
+	err := dao.SysAgreements.Ctx(ctx).Where("id", req.ID).Scan(&res)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
@@ -103,7 +103,7 @@ func (s *sAdmin) UpdateAgreement(ctx context.Context, req *v1.AgreementUpdateReq
 		Id     int64  `json:"id"`
 		Status string `json:"status"`
 	}
-	err := dao.SysAgreements.Ctx(ctx).Where("id", req.Id).Scan(&agr)
+	err := dao.SysAgreements.Ctx(ctx).Where("id", req.ID).Scan(&agr)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
@@ -124,7 +124,7 @@ func (s *sAdmin) UpdateAgreement(ctx context.Context, req *v1.AgreementUpdateReq
 	}
 
 	_, err = dao.SysAgreements.Ctx(ctx).
-		Where("id", req.Id).
+		Where("id", req.ID).
 		Data(data).
 		Update()
 	if err != nil {
@@ -140,7 +140,7 @@ func (s *sAdmin) DeleteAgreement(ctx context.Context, req *v1.AgreementDeleteReq
 		Id     int64  `json:"id"`
 		Status string `json:"status"`
 	}
-	err := dao.SysAgreements.Ctx(ctx).Where("id", req.Id).Scan(&agr)
+	err := dao.SysAgreements.Ctx(ctx).Where("id", req.ID).Scan(&agr)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
@@ -151,7 +151,7 @@ func (s *sAdmin) DeleteAgreement(ctx context.Context, req *v1.AgreementDeleteReq
 		return nil, common.NewBusinessError(consts.CodeAgreementNotDraft, consts.MsgAgreementNotDraft)
 	}
 
-	_, err = dao.SysAgreements.Ctx(ctx).Where("id", req.Id).Delete()
+	_, err = dao.SysAgreements.Ctx(ctx).Where("id", req.ID).Delete()
 	if err != nil {
 		return nil, err
 	}
@@ -166,7 +166,7 @@ func (s *sAdmin) PublishAgreement(ctx context.Context, req *v1.AgreementPublishR
 		Code   string `json:"code"`
 		Status string `json:"status"`
 	}
-	err := dao.SysAgreements.Ctx(ctx).Where("id", req.Id).Scan(&agr)
+	err := dao.SysAgreements.Ctx(ctx).Where("id", req.ID).Scan(&agr)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
@@ -196,7 +196,7 @@ func (s *sAdmin) ListAgreementAcceptances(ctx context.Context, req *v1.Agreement
 	var agr *struct {
 		Id int64 `json:"id"`
 	}
-	err := dao.SysAgreements.Ctx(ctx).Where("id", req.Id).Scan(&agr)
+	err := dao.SysAgreements.Ctx(ctx).Where("id", req.ID).Scan(&agr)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
@@ -209,7 +209,7 @@ func (s *sAdmin) ListAgreementAcceptances(ctx context.Context, req *v1.Agreement
 	var total int
 	rows := make([]*v1.AgreementAcceptanceItem, 0)
 	err = dao.SysAgreementAcceptances.Ctx(ctx).
-		Where("agreement_id", req.Id).
+		Where("agreement_id", req.ID).
 		OrderDesc("created_at").
 		Page(page, pageSize).
 		ScanAndCount(&rows, &total, false)
@@ -236,7 +236,7 @@ func (s *sAdmin) ListAdminPendingAgreements(ctx context.Context, req *v1.AdminAg
 	items := make([]*v1.PendingAgreementItem, 0, len(list))
 	for _, a := range list {
 		items = append(items, &v1.PendingAgreementItem{
-			Id:      a.Id,
+			ID:      a.Id,
 			Code:    a.Code,
 			Title:   a.Title,
 			Version: a.Version,
@@ -254,7 +254,7 @@ func (s *sAdmin) AcceptAdminAgreements(ctx context.Context, req *v1.AdminAgreeme
 	ipAddress := r.GetClientIp()
 	userAgent := r.GetHeader("User-Agent")
 
-	err := common.AcceptAgreements(ctx, "admin", userID, req.AgreementIds, ipAddress, userAgent)
+	err := common.AcceptAgreements(ctx, "admin", userID, req.AgreementIDs, ipAddress, userAgent)
 	if err != nil {
 		return nil, err
 	}

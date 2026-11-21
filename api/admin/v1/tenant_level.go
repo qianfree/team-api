@@ -8,7 +8,7 @@ import (
 // === 租户等级配置管理 ===
 
 type TenantLevelConfigItem struct {
-	Id                          int64       `json:"id"`
+	ID                          int64       `json:"id"`
 	Level                       int         `json:"level"`
 	Name                        string      `json:"name"`
 	CumulativeRechargeThreshold float64     `json:"cumulative_recharge_threshold"`
@@ -45,7 +45,7 @@ type TenantLevelConfigCreateRes struct {
 
 type TenantLevelConfigUpdateReq struct {
 	g.Meta                      `path:"/tenant-level-configs/{id}" method:"put" mime:"json" tags:"管理后台-租户等级" summary:"更新等级配置"`
-	Id                          int64    `json:"id" in:"path" v:"required|min:1"`
+	ID                          int64    `json:"id" in:"path" v:"required|min:1"`
 	Name                        *string  `json:"name" dc:"等级名称"`
 	CumulativeRechargeThreshold *float64 `json:"cumulative_recharge_threshold" dc:"累计充值阈值"`
 	MaxMembers                  *int     `json:"max_members" dc:"最大成员数"`
@@ -58,7 +58,7 @@ type TenantLevelConfigUpdateRes struct{}
 
 type TenantLevelConfigDeleteReq struct {
 	g.Meta `path:"/tenant-level-configs/{id}" method:"delete" mime:"json" tags:"管理后台-租户等级" summary:"删除等级配置"`
-	Id     int64 `json:"id" in:"path" v:"required|min:1"`
+	ID     int64 `json:"id" in:"path" v:"required|min:1"`
 }
 
 type TenantLevelConfigDeleteRes struct{}

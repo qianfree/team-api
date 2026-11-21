@@ -15,26 +15,26 @@ type AdminMemberCreateReq struct {
 }
 
 type AdminMemberCreateRes struct {
-	Id int64 `json:"id"`
+	ID int64 `json:"id"`
 }
 
 type AdminMemberDisableReq struct {
 	g.Meta `path:"/members/{id}/disable" method:"put" mime:"json" tags:"管理后台-成员" summary:"禁用成员"`
-	Id     int64 `json:"id" in:"path" v:"required|min:1" dc:"成员ID"`
+	ID     int64 `json:"id" in:"path" v:"required|min:1" dc:"成员ID"`
 }
 
 type AdminMemberDisableRes struct{}
 
 type AdminMemberEnableReq struct {
 	g.Meta `path:"/members/{id}/enable" method:"put" mime:"json" tags:"管理后台-成员" summary:"启用成员"`
-	Id     int64 `json:"id" in:"path" v:"required|min:1" dc:"成员ID"`
+	ID     int64 `json:"id" in:"path" v:"required|min:1" dc:"成员ID"`
 }
 
 type AdminMemberEnableRes struct{}
 
 type AdminMemberResetPasswordReq struct {
 	g.Meta `path:"/members/{id}/reset-password" method:"put" mime:"json" tags:"管理后台-成员" summary:"重置成员密码"`
-	Id     int64 `json:"id" in:"path" v:"required|min:1" dc:"成员ID"`
+	ID     int64 `json:"id" in:"path" v:"required|min:1" dc:"成员ID"`
 }
 
 type AdminMemberResetPasswordRes struct {
@@ -43,7 +43,7 @@ type AdminMemberResetPasswordRes struct {
 
 type AdminMemberUnlockReq struct {
 	g.Meta `path:"/members/{id}/unlock" method:"put" mime:"json" tags:"管理后台-成员" summary:"解除成员登录锁定"`
-	Id     int64 `json:"id" in:"path" v:"required|min:1" dc:"成员ID"`
+	ID     int64 `json:"id" in:"path" v:"required|min:1" dc:"成员ID"`
 }
 
 type AdminMemberUnlockRes struct{}

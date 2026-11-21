@@ -63,10 +63,10 @@ func (s *sAdmin) ListAllFeedbacks(ctx context.Context, req *v1.FeedbackListAllRe
 	items := make([]*v1.FeedbackAdminItem, 0, len(rows))
 	for _, r := range rows {
 		items = append(items, &v1.FeedbackAdminItem{
-			Id:              r.Id,
-			TenantId:        r.TenantId,
+			ID:              r.Id,
+			TenantID:        r.TenantId,
 			TenantName:      r.TenantName,
-			UserId:          r.UserId,
+			UserID:          r.UserId,
 			UserDisplayName: r.UserDisplayName,
 			Category:        r.Category,
 			Title:           r.Title,
@@ -96,7 +96,7 @@ func (s *sAdmin) ReplyToFeedback(ctx context.Context, req *v1.FeedbackReplyReq) 
 		UserId   int64  `json:"user_id"`
 		Title    string `json:"title"`
 	}
-	err := dao.SptFeedbacks.Ctx(ctx).Where("id", req.Id).Scan(&fb)
+	err := dao.SptFeedbacks.Ctx(ctx).Where("id", req.ID).Scan(&fb)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
@@ -117,7 +117,7 @@ func (s *sAdmin) ReplyToFeedback(ctx context.Context, req *v1.FeedbackReplyReq) 
 	}
 
 	_, err = dao.SptFeedbacks.Ctx(ctx).
-		Where("id", req.Id).
+		Where("id", req.ID).
 		Data(updateData).
 		Update()
 	if err != nil {
@@ -145,7 +145,7 @@ func (s *sAdmin) UpdateFeedbackStatus(ctx context.Context, req *v1.FeedbackUpdat
 	var fb *struct {
 		Id int64 `json:"id"`
 	}
-	err := dao.SptFeedbacks.Ctx(ctx).Where("id", req.Id).Scan(&fb)
+	err := dao.SptFeedbacks.Ctx(ctx).Where("id", req.ID).Scan(&fb)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
@@ -159,7 +159,7 @@ func (s *sAdmin) UpdateFeedbackStatus(ctx context.Context, req *v1.FeedbackUpdat
 	}
 
 	_, err = dao.SptFeedbacks.Ctx(ctx).
-		Where("id", req.Id).
+		Where("id", req.ID).
 		Data(updateData).
 		Update()
 	if err != nil {
@@ -185,7 +185,11 @@ func (s *sAdmin) GetFeedbackStats(ctx context.Context, req *v1.FeedbackStatsReq)
 		return nil, err
 	}
 
-	stats := &v1.FeedbackStatsRes{ByCategory: make(map[string]int)}
+	// RecentTrend 预置空切片：gf 的 Scan 对空结果不赋值，nil 序列化会是 "recent_trend": null（list 可为空不可为 null）
+	stats := &v1.FeedbackStatsRes{
+		ByCategory:  make(map[string]int),
+		RecentTrend: make([]v1.TrendItem, 0),
+	}
 	for _, r := range statusCounts {
 		switch r.Status {
 		case "pending":

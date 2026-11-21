@@ -18,7 +18,7 @@ type AgreementCreateReq struct {
 }
 
 type AgreementCreateRes struct {
-	Id int64 `json:"id"`
+	ID int64 `json:"id"`
 }
 
 type AgreementListReq struct {
@@ -30,7 +30,7 @@ type AgreementListReq struct {
 }
 
 type AgreementItem struct {
-	Id          int64       `json:"id"`
+	ID          int64       `json:"id"`
 	Code        string      `json:"code"`
 	Version     string      `json:"version"`
 	Title       string      `json:"title"`
@@ -52,11 +52,11 @@ type AgreementListRes struct {
 
 type AgreementGetReq struct {
 	g.Meta `path:"/agreements/{id}" method:"get" mime:"json" tags:"管理后台-用户协议" summary:"协议版本详情"`
-	Id     int64 `json:"id" in:"path" v:"required|min:1"`
+	ID     int64 `json:"id" in:"path" v:"required|min:1"`
 }
 
 type AgreementGetRes struct {
-	Id          int64       `json:"id"`
+	ID          int64       `json:"id"`
 	Code        string      `json:"code"`
 	Version     string      `json:"version"`
 	Title       string      `json:"title"`
@@ -73,7 +73,7 @@ type AgreementGetRes struct {
 
 type AgreementUpdateReq struct {
 	g.Meta      `path:"/agreements/{id}" method:"put" mime:"json" tags:"管理后台-用户协议" summary:"更新协议版本"`
-	Id          int64  `json:"id" in:"path" v:"required|min:1"`
+	ID          int64  `json:"id" in:"path" v:"required|min:1"`
 	Title       string `json:"title" v:"required|length:1,200" dc:"协议标题"`
 	Content     string `json:"content" v:"required" dc:"协议正文（Markdown）"`
 	Summary     string `json:"summary" v:"max-length:500" dc:"版本变更摘要"`
@@ -84,14 +84,14 @@ type AgreementUpdateRes struct{}
 
 type AgreementDeleteReq struct {
 	g.Meta `path:"/agreements/{id}" method:"delete" mime:"json" tags:"管理后台-用户协议" summary:"删除协议版本"`
-	Id     int64 `json:"id" in:"path" v:"required|min:1"`
+	ID     int64 `json:"id" in:"path" v:"required|min:1"`
 }
 
 type AgreementDeleteRes struct{}
 
 type AgreementPublishReq struct {
 	g.Meta `path:"/agreements/{id}/publish" method:"post" mime:"json" tags:"管理后台-用户协议" summary:"发布协议版本"`
-	Id     int64 `json:"id" in:"path" v:"required|min:1"`
+	ID     int64 `json:"id" in:"path" v:"required|min:1"`
 }
 
 type AgreementPublishRes struct{}
@@ -100,15 +100,15 @@ type AgreementPublishRes struct{}
 
 type AgreementAcceptanceListReq struct {
 	g.Meta   `path:"/agreements/{id}/acceptances" method:"get" mime:"json" tags:"管理后台-用户协议" summary:"协议接受记录"`
-	Id       int64 `json:"id" in:"path" v:"required|min:1"`
+	ID       int64 `json:"id" in:"path" v:"required|min:1"`
 	Page     int   `json:"page" in:"query" d:"1"`
 	PageSize int   `json:"page_size" in:"query" d:"20"`
 }
 
 type AgreementAcceptanceItem struct {
-	Id        int64       `json:"id"`
+	ID        int64       `json:"id"`
 	UserType  string      `json:"user_type"`
-	UserId    int64       `json:"user_id"`
+	UserID    int64       `json:"user_id"`
 	IpAddress string      `json:"ip_address"`
 	CreatedAt *gtime.Time `json:"created_at"`
 }
@@ -127,7 +127,7 @@ type AdminAgreementPendingReq struct {
 }
 
 type PendingAgreementItem struct {
-	Id      int64  `json:"id"`
+	ID      int64  `json:"id"`
 	Code    string `json:"code"`
 	Title   string `json:"title"`
 	Version string `json:"version"`
@@ -140,7 +140,7 @@ type AdminAgreementPendingRes struct {
 
 type AdminAgreementAcceptReq struct {
 	g.Meta       `path:"/agreements/accept" method:"post" mime:"json" tags:"管理后台-用户协议" summary:"管理员接受协议"`
-	AgreementIds []int64 `json:"agreement_ids" v:"required|min-length:1" dc:"协议版本ID列表"`
+	AgreementIDs []int64 `json:"agreement_ids" v:"required|min-length:1" dc:"协议版本ID列表"`
 }
 
 type AdminAgreementAcceptRes struct{}

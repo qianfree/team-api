@@ -123,7 +123,7 @@ func (s *sAdmin) CreateMember(ctx context.Context, req *v1.AdminMemberCreateReq)
 		return nil, err
 	}
 
-	return &v1.AdminMemberCreateRes{Id: userID}, nil
+	return &v1.AdminMemberCreateRes{ID: userID}, nil
 }
 
 // ListAllMembers returns a paginated list of all tenant members across all tenants.
@@ -205,7 +205,7 @@ func (s *sAdmin) DisableMember(ctx context.Context, req *v1.AdminMemberDisableRe
 		Status string `json:"status"`
 	}
 	err := dao.TntUsers.Ctx(ctx).
-		Where("id", req.Id).
+		Where("id", req.ID).
 		Scan(&user)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
@@ -220,7 +220,7 @@ func (s *sAdmin) DisableMember(ctx context.Context, req *v1.AdminMemberDisableRe
 	// Revoke all active API keys and disable user in transaction
 	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		_, err := dao.ApiKeys.Ctx(ctx).
-			Where("user_id", req.Id).
+			Where("user_id", req.ID).
 			Where("status", "active").
 			Data(do.ApiKeys{
 				Status: "disabled",
@@ -230,7 +230,7 @@ func (s *sAdmin) DisableMember(ctx context.Context, req *v1.AdminMemberDisableRe
 		}
 
 		_, err = dao.TntUsers.Ctx(ctx).
-			Where("id", req.Id).
+			Where("id", req.ID).
 			Data(do.TntUsers{
 				Status: "disabled",
 			}).Update()
@@ -249,7 +249,7 @@ func (s *sAdmin) EnableMember(ctx context.Context, req *v1.AdminMemberEnableReq)
 		Status string `json:"status"`
 	}
 	err := dao.TntUsers.Ctx(ctx).
-		Where("id", req.Id).
+		Where("id", req.ID).
 		Scan(&user)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
@@ -264,7 +264,7 @@ func (s *sAdmin) EnableMember(ctx context.Context, req *v1.AdminMemberEnableReq)
 	// Restore disabled API keys and enable user in transaction
 	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		_, err := dao.ApiKeys.Ctx(ctx).
-			Where("user_id", req.Id).
+			Where("user_id", req.ID).
 			Where("status", "disabled").
 			Data(do.ApiKeys{
 				Status: "active",
@@ -274,7 +274,7 @@ func (s *sAdmin) EnableMember(ctx context.Context, req *v1.AdminMemberEnableReq)
 		}
 
 		_, err = dao.TntUsers.Ctx(ctx).
-			Where("id", req.Id).
+			Where("id", req.ID).
 			Data(do.TntUsers{
 				Status: "active",
 			}).Update()
@@ -292,7 +292,7 @@ func (s *sAdmin) ResetMemberPassword(ctx context.Context, req *v1.AdminMemberRes
 		Status string `json:"status"`
 	}
 	err := dao.TntUsers.Ctx(ctx).
-		Where("id", req.Id).
+		Where("id", req.ID).
 		Scan(&user)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
@@ -314,7 +314,7 @@ func (s *sAdmin) ResetMemberPassword(ctx context.Context, req *v1.AdminMemberRes
 	}
 
 	_, err = dao.TntUsers.Ctx(ctx).
-		Where("id", req.Id).
+		Where("id", req.ID).
 		Data(map[string]interface{}{
 			"password_hash":   passwordHash,
 			"failed_attempts": 0,
@@ -332,7 +332,7 @@ func (s *sAdmin) UnlockMember(ctx context.Context, req *v1.AdminMemberUnlockReq)
 	var user *struct {
 		Id int64 `json:"id"`
 	}
-	err := dao.TntUsers.Ctx(ctx).Where("id", req.Id).Scan(&user)
+	err := dao.TntUsers.Ctx(ctx).Where("id", req.ID).Scan(&user)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
@@ -341,7 +341,7 @@ func (s *sAdmin) UnlockMember(ctx context.Context, req *v1.AdminMemberUnlockReq)
 	}
 
 	_, err = dao.TntUsers.Ctx(ctx).
-		Where("id", req.Id).
+		Where("id", req.ID).
 		Data(map[string]interface{}{
 			"failed_attempts": 0,
 			"locked_until":    nil,

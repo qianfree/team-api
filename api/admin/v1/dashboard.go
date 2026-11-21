@@ -84,7 +84,7 @@ type AdminDashboardChannelHealthReq struct {
 }
 
 type ChannelHealthItem struct {
-	ChannelId   int64   `json:"channel_id"`
+	ChannelID   int64   `json:"channel_id"`
 	ChannelName string  `json:"channel_name"`
 	Status      string  `json:"status"`
 	HealthScore float64 `json:"health_score"`
@@ -101,12 +101,12 @@ type AdminDashboardRecentAlertsReq struct {
 }
 
 type RecentAlertItem struct {
-	Id             int64  `json:"id"`
-	RuleName       string `json:"rule_name"`
-	Level          string `json:"level"`
-	Status         string `json:"status"`
-	TriggerMessage string `json:"trigger_message"`
-	CreatedAt      string `json:"created_at"`
+	ID             int64       `json:"id"`
+	RuleName       string      `json:"rule_name"`
+	Level          string      `json:"level"`
+	Status         string      `json:"status"`
+	TriggerMessage string      `json:"trigger_message"`
+	CreatedAt      *gtime.Time `json:"created_at"`
 }
 
 type AdminDashboardRecentAlertsRes struct {
@@ -144,7 +144,7 @@ type AdminUsageLogFilter struct {
 	Status      string `json:"status" dc:"状态"`
 	RequestType int    `json:"request_type" dc:"请求类型: 1=同步, 2=流式, 3=异步, 4=WebSocket"`
 
-	UpstreamRequestId string `json:"upstream_request_id" dc:"上游请求ID（精确匹配，排障反查用）"`
+	UpstreamRequestID string `json:"upstream_request_id" dc:"上游请求ID（精确匹配，排障反查用）"`
 
 	StartDate string `json:"start_date" dc:"开始时间（YYYY-MM-DD 或 YYYY-MM-DD HH:mm:ss）"`
 	EndDate   string `json:"end_date" dc:"结束时间（YYYY-MM-DD 或 YYYY-MM-DD HH:mm:ss）"`
@@ -161,12 +161,12 @@ type AdminUsageLogListReq struct {
 // 纯关联 ID（user_id / project_id / channel_id）与排查大字段（billing_snapshot、
 // user_agent、error_message、request_id 等）不进列表，统一经详情接口按需获取。
 type AdminUsageLogListItem struct {
-	Id                    int64       `json:"id"`
-	TenantId              int64       `json:"tenant_id"`
+	ID                    int64       `json:"id"`
+	TenantID              int64       `json:"tenant_id"`
 	TenantName            string      `json:"tenant_name"`
 	Username              string      `json:"username"`
 	ProjectName           string      `json:"project_name"`
-	ApiKeyId              int64       `json:"api_key_id"`
+	ApiKeyID              int64       `json:"api_key_id"`
 	ApiKeyName            string      `json:"api_key_name"`
 	ChannelName           string      `json:"channel_name"`
 	ModelName             string      `json:"model_name"`
@@ -206,16 +206,16 @@ type AdminUsageLogListRes struct {
 
 // AdminUsageLogItem 用量日志全量字段结构体（详情接口专用，列表用上方的精简 ListItem）
 type AdminUsageLogItem struct {
-	Id                    int64   `json:"id"`
-	TenantId              int64   `json:"tenant_id"`
+	ID                    int64   `json:"id"`
+	TenantID              int64   `json:"tenant_id"`
 	TenantName            string  `json:"tenant_name"`
-	UserId                int64   `json:"user_id"`
+	UserID                int64   `json:"user_id"`
 	Username              string  `json:"username"`
-	ProjectId             int64   `json:"project_id"`
+	ProjectID             int64   `json:"project_id"`
 	ProjectName           string  `json:"project_name"`
-	ApiKeyId              int64   `json:"api_key_id"`
+	ApiKeyID              int64   `json:"api_key_id"`
 	ApiKeyName            string  `json:"api_key_name"`
-	ChannelId             int64   `json:"channel_id"`
+	ChannelID             int64   `json:"channel_id"`
 	ChannelName           string  `json:"channel_name"`
 	ChannelType           int     `json:"channel_type"`
 	ModelName             string  `json:"model_name"`
@@ -261,9 +261,9 @@ type AdminUsageLogItem struct {
 	BillingSummary        string  `json:"billing_summary"`
 	BillingSnapshot       string  `json:"billing_snapshot"`
 	InboundEndpoint       string  `json:"inbound_endpoint"`
-	RequestId             string  `json:"request_id"`
-	TaskId                string  `json:"task_id"`
-	UpstreamRequestId     string  `json:"upstream_request_id"`
+	RequestID             string  `json:"request_id"`
+	TaskID                string  `json:"task_id"`
+	UpstreamRequestID     string  `json:"upstream_request_id"`
 	// 工具调用计费（联网搜索/云端工具按次附加费）：计数 JSONB 原样字符串
 	//（如 {"web_search": 3}，无工具调用为空）与附加费合计（已含在 total_cost 中）
 	ToolUsage         string      `json:"tool_usage"`
@@ -275,7 +275,7 @@ type AdminUsageLogItem struct {
 // billing_snapshot / billing_summary / user_agent / error_message 等大字段经此接口按需获取）
 type AdminUsageLogDetailReq struct {
 	g.Meta `path:"/usage-logs/{id}" method:"get" mime:"json" tags:"管理后台-用量" summary:"用量日志详情"`
-	Id     int64 `json:"id" in:"path" v:"min:1" dc:"用量记录ID"`
+	ID     int64 `json:"id" in:"path" v:"min:1" dc:"用量记录ID"`
 }
 
 // AdminUsageLogDetailRes 详情对象平铺进统一响应的 data 字段（json:"-" + 自定义 MarshalJSON，
@@ -311,12 +311,12 @@ type AdminBillingRecordListReq struct {
 }
 
 type AdminBillingRecordItem struct {
-	Id           int64       `json:"id"`
-	TenantId     int64       `json:"tenant_id"`
+	ID           int64       `json:"id"`
+	TenantID     int64       `json:"tenant_id"`
 	TenantName   string      `json:"tenant_name"`
-	UserId       int64       `json:"user_id"`
+	UserID       int64       `json:"user_id"`
 	UserName     string      `json:"user_name"`
-	ChannelId    int64       `json:"channel_id"`
+	ChannelID    int64       `json:"channel_id"`
 	ChannelName  string      `json:"channel_name"`
 	ModelName    string      `json:"model_name"`
 	RelayMode    string      `json:"relay_mode"`
@@ -347,8 +347,8 @@ type AdminWalletListReq struct {
 }
 
 type AdminWalletItem struct {
-	Id               int64       `json:"id"`
-	TenantId         int64       `json:"tenant_id"`
+	ID               int64       `json:"id"`
+	TenantID         int64       `json:"tenant_id"`
 	Balance          float64     `json:"balance"`
 	FrozenBalance    float64     `json:"frozen_balance"`
 	WarningThreshold float64     `json:"warning_threshold"`
@@ -407,17 +407,17 @@ type AdminWalletTransactionListReq struct {
 }
 
 type AdminWalletTransactionItem struct {
-	ID           int64   `json:"id"`
-	Type         string  `json:"type"`
-	Amount       float64 `json:"amount"`
-	BalanceAfter float64 `json:"balance_after"`
-	FrozenAfter  float64 `json:"frozen_after"`
-	Description  string  `json:"description"`
-	UserId       int64   `json:"user_id"`
-	Username     string  `json:"username"`
-	RequestId    string  `json:"request_id"`
-	ModelName    string  `json:"model_name"`
-	CreatedAt    string  `json:"created_at"`
+	ID           int64       `json:"id"`
+	Type         string      `json:"type"`
+	Amount       float64     `json:"amount"`
+	BalanceAfter float64     `json:"balance_after"`
+	FrozenAfter  float64     `json:"frozen_after"`
+	Description  string      `json:"description"`
+	UserID       int64       `json:"user_id"`
+	Username     string      `json:"username"`
+	RequestID    string      `json:"request_id"`
+	ModelName    string      `json:"model_name"`
+	CreatedAt    *gtime.Time `json:"created_at"`
 }
 
 type AdminWalletTransactionListRes struct {
@@ -435,15 +435,15 @@ type AdminWalletFrozenItemListReq struct {
 
 // AdminWalletFrozenItem 单笔冻结明细
 type AdminWalletFrozenItem struct {
-	RequestID   string  `json:"request_id" dc:"请求ID"`
-	ModelName   string  `json:"model_name" dc:"模型名称"`
-	Amount      float64 `json:"amount" dc:"冻结金额（USD）"`
-	CreatedAt   string  `json:"created_at" dc:"冻结时间"`
-	AgeSeconds  int64   `json:"age_seconds" dc:"已冻结时长（秒）"`
-	Releasable  bool    `json:"releasable" dc:"是否可释放（false 时 block_reason 说明原因）"`
-	NeedForce   bool    `json:"need_force" dc:"是否需要强制释放（冻结时长过短，可能仍有请求进行中）"`
-	BlockReason string  `json:"block_reason" dc:"不可释放原因（如关联异步任务进行中）"`
-	TaskStatus  string  `json:"task_status" dc:"关联异步任务状态（无关联时为空）"`
+	RequestID   string      `json:"request_id" dc:"请求ID"`
+	ModelName   string      `json:"model_name" dc:"模型名称"`
+	Amount      float64     `json:"amount" dc:"冻结金额（USD）"`
+	CreatedAt   *gtime.Time `json:"created_at" dc:"冻结时间"`
+	AgeSeconds  int64       `json:"age_seconds" dc:"已冻结时长（秒）"`
+	Releasable  bool        `json:"releasable" dc:"是否可释放（false 时 block_reason 说明原因）"`
+	NeedForce   bool        `json:"need_force" dc:"是否需要强制释放（冻结时长过短，可能仍有请求进行中）"`
+	BlockReason string      `json:"block_reason" dc:"不可释放原因（如关联异步任务进行中）"`
+	TaskStatus  string      `json:"task_status" dc:"关联异步任务状态（无关联时为空）"`
 }
 
 type AdminWalletFrozenItemListRes struct {
@@ -520,18 +520,18 @@ type AdminTransactionListReq struct {
 }
 
 type AdminTransactionItem struct {
-	Id           int64   `json:"id"`
-	TenantId     int64   `json:"tenant_id"`
-	TenantName   string  `json:"tenant_name"`
-	Type         string  `json:"type"`
-	Amount       float64 `json:"amount"`
-	BalanceAfter float64 `json:"balance_after"`
-	Description  string  `json:"description"`
-	UserId       int64   `json:"user_id"`
-	Username     string  `json:"username"`
-	RequestId    string  `json:"request_id"`
-	ModelName    string  `json:"model_name"`
-	CreatedAt    string  `json:"created_at"`
+	ID           int64       `json:"id"`
+	TenantID     int64       `json:"tenant_id"`
+	TenantName   string      `json:"tenant_name"`
+	Type         string      `json:"type"`
+	Amount       float64     `json:"amount"`
+	BalanceAfter float64     `json:"balance_after"`
+	Description  string      `json:"description"`
+	UserID       int64       `json:"user_id"`
+	Username     string      `json:"username"`
+	RequestID    string      `json:"request_id"`
+	ModelName    string      `json:"model_name"`
+	CreatedAt    *gtime.Time `json:"created_at"`
 }
 
 type AdminTransactionListRes struct {

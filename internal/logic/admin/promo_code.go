@@ -68,7 +68,7 @@ func (s *sAdmin) CreatePromoCode(ctx context.Context, req *v1.PromoCodeCreateReq
 		Status:        req.Status,
 		ValidFrom:     req.ValidFrom,
 		ValidTo:       req.ValidTo,
-		PlanIds:       req.PlanIds,
+		PlanIds:       req.PlanIDs,
 	}
 
 	result, err := dao.OrdPromoCodes.Ctx(ctx).Insert(data)
@@ -90,7 +90,7 @@ func (s *sAdmin) UpdatePromoCode(ctx context.Context, req *v1.PromoCodeUpdateReq
 		DiscountValue float64 `json:"discount_value"`
 	}
 	err := dao.OrdPromoCodes.Ctx(ctx).
-		Where("id", req.Id).
+		Where("id", req.ID).
 		Fields("type", "discount_value").
 		Scan(&existing)
 	if err != nil {
@@ -148,12 +148,12 @@ func (s *sAdmin) UpdatePromoCode(ctx context.Context, req *v1.PromoCodeUpdateReq
 	if req.ValidTo != nil {
 		data.ValidTo = req.ValidTo
 	}
-	if len(req.PlanIds) > 0 {
-		data.PlanIds = req.PlanIds
+	if len(req.PlanIDs) > 0 {
+		data.PlanIds = req.PlanIDs
 	}
 
 	_, err = dao.OrdPromoCodes.Ctx(ctx).
-		Where("id", req.Id).
+		Where("id", req.ID).
 		Data(data).
 		Update()
 	if err != nil {
@@ -169,7 +169,7 @@ func (s *sAdmin) GetPromoCodeUsages(ctx context.Context, req *v1.PromoCodeUsages
 	var total int
 	items := make([]*v1.PromoCodeUsageItem, 0)
 	err := dao.OrdPromoCodeUsages.Ctx(ctx).
-		Where("promo_code_id", req.Id).
+		Where("promo_code_id", req.ID).
 		OrderDesc("created_at").
 		Page(page, pageSize).
 		ScanAndCount(&items, &total, false)

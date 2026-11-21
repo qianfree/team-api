@@ -323,13 +323,13 @@ func (s *sAdmin) ListRequestAuditLogs(ctx context.Context, req *v1.RequestAuditL
 		}
 		conditions = append(conditions, "("+strings.Join(userConditions, " OR ")+")")
 	}
-	if req.RequestId != "" {
+	if req.RequestID != "" {
 		conditions = append(conditions, "request_id = ?")
-		args = append(args, req.RequestId)
+		args = append(args, req.RequestID)
 	}
-	if req.TaskId != "" {
+	if req.TaskID != "" {
 		conditions = append(conditions, "task_id = ?")
-		args = append(args, req.TaskId)
+		args = append(args, req.TaskID)
 	}
 	if req.Method != "" {
 		conditions = append(conditions, "method = ?")
@@ -392,7 +392,7 @@ func (s *sAdmin) ListRequestAuditLogs(ctx context.Context, req *v1.RequestAuditL
 func (s *sAdmin) GetRequestAuditLogDetail(ctx context.Context, req *v1.RequestAuditLogDetailReq) (*v1.RequestAuditLogDetailRes, error) {
 	var record *entity.AudRequestLogs
 	err := common.AuditModelCtx(ctx, "aud_request_logs").
-		Where("id", req.Id).
+		Where("id", req.ID).
 		Scan(&record)
 	if err != nil {
 		return nil, err
@@ -401,7 +401,7 @@ func (s *sAdmin) GetRequestAuditLogDetail(ctx context.Context, req *v1.RequestAu
 		return nil, common.NewNotFoundError("审计日志")
 	}
 	// 详情含请求/响应体（full 级别下为明文对话内容），属敏感读取，落留痕
-	common.LogSensitiveAccess(ctx, common.GetCtxUserID(ctx), "admin", "request_log", req.Id, "view", "查看请求审计日志详情")
+	common.LogSensitiveAccess(ctx, common.GetCtxUserID(ctx), "admin", "request_log", req.ID, "view", "查看请求审计日志详情")
 
 	b, _ := json.Marshal(record)
 	var detail map[string]any
@@ -413,9 +413,9 @@ func (s *sAdmin) GetRequestAuditLogDetail(ctx context.Context, req *v1.RequestAu
 // 内容为系统副本（request_body/response_body，按全局审计级别产物渲染）；
 // 含完整对话正文，属敏感读取，落留痕。admin 全局视角，租户按锚点记录收敛。
 func (s *sAdmin) GetRequestAuditLogConversation(ctx context.Context, req *v1.RequestAuditLogConversationReq) (*v1.RequestAuditLogConversationRes, error) {
-	common.LogSensitiveAccess(ctx, common.GetCtxUserID(ctx), "admin", "request_log_conversation", req.Id, "view", "查看审计日志会话视图")
+	common.LogSensitiveAccess(ctx, common.GetCtxUserID(ctx), "admin", "request_log_conversation", req.ID, "view", "查看审计日志会话视图")
 
-	view, err := common.LoadConversationView(ctx, req.Id, 0, common.SysBodyColumns())
+	view, err := common.LoadConversationView(ctx, req.ID, 0, common.SysBodyColumns())
 	if err != nil {
 		return nil, err
 	}
@@ -437,7 +437,7 @@ func (s *sAdmin) ForwardingTraceGet(ctx context.Context, req *v1.ForwardingTrace
 		AuditLevel      string `orm:"audit_level"`
 	}
 	err := common.AuditModelCtx(ctx, "aud_request_logs").
-		Where("request_id", req.RequestId).
+		Where("request_id", req.RequestID).
 		OrderDesc("created_at").
 		Fields("forwarding_trace, audit_level").
 		Scan(&row)

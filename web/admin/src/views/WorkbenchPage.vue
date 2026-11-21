@@ -73,7 +73,7 @@ const lastRefresh = ref<Date | null>(null)
 const summaryPoller = createPoller(() => fetchSummary(true), 60000)
 
 // ===== 派生 =====
-const items = computed<any[]>(() => summary.value?.items || [])
+const items = computed<any[]>(() => summary.value?.todos || [])
 
 const filtered = computed(() =>
   items.value.filter(i => {

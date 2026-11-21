@@ -105,8 +105,8 @@ func (s *sAdmin) CreateModelGroup(ctx context.Context, req *v1.ModelGroupCreateR
 
 	id, _ := result.LastInsertId()
 
-	if len(req.ModelIds) > 0 {
-		for _, modelID := range req.ModelIds {
+	if len(req.ModelIDs) > 0 {
+		for _, modelID := range req.ModelIDs {
 			if _, err := dao.MdlGroupModels.Ctx(ctx).Insert(do.MdlGroupModels{
 				GroupId: id,
 				ModelId: modelID,
@@ -241,7 +241,7 @@ func (s *sAdmin) ListGroupModels(ctx context.Context, req *v1.GroupModelsListReq
 	list := make([]v1.GroupModelItem, 0, len(results))
 	for _, r := range results {
 		list = append(list, v1.GroupModelItem{
-			ModelId:   r.ModelId,
+			ModelID:   r.ModelId,
 			ModelName: r.ModelName,
 			Category:  r.Category,
 			Status:    r.Status,
@@ -268,9 +268,9 @@ func (s *sAdmin) SetGroupModels(ctx context.Context, req *v1.GroupModelsSetReq) 
 		}
 
 		// 批量插入新关联
-		if len(req.ModelIds) > 0 {
-			insertData := make([]do.MdlGroupModels, 0, len(req.ModelIds))
-			for _, modelID := range req.ModelIds {
+		if len(req.ModelIDs) > 0 {
+			insertData := make([]do.MdlGroupModels, 0, len(req.ModelIDs))
+			for _, modelID := range req.ModelIDs {
 				insertData = append(insertData, do.MdlGroupModels{
 					GroupId: req.ID,
 					ModelId: modelID,
@@ -342,9 +342,9 @@ func (s *sAdmin) SetTenantGroups(ctx context.Context, req *v1.TenantGroupsSetReq
 		}
 
 		// 批量插入新关联
-		if len(req.GroupIds) > 0 {
-			insertData := make([]do.MdlTenantGroups, 0, len(req.GroupIds))
-			for _, groupID := range req.GroupIds {
+		if len(req.GroupIDs) > 0 {
+			insertData := make([]do.MdlTenantGroups, 0, len(req.GroupIDs))
+			for _, groupID := range req.GroupIDs {
 				insertData = append(insertData, do.MdlTenantGroups{
 					TenantId: req.TenantID,
 					GroupId:  groupID,

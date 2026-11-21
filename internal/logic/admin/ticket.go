@@ -64,15 +64,15 @@ func (s *sAdmin) ListAllTickets(ctx context.Context, req *v1.TicketListReq) (*v1
 	items := make([]*v1.TicketItem, 0, len(rows))
 	for _, r := range rows {
 		items = append(items, &v1.TicketItem{
-			Id:                r.Id,
-			TenantId:          r.TenantId,
-			UserId:            r.UserId,
+			ID:                r.Id,
+			TenantID:          r.TenantId,
+			UserID:            r.UserId,
 			Category:          r.Category,
 			Title:             r.Title,
 			Description:       r.Description,
 			Urgency:           r.Urgency,
 			Status:            r.Status,
-			AssignedAdminId:   r.AssignedAdminId,
+			AssignedAdminID:   r.AssignedAdminId,
 			TenantName:        r.TenantName,
 			UserDisplayName:   r.UserDisplayName,
 			AssignedAdminName: r.AssignedAdminName,
@@ -103,7 +103,7 @@ func (s *sAdmin) GetTicketAdmin(ctx context.Context, req *v1.TicketGetReq) (*v1.
 		LeftJoin("tnt_users tu", "spt_tickets.user_id = tu.id").
 		LeftJoin("sys_admin_users sa", "spt_tickets.assigned_admin_id = sa.id").
 		Fields("spt_tickets.*, COALESCE(tt.name, '') as tenant_name, COALESCE(tu.display_name, '') as user_display_name, COALESCE(sa.display_name, '') as assigned_admin_name").
-		Where("spt_tickets.id", req.Id).
+		Where("spt_tickets.id", req.ID).
 		Scan(&ticket)
 	if err != nil {
 		return nil, err
@@ -121,7 +121,7 @@ func (s *sAdmin) GetTicketAdmin(ctx context.Context, req *v1.TicketGetReq) (*v1.
 		LeftJoin("sys_admin_users sa", "spt_replies.user_type = 'admin' AND spt_replies.user_id = sa.id").
 		LeftJoin("tnt_users tu", "spt_replies.user_type = 'tenant' AND spt_replies.user_id = tu.id").
 		Fields("spt_replies.*, CASE WHEN spt_replies.user_type = 'admin' THEN COALESCE(sa.display_name, '') ELSE COALESCE(tu.display_name, '') END as user_name").
-		Where("spt_replies.ticket_id", req.Id).
+		Where("spt_replies.ticket_id", req.ID).
 		OrderAsc("spt_replies.created_at").
 		Scan(&replyRows)
 	if err != nil {
@@ -131,9 +131,9 @@ func (s *sAdmin) GetTicketAdmin(ctx context.Context, req *v1.TicketGetReq) (*v1.
 	replies := make([]*v1.TicketReplyItem, 0, len(replyRows))
 	for _, r := range replyRows {
 		replies = append(replies, &v1.TicketReplyItem{
-			Id:        r.Id,
-			TicketId:  r.TicketId,
-			UserId:    r.UserId,
+			ID:        r.Id,
+			TicketID:  r.TicketId,
+			UserID:    r.UserId,
 			UserType:  r.UserType,
 			UserName:  r.UserName,
 			Content:   r.Content,
@@ -143,7 +143,7 @@ func (s *sAdmin) GetTicketAdmin(ctx context.Context, req *v1.TicketGetReq) (*v1.
 
 	var attachRows []*entity.SptAttachments
 	err = dao.SptAttachments.Ctx(ctx).
-		Where("ticket_id", req.Id).
+		Where("ticket_id", req.ID).
 		OrderAsc("created_at").
 		Scan(&attachRows)
 	if err != nil {
@@ -153,9 +153,9 @@ func (s *sAdmin) GetTicketAdmin(ctx context.Context, req *v1.TicketGetReq) (*v1.
 	attachments := make([]*v1.TicketAttachmentItem, 0, len(attachRows))
 	for _, a := range attachRows {
 		attachments = append(attachments, &v1.TicketAttachmentItem{
-			Id:          a.Id,
-			TicketId:    a.TicketId,
-			ReplyId:     a.ReplyId,
+			ID:          a.Id,
+			TicketID:    a.TicketId,
+			ReplyID:     a.ReplyId,
 			FileName:    a.FileName,
 			FileUrl:     a.FileUrl,
 			FileSize:    a.FileSize,
@@ -165,15 +165,15 @@ func (s *sAdmin) GetTicketAdmin(ctx context.Context, req *v1.TicketGetReq) (*v1.
 	}
 
 	return &v1.TicketGetRes{
-		Id:                ticket.Id,
-		TenantId:          ticket.TenantId,
-		UserId:            ticket.UserId,
+		ID:                ticket.Id,
+		TenantID:          ticket.TenantId,
+		UserID:            ticket.UserId,
 		Category:          ticket.Category,
 		Title:             ticket.Title,
 		Description:       ticket.Description,
 		Urgency:           ticket.Urgency,
 		Status:            ticket.Status,
-		AssignedAdminId:   ticket.AssignedAdminId,
+		AssignedAdminID:   ticket.AssignedAdminId,
 		TenantName:        ticket.TenantName,
 		UserDisplayName:   ticket.UserDisplayName,
 		AssignedAdminName: ticket.AssignedAdminName,
@@ -190,7 +190,7 @@ func (s *sAdmin) AssignTicket(ctx context.Context, req *v1.TicketAssignReq) (*v1
 		Status string `json:"status"`
 	}
 	err := dao.SptTickets.Ctx(ctx).
-		Where("id", req.Id).
+		Where("id", req.ID).
 		Fields("status").
 		Scan(&ticket)
 	if err != nil {
@@ -206,7 +206,7 @@ func (s *sAdmin) AssignTicket(ctx context.Context, req *v1.TicketAssignReq) (*v1
 	}
 
 	_, err = dao.SptTickets.Ctx(ctx).
-		Where("id", req.Id).
+		Where("id", req.ID).
 		Data(do.SptTickets{
 			AssignedAdminId: req.AdminID,
 			Status:          newStatus,
@@ -230,7 +230,7 @@ func (s *sAdmin) ReplyToTicketAdmin(ctx context.Context, req *v1.TicketReplyReq)
 		AssignedAdminID *int64 `json:"assigned_admin_id"`
 	}
 	err := dao.SptTickets.Ctx(ctx).
-		Where("id", req.Id).
+		Where("id", req.ID).
 		Fields("status, assigned_admin_id").
 		Scan(&ticket)
 	if err != nil {
@@ -244,7 +244,7 @@ func (s *sAdmin) ReplyToTicketAdmin(ctx context.Context, req *v1.TicketReplyReq)
 	}
 
 	_, err = dao.SptReplies.Ctx(ctx).Insert(do.SptReplies{
-		TicketId: req.Id,
+		TicketId: req.ID,
 		UserId:   adminID,
 		UserType: "admin",
 		Content:  req.Content,
@@ -261,7 +261,7 @@ func (s *sAdmin) ReplyToTicketAdmin(ctx context.Context, req *v1.TicketReplyReq)
 	}
 
 	_, err = dao.SptTickets.Ctx(ctx).
-		Where("id", req.Id).
+		Where("id", req.ID).
 		Data(data).Update()
 	return nil, err
 }
@@ -280,7 +280,7 @@ func (s *sAdmin) UpdateTicketStatus(ctx context.Context, req *v1.TicketStatusUpd
 		Status string `json:"status"`
 	}
 	err := dao.SptTickets.Ctx(ctx).
-		Where("id", req.Id).
+		Where("id", req.ID).
 		Fields("status").
 		Scan(&ticket)
 	if err != nil {
@@ -315,7 +315,7 @@ func (s *sAdmin) UpdateTicketStatus(ctx context.Context, req *v1.TicketStatusUpd
 	}
 
 	_, err = dao.SptTickets.Ctx(ctx).
-		Where("id", req.Id).
+		Where("id", req.ID).
 		Data(do.SptTickets{
 			Status: req.Status,
 		}).Update()
