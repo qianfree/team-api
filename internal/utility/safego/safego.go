@@ -22,6 +22,17 @@ const (
 	loopRestartBackoffMax     = 60 * time.Second
 )
 
+// nextLoopBackoff 计算 panic 重启后的下一次退避：指数翻倍，但严格封顶
+// loopRestartBackoffMax。不能写成 `if backoff < max { backoff *= 2 }`——那样
+// 40s 因仍小于 60s 会直接翻到 80s，突破注释声明的「封顶 60s」约定。
+func nextLoopBackoff(current time.Duration) time.Duration {
+	next := current * 2
+	if next > loopRestartBackoffMax {
+		return loopRestartBackoffMax
+	}
+	return next
+}
+
 // Run 在新 goroutine 中执行 fn，并兜底 panic：进程存活，Error 级日志记录
 // panic 值与完整堆栈（对齐 cron.go runHandlerSafely 的口径：堆栈只进日志）。
 //
@@ -74,9 +85,7 @@ func RunLoop(ctx context.Context, name string, fn func(ctx context.Context)) {
 				return
 			case <-time.After(backoff):
 			}
-			if backoff < loopRestartBackoffMax {
-				backoff *= 2
-			}
+			backoff = nextLoopBackoff(backoff)
 		}
 	}()
 }
