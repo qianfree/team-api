@@ -746,15 +746,18 @@ func HandleMjImageProxy(
 	io.Copy(writer, resp.Body)
 }
 
-// truncateUTF8Safe 按字节上限截断但回退到完整 rune 边界，避免切断多字节字符产生乱码。
-// 仅用于日志截断等非资金路径场景。
+// truncateUTF8Safe 按字节上限截断并回退到完整 rune 边界，避免切断多字节字符产生乱码。
+// 仅用于日志截断等非资金路径场景；算法与 internal/response/error_log.go 的 truncateString 一致。
 func truncateUTF8Safe(s string, max int) string {
 	if len(s) <= max {
 		return s
 	}
 	cut := s[:max]
-	// 最多回退 3 字节（UTF-8 单字符最长 4 字节），必然命中 rune 起点
-	for i := 0; i < 3 && len(cut) > 0 && !utf8.RuneStart(cut[len(cut)-1]); i++ {
+	// 逐字节回退直到剩余字节序列合法：截断点可能切在多字节字符中间（末尾是
+	// continuation byte），也可能恰好是某个字符的最后一个字节（此时 cut 本身
+	// 已合法、无需回退）。不能用 !utf8.RuneStart(末字节) 判断——完整字符的最后
+	// 一个字节同样是 continuation byte，会把它误判成"被切断"而多删一截。
+	for len(cut) > 0 && !utf8.ValidString(cut) {
 		cut = cut[:len(cut)-1]
 	}
 	return cut

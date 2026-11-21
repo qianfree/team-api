@@ -182,7 +182,15 @@ func sweepOneTenantPrededucts(ctx context.Context, activeSetKey string) {
 		var staleIDs []any
 		for _, rid := range members.Strings() {
 			amt, err := g.Redis().Do(ctx, "HGET", PreDeductRedisKeyPrefix+rid, "amount")
-			if err != nil || amt.IsNil() {
+			if err != nil {
+				// Redis 故障不得把活跃预扣当成 stale：既会漏加 frozen（写回后余额虚高），
+				// 又会 SREM 掉活跃成员（后续永久不再统计）。整轮放弃重算，留待下个
+				// sweep 周期重试；绝不能 continue 后用不完整的 frozen 走 fenced 写回。
+				g.Log().Warningf(ctx, "[PREDEDUCT SWEEP] read prededuct amount failed, abort recompute: tenant=%d request=%s: %v", tenantID, rid, err)
+				return
+			}
+			if amt.IsNil() {
+				// hash 已过期/丢失才是真正的 stale，可安全清理
 				staleIDs = append(staleIDs, rid)
 				continue
 			}

@@ -644,7 +644,13 @@ func GetFrozenItems(ctx context.Context, tenantID int64) ([]FrozenItem, error) {
 		}
 
 		data, err := g.Redis().Do(ctx, "HGETALL", predeductKey)
-		if err != nil || data.IsNil() {
+		if err != nil {
+			// HGETALL 失败不得把活跃预扣误判为 stale（同 EXISTS）：误删成员会让
+			// prededuct_sweep 重算 frozen 时少算该笔，可用余额虚高出现超额消费窗口，跳过本条留待下轮
+			g.Log().Warningf(ctx, "GetFrozenItems: HGETALL 查询失败，跳过 request=%s: %v", reqID, err)
+			continue
+		}
+		if data.IsNil() {
 			staleIDs = append(staleIDs, reqID)
 			continue
 		}
