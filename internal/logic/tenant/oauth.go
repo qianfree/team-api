@@ -239,11 +239,14 @@ func (s *sTenant) OAuthCallback(ctx context.Context, req *v1.OAuthCallbackReq) (
 			return nil, common.NewBusinessError(10060, "OAuth 自动注册未配置")
 		}
 
-		// 校验成员上限
-		memberCount, _ := dao.TntUsers.Ctx(ctx).
+		// 校验成员上限（Count 失败按 fail-closed 拒绝注册，防止超限租户在 DB 抖动时注入新成员）
+		memberCount, err := dao.TntUsers.Ctx(ctx).
 			Where("tenant_id", tenant.Id).
 			Where("status", "active").
 			Count()
+		if err != nil {
+			return nil, common.NewBusinessError(10060, "查询租户成员数量失败")
+		}
 		effectiveMaxMembers, _, err := billing.GetTenantEffectiveLimits(ctx, tenant.Id)
 		if err != nil {
 			return nil, common.NewBusinessError(10060, "查询租户限制信息失败")

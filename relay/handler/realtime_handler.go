@@ -350,8 +350,14 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 			if streamUsage == nil {
 				streamUsage = &common.Usage{}
 			}
-			settleResult, _ = billing.SettleStreamInterrupted(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
+			var settleErr error
+			settleResult, settleErr = billing.SettleStreamInterrupted(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
 				modelName, rc.RequestID, "realtime", streamUsage, preDeductAmount, rc.ProjectID, info.ImageCount, info.StartTime, r.Header, nil)
+			if settleErr != nil {
+				// 结算失败 = 请求已服务但漏计费 + 冻结残留（prededuct_sweep 自愈），必须留痕排障
+				g.Log().Warningf(ctx, "[RealtimeHandler] Stream interrupted settlement failed: tenant=%d project=%d request=%s err=%v",
+					rc.TenantID, rc.ProjectID, rc.RequestID, settleErr)
+			}
 			if settleResult != nil && settleResult.ActualCost > 0 && !settleResult.DuplicateSkip {
 				billing.IncrMemberQuotaUsed(ctx, rc.TenantID, rc.UserID, settleResult.ActualCost)
 				billing.IncrApiKeyQuotaUsed(ctx, rc.ApiKeyID, settleResult.ActualCost)
