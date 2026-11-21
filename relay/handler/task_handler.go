@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/qianfree/team-api/internal/jsplugin"
@@ -397,7 +398,7 @@ func HandleTaskSubmit(
 		// 完整原文已在渠道调试日志（dbgAttempt）按需留存
 		leakedBody := helper.RedactMessage(string(taskData))
 		if len(leakedBody) > 2048 {
-			leakedBody = leakedBody[:2048] + "...(truncated)"
+			leakedBody = truncateUTF8Safe(leakedBody, 2048) + "...(truncated)"
 		}
 		g.Log().Warningf(ctx, "HandleTaskSubmit: upstream response error, model=%s, status=%d, message=%q, body=%s", modelName, taskErr.StatusCode, taskErr.Message, leakedBody)
 		dbgAttempt.MarkFinal(taskErr)
@@ -743,4 +744,18 @@ func HandleMjImageProxy(
 	}
 	writer.WriteHeader(http.StatusOK)
 	io.Copy(writer, resp.Body)
+}
+
+// truncateUTF8Safe 按字节上限截断但回退到完整 rune 边界，避免切断多字节字符产生乱码。
+// 仅用于日志截断等非资金路径场景。
+func truncateUTF8Safe(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	cut := s[:max]
+	// 最多回退 3 字节（UTF-8 单字符最长 4 字节），必然命中 rune 起点
+	for i := 0; i < 3 && len(cut) > 0 && !utf8.RuneStart(cut[len(cut)-1]); i++ {
+		cut = cut[:len(cut)-1]
+	}
+	return cut
 }

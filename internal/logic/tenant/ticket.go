@@ -211,30 +211,34 @@ func (s *sTenant) TicketReply(ctx context.Context, req *v1.TenantTicketReplyReq)
 		newStatus = "replied"
 	}
 
-	// 先条件更新状态再写回复（对齐 TicketClose 的三键条件更新）：
-	// 若并发方在读取校验后关闭了工单，此处 affected=0 直接报错，
+	// 状态条件更新 + 回复插入包同一事务：避免「状态已置 replied 但回复落库失败」的不一致。
+	// 先条件更新再写回复（对齐 TicketClose 的三键条件更新）：
+	// 若并发方在读取校验后关闭了工单，此处 affected=0 直接报错回滚，
 	// 避免回复落库后状态又被本次写回 replied（已关闭工单被「复活」）。
-	result, err := dao.SptTickets.Ctx(ctx).
-		Where("id", req.Id).
-		Where("tenant_id", tenantID).
-		Where("user_id", userID).
-		Where("status != ?", "closed").
-		Data(do.SptTickets{
-			Status: newStatus,
-		}).Update()
-	if err != nil {
-		return nil, err
-	}
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
-		return nil, common.NewBadRequestError("工单已关闭，请重新打开后再回复")
-	}
+	err = dao.SptTickets.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		result, err := dao.SptTickets.Ctx(ctx).
+			Where("id", req.Id).
+			Where("tenant_id", tenantID).
+			Where("user_id", userID).
+			Where("status != ?", "closed").
+			Data(do.SptTickets{
+				Status: newStatus,
+			}).Update()
+		if err != nil {
+			return err
+		}
+		rows, _ := result.RowsAffected()
+		if rows == 0 {
+			return common.NewBadRequestError("工单已关闭，请重新打开后再回复")
+		}
 
-	_, err = dao.SptReplies.Ctx(ctx).Insert(do.SptReplies{
-		TicketId: req.Id,
-		UserId:   userID,
-		UserType: "tenant",
-		Content:  req.Content,
+		_, err = dao.SptReplies.Ctx(ctx).Insert(do.SptReplies{
+			TicketId: req.Id,
+			UserId:   userID,
+			UserType: "tenant",
+			Content:  req.Content,
+		})
+		return err
 	})
 	if err != nil {
 		return nil, err

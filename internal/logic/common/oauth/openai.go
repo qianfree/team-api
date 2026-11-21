@@ -142,13 +142,13 @@ func OpenAIExchangeCodeForPlatform(ctx context.Context, platform, sessionID, cod
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		// 上游 body 原文可能回显请求参数，截断后入日志，不整段倾倒
+		// 上游 body 原文可能回显请求参数：截断后只进服务端日志，客户端返回通用文案
 		snippet := string(body)
 		if len(snippet) > 512 {
 			snippet = snippet[:512] + "...(truncated)"
 		}
 		g.Log().Warningf(ctx, "OpenAI token 交换失败, status=%d, body=%s", resp.StatusCode, snippet)
-		return nil, fmt.Errorf("token 交换失败 (HTTP %d): %s", resp.StatusCode, snippet)
+		return nil, fmt.Errorf("token 交换失败 (HTTP %d)，请查看服务端日志获取上游响应详情", resp.StatusCode)
 	}
 
 	var tokenResp openaiTokenResponse
@@ -210,13 +210,13 @@ func OpenAIRefreshToken(ctx context.Context, refreshToken string) (*OAuthKeyData
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		// 上游 body 原文可能回显请求参数，截断后入日志，不整段倾倒
+		// 上游 body 原文可能回显请求参数：截断后只进服务端日志，客户端返回通用文案
 		snippet := string(body)
 		if len(snippet) > 512 {
 			snippet = snippet[:512] + "...(truncated)"
 		}
 		g.Log().Warningf(ctx, "OpenAI token 刷新失败, status=%d, body=%s", resp.StatusCode, snippet)
-		return nil, fmt.Errorf("token 刷新失败 (HTTP %d): %s", resp.StatusCode, snippet)
+		return nil, fmt.Errorf("token 刷新失败 (HTTP %d)，请查看服务端日志获取上游响应详情", resp.StatusCode)
 	}
 
 	var tokenResp openaiTokenResponse
