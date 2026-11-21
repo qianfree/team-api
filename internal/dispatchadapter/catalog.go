@@ -11,6 +11,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/utility/safego"
 	"github.com/qianfree/team-api/relay/helper"
 	"github.com/qianfree/team-api/relaykit/dispatch"
 )
@@ -290,8 +291,9 @@ func (c *Catalog) Start(ctx context.Context) {
 	c.Rebuild(rebuildCtx)
 	cancel()
 
-	go c.refreshLoop(ctx)
-	go c.subscribeInvalidate(ctx)
+	// 长驻循环统一走 safego 启动：循环体 panic 只丢当次刷新，不击穿进程
+	safego.Run(ctx, "dispatch:catalog_refresh", c.refreshLoop)
+	safego.Run(ctx, "dispatch:catalog_subscribe", c.subscribeInvalidate)
 }
 
 // Stop 停止后台刷新。

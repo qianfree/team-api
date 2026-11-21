@@ -1,12 +1,15 @@
 package monitor
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gctx"
+
+	"github.com/qianfree/team-api/internal/utility/safego"
 )
 
 const (
@@ -176,7 +179,9 @@ func InitRequestTracker() {
 
 	tracker = t
 	trackerStop = make(chan struct{})
-	go t.runSampler(trackerStop)
+	safego.Run(context.Background(), "monitor:request_sampler", func(context.Context) {
+		t.runSampler(trackerStop)
+	})
 }
 
 // StopRequestTracker stops the background sampler (idempotent).

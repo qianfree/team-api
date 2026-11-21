@@ -10,6 +10,7 @@ import (
 
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/model/entity"
+	"github.com/qianfree/team-api/internal/utility/safego"
 )
 
 const (
@@ -45,13 +46,16 @@ func InitWebhookDispatcher(ctx context.Context) {
 
 	for i := 0; i < dispatcherWorkerCount; i++ {
 		d.wg.Add(1)
-		go d.worker()
+		safego.Run(ctx, "webhook:worker", func(context.Context) {
+			defer d.wg.Done()
+			d.worker()
+		})
 	}
-	go d.sweepLoop()
-	go d.cleanupLoop()
+	safego.Run(ctx, "webhook:sweep_loop", func(context.Context) { d.sweepLoop() })
+	safego.Run(ctx, "webhook:cleanup_loop", func(context.Context) { d.cleanupLoop() })
 
 	// Recover any pending events left from a previous crash
-	go d.recoverPending()
+	safego.Run(ctx, "webhook:recover_pending", func(context.Context) { d.recoverPending() })
 
 	g.Log().Infof(ctx, "webhook dispatcher started: %d workers, sweep every %v, cleanup every %v", dispatcherWorkerCount, dispatcherSweepInterval, cleanupInterval)
 }

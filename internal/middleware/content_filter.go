@@ -10,6 +10,7 @@ import (
 
 	"github.com/qianfree/team-api/internal/logic/common"
 	do "github.com/qianfree/team-api/internal/model/do"
+	"github.com/qianfree/team-api/internal/utility/safego"
 )
 
 const (
@@ -47,7 +48,10 @@ type contentFilterLogEntry struct {
 
 func init() {
 	for i := 0; i < contentFilterLogWorkers; i++ {
-		go contentFilterLogWorker()
+		// worker 消亡后 channel 满会导致审计日志静默丢失，必须 panic 防护保活
+		safego.Run(context.Background(), "content_filter:log_worker", func(context.Context) {
+			contentFilterLogWorker()
+		})
 	}
 }
 
