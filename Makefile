@@ -29,7 +29,7 @@ ifneq (,$(wildcard .env))
     include .env
 endif
 
-.PHONY: run build build-web build-all tidy ctrl dao service migrate-up migrate-down migrate-status migrate-reset docker-build docker-up docker-down docker-logs docker-rebuild
+.PHONY: run build build-web build-all tidy fmt lint test cov ctrl dao service migrate-up migrate-down migrate-status migrate-reset docker-build docker-up docker-down docker-logs docker-rebuild
 
 # GoFrame hot-reload dev server
 run:
@@ -51,6 +51,27 @@ build-all: build-web
 # Tidy go modules
 tidy:
 	go mod tidy
+
+# 格式化两个 module 的全部 Go 代码（提交前三件套之一）
+fmt:
+	gofmt -l -w main.go internal relay relaykit plugins web tests scripts
+
+# golangci-lint 静态检查（主 module + relaykit 子 module，需 golangci-lint v2.x）
+# 安装：go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+lint:
+	golangci-lint run
+	cd relaykit && golangci-lint run
+
+# 单元测试（无需 DB/Redis，集成/e2e 测试由 build tag 隔离不参与）
+test:
+	go test ./internal/... ./relay/...
+	cd relaykit && go test ./...
+
+# 核心模块覆盖率（billing / dispatchadapter / relayconvert，规范要求 ≥80%）
+cov:
+	go test -coverprofile=coverage.out ./internal/logic/billing/... ./internal/dispatchadapter/...
+	cd relaykit && go test -coverprofile=coverage.out ./relayconvert/...
+	go tool cover -func=coverage.out | tail -1
 
 # GoFrame code generation
 ctrl:

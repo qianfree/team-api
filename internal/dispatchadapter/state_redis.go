@@ -14,6 +14,7 @@ import (
 
 	"github.com/gogf/gf/v2/frame/g"
 
+	"github.com/qianfree/team-api/internal/utility/safego"
 	"github.com/qianfree/team-api/relaykit/dispatch"
 )
 
@@ -76,7 +77,8 @@ func NewRedisState(policy func() *dispatch.RoutingPolicy, strictLookup func(int6
 
 // Start 启动健康上报后台 worker（fire-and-forget 批量消费，消除 H2）。
 func (s *RedisState) Start(ctx context.Context) {
-	go func() {
+	// 健康上报 panic 退出会让渠道健康分永久停滞（熔断/恢复失真），RunLoop 自愈重启
+	safego.RunLoop(ctx, "dispatch:health_reporter", func(ctx context.Context) {
 		for {
 			select {
 			case o := <-s.outcome:
@@ -85,7 +87,7 @@ func (s *RedisState) Start(ctx context.Context) {
 				return
 			}
 		}
-	}()
+	})
 }
 
 // Stop 停止后台 worker。

@@ -23,7 +23,7 @@ func (s *sAdmin) ListTenantLevelConfigs(ctx context.Context, _ *v1.TenantLevelCo
 	list := make([]*v1.TenantLevelConfigItem, 0, len(configs))
 	for _, c := range configs {
 		list = append(list, &v1.TenantLevelConfigItem{
-			Id:                          c.Id,
+			ID:                          c.Id,
 			Level:                       c.Level,
 			Name:                        c.Name,
 			CumulativeRechargeThreshold: billing.InexactFloat64(c.CumulativeRechargeThreshold),
@@ -114,14 +114,14 @@ func (s *sAdmin) UpdateTenantLevelConfig(ctx context.Context, req *v1.TenantLeve
 	var level int
 	if clearCache {
 		var config *entity.TntTenantLevelConfigs
-		_ = dao.TntTenantLevelConfigs.Ctx(ctx).Where("id", req.Id).Fields("level").Scan(&config)
+		_ = dao.TntTenantLevelConfigs.Ctx(ctx).Where("id", req.ID).Fields("level").Scan(&config)
 		if config != nil {
 			level = config.Level
 		}
 	}
 
 	_, err := dao.TntTenantLevelConfigs.Ctx(ctx).
-		Where("id", req.Id).
+		Where("id", req.ID).
 		Data(data).
 		Update()
 	if err != nil {
@@ -137,7 +137,7 @@ func (s *sAdmin) UpdateTenantLevelConfig(ctx context.Context, req *v1.TenantLeve
 
 func (s *sAdmin) DeleteTenantLevelConfig(ctx context.Context, req *v1.TenantLevelConfigDeleteReq) (*v1.TenantLevelConfigDeleteRes, error) {
 	var config *entity.TntTenantLevelConfigs
-	err := dao.TntTenantLevelConfigs.Ctx(ctx).Where("id", req.Id).Scan(&config)
+	err := dao.TntTenantLevelConfigs.Ctx(ctx).Where("id", req.ID).Scan(&config)
 	if err != nil {
 		return nil, err
 	}
@@ -148,7 +148,7 @@ func (s *sAdmin) DeleteTenantLevelConfig(ctx context.Context, req *v1.TenantLeve
 		return nil, common.NewBadRequestError("不允许删除默认等级 LV1")
 	}
 
-	_, err = dao.TntTenantLevelConfigs.Ctx(ctx).Where("id", req.Id).Delete()
+	_, err = dao.TntTenantLevelConfigs.Ctx(ctx).Where("id", req.ID).Delete()
 	if err != nil {
 		return nil, err
 	}

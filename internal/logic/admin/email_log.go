@@ -86,7 +86,7 @@ func (s *sAdmin) ListEmailSendLogs(ctx context.Context, req *v1.EmailSendLogList
 // GetEmailSendLogDetail 查询单条邮件发送记录详情（含 body 正文）。
 func (s *sAdmin) GetEmailSendLogDetail(ctx context.Context, req *v1.EmailSendLogDetailReq) (*v1.EmailSendLogDetailRes, error) {
 	var record *entity.NtfSendLog
-	err := dao.NtfSendLog.Ctx(ctx).Where("id", req.Id).Scan(&record)
+	err := dao.NtfSendLog.Ctx(ctx).Where("id", req.ID).Scan(&record)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}

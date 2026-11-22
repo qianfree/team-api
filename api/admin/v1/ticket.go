@@ -18,15 +18,15 @@ type TicketListReq struct {
 }
 
 type TicketItem struct {
-	Id                int64       `json:"id"`
-	TenantId          int64       `json:"tenant_id"`
-	UserId            int64       `json:"user_id"`
+	ID                int64       `json:"id"`
+	TenantID          int64       `json:"tenant_id"`
+	UserID            int64       `json:"user_id"`
 	Category          string      `json:"category"`
 	Title             string      `json:"title"`
 	Description       string      `json:"description"`
 	Urgency           string      `json:"urgency"`
 	Status            string      `json:"status"`
-	AssignedAdminId   int64       `json:"assigned_admin_id"`
+	AssignedAdminID   int64       `json:"assigned_admin_id"`
 	TenantName        string      `json:"tenant_name"`
 	UserDisplayName   string      `json:"user_display_name"`
 	AssignedAdminName string      `json:"assigned_admin_name"`
@@ -43,13 +43,13 @@ type TicketListRes struct {
 
 type TicketGetReq struct {
 	g.Meta `path:"/tickets/{id}" method:"get" mime:"json" tags:"管理后台-工单" summary:"工单详情"`
-	Id     int64 `json:"id" in:"path" v:"required|min:1"`
+	ID     int64 `json:"id" in:"path" v:"required|min:1"`
 }
 
 type TicketReplyItem struct {
-	Id        int64       `json:"id"`
-	TicketId  int64       `json:"ticket_id"`
-	UserId    int64       `json:"user_id"`
+	ID        int64       `json:"id"`
+	TicketID  int64       `json:"ticket_id"`
+	UserID    int64       `json:"user_id"`
 	UserType  string      `json:"user_type"`
 	UserName  string      `json:"user_name"`
 	Content   string      `json:"content"`
@@ -57,9 +57,9 @@ type TicketReplyItem struct {
 }
 
 type TicketAttachmentItem struct {
-	Id          int64       `json:"id"`
-	TicketId    int64       `json:"ticket_id"`
-	ReplyId     int64       `json:"reply_id"`
+	ID          int64       `json:"id"`
+	TicketID    int64       `json:"ticket_id"`
+	ReplyID     int64       `json:"reply_id"`
 	FileName    string      `json:"file_name"`
 	FileUrl     string      `json:"file_url"`
 	FileSize    int         `json:"file_size"`
@@ -68,15 +68,15 @@ type TicketAttachmentItem struct {
 }
 
 type TicketGetRes struct {
-	Id                int64                   `json:"id"`
-	TenantId          int64                   `json:"tenant_id"`
-	UserId            int64                   `json:"user_id"`
+	ID                int64                   `json:"id"`
+	TenantID          int64                   `json:"tenant_id"`
+	UserID            int64                   `json:"user_id"`
 	Category          string                  `json:"category"`
 	Title             string                  `json:"title"`
 	Description       string                  `json:"description"`
 	Urgency           string                  `json:"urgency"`
 	Status            string                  `json:"status"`
-	AssignedAdminId   int64                   `json:"assigned_admin_id"`
+	AssignedAdminID   int64                   `json:"assigned_admin_id"`
 	TenantName        string                  `json:"tenant_name"`
 	UserDisplayName   string                  `json:"user_display_name"`
 	AssignedAdminName string                  `json:"assigned_admin_name"`
@@ -88,7 +88,7 @@ type TicketGetRes struct {
 
 type TicketAssignReq struct {
 	g.Meta  `path:"/tickets/{id}/assign" method:"put" mime:"json" tags:"管理后台-工单" summary:"分配工单"`
-	Id      int64 `json:"id" in:"path" v:"required|min:1"`
+	ID      int64 `json:"id" in:"path" v:"required|min:1"`
 	AdminID int64 `json:"admin_id" v:"required|min:1"`
 }
 
@@ -96,7 +96,7 @@ type TicketAssignRes struct{}
 
 type TicketReplyReq struct {
 	g.Meta  `path:"/tickets/{id}/reply" method:"post" mime:"json" tags:"管理后台-工单" summary:"回复工单"`
-	Id      int64  `json:"id" in:"path" v:"required|min:1"`
+	ID      int64  `json:"id" in:"path" v:"required|min:1"`
 	Content string `json:"content" v:"required"`
 }
 
@@ -104,7 +104,7 @@ type TicketReplyRes struct{}
 
 type TicketStatusUpdateReq struct {
 	g.Meta `path:"/tickets/{id}/status" method:"put" mime:"json" tags:"管理后台-工单" summary:"更新工单状态"`
-	Id     int64  `json:"id" in:"path" v:"required|min:1"`
+	ID     int64  `json:"id" in:"path" v:"required|min:1"`
 	Status string `json:"status" v:"required|in:pending,processing,replied,closed,reopened"`
 }
 

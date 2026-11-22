@@ -42,7 +42,7 @@ type ModelGroupCreateReq struct {
 	Code        string  `json:"code" v:"required|length:1,50#请输入分组标识|分组标识长度1-50" dc:"分组唯一标识"`
 	Description string  `json:"description" dc:"分组描述"`
 	IsDefault   *bool   `json:"is_default" dc:"是否为新租户默认模型组"`
-	ModelIds    []int64 `json:"model_ids" dc:"初始包含的模型ID列表"`
+	ModelIDs    []int64 `json:"model_ids" dc:"初始包含的模型ID列表"`
 }
 
 // ModelGroupCreateRes 创建模型分组响应
@@ -87,7 +87,7 @@ type GroupModelsListRes struct {
 
 // GroupModelItem 分组内模型信息
 type GroupModelItem struct {
-	ModelId   string `json:"model_id"`
+	ModelID   string `json:"model_id"`
 	ModelName string `json:"model_name"`
 	Category  string `json:"category"`
 	Status    string `json:"status"`
@@ -97,7 +97,7 @@ type GroupModelItem struct {
 type GroupModelsSetReq struct {
 	g.Meta   `path:"/model-groups/{id}/models" method:"put" mime:"json" tags:"管理后台-模型分组" summary:"设置分组内模型"`
 	ID       int64   `json:"id" in:"path" v:"required" dc:"分组ID"`
-	ModelIds []int64 `json:"model_ids" dc:"模型ID列表（空数组表示清空）"`
+	ModelIDs []int64 `json:"model_ids" dc:"模型ID列表（空数组表示清空）"`
 }
 
 // GroupModelsSetRes 设置分组内模型响应
@@ -129,7 +129,7 @@ type TenantGroupItem struct {
 type TenantGroupsSetReq struct {
 	g.Meta   `path:"/tenants/{tenant_id}/groups" method:"put" mime:"json" tags:"管理后台-模型分组" summary:"设置租户关联分组"`
 	TenantID int64   `json:"tenant_id" in:"path" v:"required" dc:"租户ID"`
-	GroupIds []int64 `json:"group_ids" dc:"分组ID列表（空数组表示清空）"`
+	GroupIDs []int64 `json:"group_ids" dc:"分组ID列表（空数组表示清空）"`
 }
 
 // TenantGroupsSetRes 设置租户关联分组响应

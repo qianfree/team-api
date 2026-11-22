@@ -272,8 +272,10 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 		}
 
 		// 客户端可见 usage 用 OpenAI 语义（input 含缓存，cached 为子集）；
-		// completed 帧同时携带 Claude 计费口径的用量（input 不含缓存、cache 明细独立）
-		// 与服务端工具调用计数（web_search 等，经 ToolCalls 侧信道供按次计费），
+		// 计费侧信道（StreamEvent.Usage）必须同为含缓存口径：宿主桥接层统一置
+		// CacheIncludedInPrompt=true 并按明细扣减缓存还原 base input，侧信道发
+		// Claude 口径（不含缓存）会被双重扣减导致输入少计；
+		// 服务端工具调用计数（web_search 等，经 ToolCalls 侧信道供按次计费），
 		// 输出缺失时的估算兜底（EstimateStreamOutputTokens）由宿主桥接层处理
 		completedAt := int(time.Now().Unix())
 		if err := chunkWriter(&relayconvert.StreamEvent{
@@ -283,7 +285,7 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 				"response": buildResponsesObjectMap(respID, createdAt, "completed", modelName,
 					finalOutput, buildResponsesUsageMap(claudeVisibleUsage(&usage)), &completedAt, info),
 			},
-			Usage:     claudeBillingUsage(&usage),
+			Usage:     claudeVisibleUsage(&usage),
 			ToolCalls: shared.ServerToolCallsFromClaudeUsage(&usage),
 		}); err != nil {
 			return err

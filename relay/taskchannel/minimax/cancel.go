@@ -1,6 +1,7 @@
 package minimax
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -25,9 +26,9 @@ type CancelResult struct {
 // CancelTask 取消上游排队中的任务。
 // 返回的 TaskError 携带上游状态码与错误信息（含上游判定「运行中不可取消」等场景），
 // 调用方以本结果为准决定是否向客户端确认取消。
-func CancelTask(baseURL, apiKey, taskID string, useProxy bool) (*CancelResult, *common.TaskError) {
+func CancelTask(ctx context.Context, baseURL, apiKey, taskID string, useProxy bool) (*CancelResult, *common.TaskError) {
 	url := fmt.Sprintf("%s/v2/video_generation/%s", strings.TrimRight(baseURL, "/"), taskID)
-	req, err := http.NewRequest(http.MethodDelete, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
 	if err != nil {
 		return nil, &common.TaskError{StatusCode: http.StatusInternalServerError, Message: "create cancel request failed"}
 	}

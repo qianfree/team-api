@@ -262,14 +262,14 @@ function parseSnapshot(log: any): any {
 // 计费快照解析结果：computed 只解析一次，避免模板里几十处调用反复 JSON.parse
 const snapshot = computed(() => parseSnapshot(detailLog.value))
 
-// 快照 token_costs 的 key → 中文标签
+// 快照 token_costs 的 key → 中文标签（TTL 桶按语义命名：标准 = 5m/30m，长时 = 1h/12h）
 const tokenCostLabels: Record<string, string> = {
 	input: '输入',
 	output: '输出',
 	cache_read: '缓存读取',
 	cache_creation: '缓存创建',
-	cache_creation_5m: '缓存创建(5分钟)',
-	cache_creation_1h: '缓存创建(1小时)',
+	cache_creation_5m: '缓存创建(标准TTL)',
+	cache_creation_1h: '缓存创建(长时TTL)',
 }
 
 // 快照 ratio_multipliers 的 key → 中文标签（任务路径附加乘数：视频输入折扣、
@@ -310,8 +310,8 @@ const formulaVarLabels: Record<string, string> = {
 	c: '输出',
 	ctx: '上下文',
 	cr: '缓存读取',
-	cc: '缓存创建(5分钟)',
-	cc1h: '缓存创建(1小时)',
+	cc: '缓存创建(标准TTL)',
+	cc1h: '缓存创建(长时TTL)',
 	img: '图片输入',
 	img_o: '图片输出',
 	ai: '音频输入',
@@ -405,8 +405,8 @@ const receiptRows = computed<ReceiptRow[]>(() => {
 	]
 	if ((d.cache_read_tokens || 0) > 0) rows.push(tokenRow('缓存读取', d.cache_read_tokens))
 	if ((d.cache_creation_tokens || 0) > 0) rows.push(tokenRow('缓存创建', d.cache_creation_tokens))
-	if ((d.cache_creation_5m_tokens || 0) > 0) rows.push(tokenRow('缓存创建(5分钟)', d.cache_creation_5m_tokens))
-	if ((d.cache_creation_1h_tokens || 0) > 0) rows.push(tokenRow('缓存创建(1小时)', d.cache_creation_1h_tokens))
+	if ((d.cache_creation_5m_tokens || 0) > 0) rows.push(tokenRow('缓存创建(标准TTL)', d.cache_creation_5m_tokens))
+	if ((d.cache_creation_1h_tokens || 0) > 0) rows.push(tokenRow('缓存创建(长时TTL)', d.cache_creation_1h_tokens))
 	if ((d.reasoning_tokens || 0) > 0) rows.push(tokenRow('推理 Token', d.reasoning_tokens))
 	if ((d.audio_input_tokens || 0) > 0) rows.push(tokenRow('音频输入', d.audio_input_tokens))
 	if ((d.audio_output_tokens || 0) > 0) rows.push(tokenRow('音频输出', d.audio_output_tokens))
@@ -538,8 +538,8 @@ const columns: TableColumnData[] = [
 				tooltipRow('输出 Token', (record.output_tokens || 0).toLocaleString()),
 				tooltipRow('缓存创建', (record.cache_creation_tokens || 0).toLocaleString()),
 				tooltipRow('缓存读取', (record.cache_read_tokens || 0).toLocaleString()),
-				tooltipRow('缓存创建(5分钟)', (record.cache_creation_5m_tokens || 0).toLocaleString()),
-				tooltipRow('缓存创建(1小时)', (record.cache_creation_1h_tokens || 0).toLocaleString()),
+				tooltipRow('缓存创建(标准TTL)', (record.cache_creation_5m_tokens || 0).toLocaleString()),
+				tooltipRow('缓存创建(长时TTL)', (record.cache_creation_1h_tokens || 0).toLocaleString()),
 				record.reasoning_tokens > 0 ? tooltipRow('推理 Token', record.reasoning_tokens.toLocaleString()) : null,
 				record.audio_input_tokens > 0 ? tooltipRow('音频输入', record.audio_input_tokens.toLocaleString()) : null,
 				record.audio_output_tokens > 0 ? tooltipRow('音频输出', record.audio_output_tokens.toLocaleString()) : null,

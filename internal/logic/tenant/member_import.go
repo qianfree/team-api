@@ -18,6 +18,7 @@ import (
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/middleware"
 	"github.com/qianfree/team-api/internal/utility/crypto"
+	"github.com/qianfree/team-api/internal/utility/safego"
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 	do "github.com/qianfree/team-api/internal/model/do"
@@ -67,13 +68,13 @@ func (s *sTenant) MemberImport(ctx context.Context, req *v1.TenantMemberImportRe
 		return nil, err
 	}
 
-	go func() {
+	safego.Run(ctx, "tenant:member_import", func(context.Context) {
 		// 脱离请求取消但保留 ctxvar（request_id 等），使后台导入日志可追踪全链路
 		bgCtx := context.WithoutCancel(ctx)
 		if err := processImport(bgCtx, tenantID, importID); err != nil {
 			g.Log().Errorf(bgCtx, "批量导入处理失败 importID=%d: %v", importID, err)
 		}
-	}()
+	})
 
 	return &v1.TenantMemberImportRes{ID: importID}, nil
 }

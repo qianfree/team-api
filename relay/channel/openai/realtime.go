@@ -13,6 +13,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gorilla/websocket"
 
+	"github.com/qianfree/team-api/internal/utility/safego"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/dto"
 )
@@ -130,7 +131,7 @@ func (p *RealtimeProxy) Proxy(ctx context.Context) (*common.Usage, error) {
 	)
 
 	// Client → Upstream
-	go func() {
+	safego.Run(ctx, "openai_realtime:client_pump", func(context.Context) {
 		defer close(clientClosed)
 		for {
 			_, message, err := p.clientConn.ReadMessage()
@@ -157,10 +158,10 @@ func (p *RealtimeProxy) Proxy(ctx context.Context) (*common.Usage, error) {
 				}
 			}
 		}
-	}()
+	})
 
 	// Upstream → Client
-	go func() {
+	safego.Run(ctx, "openai_realtime:upstream_pump", func(context.Context) {
 		defer close(targetClosed)
 		for {
 			_, message, err := p.targetConn.ReadMessage()
@@ -186,7 +187,7 @@ func (p *RealtimeProxy) Proxy(ctx context.Context) (*common.Usage, error) {
 				}
 			}
 		}
-	}()
+	})
 
 	// 等待任一方向关闭
 	select {

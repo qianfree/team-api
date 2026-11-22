@@ -160,9 +160,9 @@ func (a *SoraAdaptor) FetchTask(_ context.Context, baseURL, apiKey string, _ []b
 }
 
 // FetchTaskByID 根据上游任务 ID 查询状态
-func (a *SoraAdaptor) FetchTaskByID(baseURL, apiKey, taskID string) (*http.Response, error) {
+func (a *SoraAdaptor) FetchTaskByID(ctx context.Context, baseURL, apiKey, taskID string) (*http.Response, error) {
 	url := fmt.Sprintf("%s/v1/videos/%s", strings.TrimRight(baseURL, "/"), taskID)
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err
 	}

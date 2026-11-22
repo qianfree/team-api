@@ -11,7 +11,7 @@ import (
 func BenchmarkOpenAIToOllamaRequest(b *testing.B) {
 	conv := &OpenAIToOllamaRequestConverter{}
 	req := &dto.GeneralOpenAIRequest{
-		Model:    "llama3",
+		Model:     "llama3",
 		MaxTokens: func() *int { v := 256; return &v }(),
 		Messages: []dto.Message{
 			{Role: "system", Content: "You are a helpful assistant."},

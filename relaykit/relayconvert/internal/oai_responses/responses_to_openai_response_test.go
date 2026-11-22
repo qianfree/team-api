@@ -45,7 +45,8 @@ func TestResponsesToOpenAIResponse_TextAndToolCalls(t *testing.T) {
 		],
 		"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15,
 			"input_tokens_details":{"cached_tokens":2,"cache_write_tokens":1,"audio_tokens":0,"text_tokens":8,
-				"cached_tokens_details":{"text_tokens":1,"image_tokens":1}},
+				"cached_tokens_details":{"text_tokens":1,"image_tokens":1},
+				"cache_write_tokens_details":{"ttl_30m_tokens":1,"ttl_12h_tokens":2}},
 			"output_tokens_details":{"reasoning_tokens":3,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}}
 	}`)
 
@@ -75,6 +76,12 @@ func TestResponsesToOpenAIResponse_TextAndToolCalls(t *testing.T) {
 	}
 	if d := chatResp.Usage.PromptTokensDetails; d == nil || d.CachedTokens != 2 || d.CacheWriteTokens != 1 || d.TextTokens != 8 {
 		t.Errorf("prompt details = %+v", chatResp.Usage.PromptTokensDetails)
+	}
+	// cache_write TTL 细分透传：宿主 NormalizeCacheWriteTTL 据此把 12h 写入归一到
+	// 长时桶（2.5×）计价，丢失则全落短桶（1.25×）少收
+	if wd := chatResp.Usage.PromptTokensDetails.CacheWriteTokensDetails; wd == nil ||
+		wd.TTL30mTokens != 1 || wd.TTL12hTokens != 2 {
+		t.Errorf("cache_write_tokens_details = %+v, want ttl_30m=1 ttl_12h=2", chatResp.Usage.PromptTokensDetails.CacheWriteTokensDetails)
 	}
 	// cached_tokens_details 模态细分透传（观测字段，指针区分未报/报零）
 	if cd := chatResp.Usage.PromptTokensDetails.CachedTokensDetails; cd == nil ||

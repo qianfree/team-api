@@ -6,7 +6,7 @@
 
 统一接入 OpenAI、Claude、Gemini 等大模型供应商，提供计费、限流、监控和多租户管理能力。
 
-[![Go](https://img.shields.io/badge/Go-1.25-00ADD8?style=flat-square&logo=go)](https://go.dev/)
+[![Go](https://img.shields.io/badge/Go-1.26-00ADD8?style=flat-square&logo=go)](https://go.dev/)
 [![GoFrame](https://img.shields.io/badge/GoFrame-v2.10-blue?style=flat-square)](https://goframe.org/)
 [![Vue](https://img.shields.io/badge/Vue-3-4FC08D?style=flat-square&logo=vue.js)](https://vuejs.org/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-336791?style=flat-square&logo=postgresql)](https://www.postgresql.org/)
@@ -86,7 +86,7 @@
 
 ### 环境要求
 
-- Go 1.25+
+- Go 1.26+
 - PostgreSQL 15+
 - Redis 7+
 - Node.js 18+ & bun（前端开发）

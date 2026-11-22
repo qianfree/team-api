@@ -127,25 +127,24 @@ func TestTaskDetail(t *testing.T) {
 	detailResp := client.Get(fmt.Sprintf("/api/admin/tasks/%d", taskID), nil)
 	detailResp.AssertSuccess(t)
 
+	// 详情平铺：data 直接是任务对象字段（无 task 包裹层）
 	var detailData struct {
-		Task struct {
-			ID        int64  `json:"id"`
-			Platform  string `json:"platform"`
-			Status    string `json:"status"`
-			ModelName string `json:"model_name"`
-			TenantID  int64  `json:"tenant_id"`
-		} `json:"task"`
+		ID        int64  `json:"id"`
+		Platform  string `json:"platform"`
+		Status    string `json:"status"`
+		ModelName string `json:"model_name"`
+		TenantID  int64  `json:"tenant_id"`
 	}
 	detailResp.DecodeData(t, &detailData)
 
-	if detailData.Task.ID != taskID {
-		t.Fatalf("expected task id=%d, got %d", taskID, detailData.Task.ID)
+	if detailData.ID != taskID {
+		t.Fatalf("expected task id=%d, got %d", taskID, detailData.ID)
 	}
-	if detailData.Task.Platform != expectedPlatform {
-		t.Fatalf("expected platform=%q, got %q", expectedPlatform, detailData.Task.Platform)
+	if detailData.Platform != expectedPlatform {
+		t.Fatalf("expected platform=%q, got %q", expectedPlatform, detailData.Platform)
 	}
-	if detailData.Task.Status != expectedStatus {
-		t.Fatalf("expected status=%q, got %q", expectedStatus, detailData.Task.Status)
+	if detailData.Status != expectedStatus {
+		t.Fatalf("expected status=%q, got %q", expectedStatus, detailData.Status)
 	}
 
 	t.Logf("Task detail verified: id=%d, platform=%s, status=%s", taskID, expectedPlatform, expectedStatus)

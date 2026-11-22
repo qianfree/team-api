@@ -88,7 +88,7 @@ func HandleAliVideoSubmit(r *ghttp.Request) {
 	}
 
 	rc.ForwardingTrace = buildTaskForwardingTrace(r.URL.Path, taskBody, channelMeta, capture.StatusCode())
-	go recordTaskSubmitAudit(r, rc, capture, taskBody)
+	goRecordTaskSubmitAudit(r, rc, capture, taskBody)
 }
 
 // HandleAliVideoRetrieve 处理 GET /api/v1/tasks/{task_id}（查询视频任务，回放官方响应）

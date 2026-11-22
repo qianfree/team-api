@@ -18,6 +18,10 @@ var ErrModelPricingNotConfigured = errors.New("model pricing not configured")
 // 取到字符串参与算术），handler 层识别后按请求错误（400）拒绝，而非「余额不足」/500
 var ErrBillingFormulaEval = errors.New("request parameters incompatible with model billing formula")
 
+// ErrInsufficientBalance 钱包余额不足（预扣 Lua 返回码 0 哨兵错误）。
+// handler 层用 errors.Is 识别后返回 402；其余预扣错误一律 500（内部故障不冒充余额不足）。
+var ErrInsufficientBalance = errors.New("insufficient balance")
+
 // MaxImageCount 图片协议顶层 n（一次生成张数）上限，与 OpenAI images API 的 1~10 一致。
 // n 直接放大按次计费（单价 × n），超限值在入口直接 400 拒绝，防止异常大值冻结天价预扣。
 const MaxImageCount = 10

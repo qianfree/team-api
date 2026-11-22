@@ -15,6 +15,7 @@ import (
 
 	"github.com/qianfree/team-api/internal/dao"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
+	"github.com/qianfree/team-api/relay/common"
 )
 
 const (
@@ -164,7 +165,8 @@ func readWalletHash(ctx context.Context, tenantID int64) (balanceMicro, frozenMi
 // frozen 归零（接受窗口期超扣风险）；部分丢失（如 hash 被误删）时幸存明细仍能提供精确冻结。
 func rebuildWalletFromDB(ctx context.Context, tenantID int64) error {
 	_, err, _ := walletRebuildGroup.Do(strconv.FormatInt(tenantID, 10), func() (interface{}, error) {
-		return nil, doRebuildWalletFromDB(context.Background(), tenantID)
+		// WithoutCancel：singleflight 可能跨请求生命周期执行，脱离取消但保留 ctxvar（request_id）
+		return nil, doRebuildWalletFromDB(context.WithoutCancel(ctx), tenantID)
 	})
 	return err
 }
@@ -360,7 +362,8 @@ func PreDeduct(ctx context.Context, tenantID int64, amount float64, requestID st
 
 	switch code {
 	case 0:
-		return false, gerror.New("insufficient balance")
+		// 哨兵错误：handler 层 errors.Is 识别后返回 402（其余预扣错误一律 500）
+		return false, common.ErrInsufficientBalance
 	case 2:
 		// 幂等：同一 request_id 已预扣过
 		return true, nil
@@ -628,14 +631,26 @@ func GetFrozenItems(ctx context.Context, tenantID int64) ([]FrozenItem, error) {
 	for _, reqID := range requestIDs {
 		predeductKey := PreDeductRedisKeyPrefix + reqID
 
-		exists, _ := g.Redis().Do(ctx, "EXISTS", predeductKey)
-		if exists.Int64() == 0 {
+		existsRes, err := g.Redis().Do(ctx, "EXISTS", predeductKey)
+		if err != nil {
+			// EXISTS 失败不得把活跃预扣误判为 stale：误删会让 prededuct_sweep 重算
+			// frozen 时少算该笔，可用余额虚高出现超额消费窗口，跳过本条留待下轮
+			g.Log().Warningf(ctx, "GetFrozenItems: EXISTS 查询失败，跳过 request=%s: %v", reqID, err)
+			continue
+		}
+		if existsRes.Int64() == 0 {
 			staleIDs = append(staleIDs, reqID)
 			continue
 		}
 
 		data, err := g.Redis().Do(ctx, "HGETALL", predeductKey)
-		if err != nil || data.IsNil() {
+		if err != nil {
+			// HGETALL 失败不得把活跃预扣误判为 stale（同 EXISTS）：误删成员会让
+			// prededuct_sweep 重算 frozen 时少算该笔，可用余额虚高出现超额消费窗口，跳过本条留待下轮
+			g.Log().Warningf(ctx, "GetFrozenItems: HGETALL 查询失败，跳过 request=%s: %v", reqID, err)
+			continue
+		}
+		if data.IsNil() {
 			staleIDs = append(staleIDs, reqID)
 			continue
 		}

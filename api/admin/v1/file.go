@@ -12,8 +12,8 @@ type FileListReq struct {
 	g.Meta    `path:"/files" method:"get" mime:"json" tags:"管理后台-文件管理" summary:"文件列表"`
 	Page      int    `json:"page" in:"query" d:"1"`
 	PageSize  int    `json:"page_size" in:"query" d:"20"`
-	TenantId  int64  `json:"tenant_id" in:"query" dc:"按租户筛选"`
-	UserId    int64  `json:"user_id" in:"query" dc:"按上传者筛选"`
+	TenantID  int64  `json:"tenant_id" in:"query" dc:"按租户筛选"`
+	UserID    int64  `json:"user_id" in:"query" dc:"按上传者筛选"`
 	Provider  string `json:"provider" in:"query" dc:"存储供应商 s3/minio/r2/oss/cos"`
 	Category  string `json:"category" in:"query" v:"in:|image|export|other" dc:"分类：image/export/other"`
 	Keyword   string `json:"keyword" in:"query" dc:"按原始文件名 / 存储路径模糊匹配"`
@@ -22,9 +22,9 @@ type FileListReq struct {
 }
 
 type FileItem struct {
-	Id              int64       `json:"id"`
-	TenantId        int64       `json:"tenant_id"`
-	UserId          int64       `json:"user_id"`
+	ID              int64       `json:"id"`
+	TenantID        int64       `json:"tenant_id"`
+	UserID          int64       `json:"user_id"`
 	OriginalName    string      `json:"original_name"`
 	MimeType        string      `json:"mime_type"`
 	Size            int64       `json:"size"`
@@ -61,7 +61,7 @@ type FileCategoryStat struct {
 }
 
 type FileTenantStat struct {
-	TenantId int64 `json:"tenant_id"`
+	TenantID int64 `json:"tenant_id"`
 	Count    int64 `json:"count"`
 	Bytes    int64 `json:"bytes"`
 }
@@ -77,7 +77,7 @@ type FileStatsRes struct {
 // FileDownloadReq 生成临时预览/下载链接。variant=thumb 返回缩略图（仅图片，OSS/COS 服务端裁剪，其余供应商回退原图），空/original 返回原图。
 type FileDownloadReq struct {
 	g.Meta  `path:"/files/{id}/download" method:"get" mime:"json" tags:"管理后台-文件管理" summary:"生成文件预览/下载链接"`
-	Id      int64  `json:"id" in:"path" v:"required|min:1"`
+	ID      int64  `json:"id" in:"path" v:"required|min:1"`
 	Variant string `json:"variant" in:"query" v:"in:thumb,original" dc:"thumb=缩略图预览，空/original=原图"`
 	Width   int    `json:"width" in:"query" d:"400" v:"min:0|max:2048" dc:"缩略图宽度像素，仅 variant=thumb 生效"`
 }
@@ -89,7 +89,7 @@ type FileDownloadRes struct {
 // FileDeleteReq 删除单个文件（对象 + 记录）。
 type FileDeleteReq struct {
 	g.Meta `path:"/files/{id}" method:"delete" mime:"json" tags:"管理后台-文件管理" summary:"删除文件"`
-	Id     int64 `json:"id" in:"path" v:"required|min:1"`
+	ID     int64 `json:"id" in:"path" v:"required|min:1"`
 }
 
 type FileDeleteRes struct{}

@@ -75,7 +75,7 @@ func (s *sAdmin) ExportModelsJson(ctx context.Context, req *v1.ModelExportJsonRe
 	}
 
 	err := dao.MdlModels.Ctx(ctx).
-		WhereIn("model_id", req.ModelIds).
+		WhereIn("model_id", req.ModelIDs).
 		Scan(&models)
 	if err != nil {
 		return nil, err
@@ -244,18 +244,18 @@ func (s *sAdmin) ExportModelsJson(ctx context.Context, req *v1.ModelExportJsonRe
 //   - 展示字段空串=清除（全量替换，与时段定价「导入文件无该字段=清除」同口径）
 func writeImportedPricing(ctx context.Context, modelDBID int64, item *v1.ModelImportItem, paramRules []billing.ParamRule, scheme string) error {
 	if err := writePricingForModel(ctx, modelDBID, item.Pricing, paramRules, scheme, item.SchemeConfig); err != nil {
-		return gerror.Wrapf(err, "模型 %s 定价", item.ModelId)
+		return gerror.Wrapf(err, "模型 %s 定价", item.ModelID)
 	}
 	if err := writeTimeSegmentsForModel(ctx, modelDBID, item.TimeSegments); err != nil {
-		return gerror.Wrapf(err, "模型 %s 时段定价", item.ModelId)
+		return gerror.Wrapf(err, "模型 %s 时段定价", item.ModelID)
 	}
 	if item.OfficialItems != nil {
 		if err := writeOfficialPricingForModel(ctx, modelDBID, item.OfficialItems, item.OfficialTimeSegments, item.OfficialParamMultipliers); err != nil {
-			return gerror.Wrapf(err, "模型 %s 官方参考定价", item.ModelId)
+			return gerror.Wrapf(err, "模型 %s 官方参考定价", item.ModelID)
 		}
 	}
 	if err := writePricingDisplayFieldsForModel(ctx, modelDBID, item.PriceNote, item.DiscountLabel, item.PriceChangeNote); err != nil {
-		return gerror.Wrapf(err, "模型 %s 定价展示字段", item.ModelId)
+		return gerror.Wrapf(err, "模型 %s 定价展示字段", item.ModelID)
 	}
 	return nil
 }
@@ -312,14 +312,30 @@ func (s *sAdmin) ImportModelsPreview(ctx context.Context, req *v1.ModelImportPre
 		return nil, gerror.NewCode(gcode.New(consts.CodeModelImportBadVersion, consts.MsgModelImportBadVersion, nil), consts.MsgModelImportBadVersion)
 	}
 
+	// 批量查询已存在模型（WhereIn 一次往返），替代循环逐模型 Count 的 N+1
+	modelIDs := make([]string, 0, len(exportData.Models))
 	for i := range exportData.Models {
-		count, _ := dao.MdlModels.Ctx(ctx).Where("model_id", exportData.Models[i].ModelId).Count()
-		if count > 0 {
+		modelIDs = append(modelIDs, exportData.Models[i].ModelID)
+	}
+	existing := make(map[string]bool, len(modelIDs))
+	if len(modelIDs) > 0 {
+		var rows []struct {
+			ModelId string `json:"model_id"`
+		}
+		if err := dao.MdlModels.Ctx(ctx).WhereIn("model_id", modelIDs).Fields("model_id").Scan(&rows); err != nil {
+			return nil, err
+		}
+		for _, r := range rows {
+			existing[r.ModelId] = true
+		}
+	}
+	for i := range exportData.Models {
+		if existing[exportData.Models[i].ModelID] {
 			exportData.Models[i].Conflict = "exists"
 		}
 	}
 
-	return &v1.ModelImportPreviewRes{Models: exportData.Models}, nil
+	return &v1.ModelImportPreviewRes{List: exportData.Models}, nil
 }
 
 // ImportModels 确认导入模型（事务内执行）
@@ -338,20 +354,20 @@ func (s *sAdmin) ImportModels(ctx context.Context, req *v1.ModelImportReq) (*v1.
 			if len(item.Pricing) > 0 {
 				isSpecial := item.Pricing[0].BillingMode == billing.BillingModeSpecial
 				if isSpecial && scheme == "" {
-					return gerror.Newf("模型 %s：特殊计费模式（special）缺少计费方案声明", item.ModelId)
+					return gerror.Newf("模型 %s：特殊计费模式（special）缺少计费方案声明", item.ModelID)
 				}
 				if !isSpecial && scheme != "" {
-					return gerror.Newf("模型 %s：计费方案模型必须使用特殊计费模式（billing_mode=special）", item.ModelId)
+					return gerror.Newf("模型 %s：计费方案模型必须使用特殊计费模式（billing_mode=special）", item.ModelID)
 				}
 			}
 			if scheme != "" && !billing.SchemeRegistered(scheme) {
-				return gerror.Newf("模型 %s：计费方案 %q 未注册", item.ModelId, scheme)
+				return gerror.Newf("模型 %s：计费方案 %q 未注册", item.ModelID, scheme)
 			}
 
 			var existing *struct {
 				ID int64 `orm:"id"`
 			}
-			err := dao.MdlModels.Ctx(ctx).Where("model_id", item.ModelId).Scan(&existing)
+			err := dao.MdlModels.Ctx(ctx).Where("model_id", item.ModelID).Scan(&existing)
 			if err != nil {
 				return err
 			}
@@ -397,19 +413,19 @@ func (s *sAdmin) ImportModels(ctx context.Context, req *v1.ModelImportReq) (*v1.
 
 				paramRules, pErr := paramMultipliersFromAPI(item.ParamMultipliers)
 				if pErr != nil {
-					return gerror.Wrapf(pErr, "模型 %s 参数倍率", item.ModelId)
+					return gerror.Wrapf(pErr, "模型 %s 参数倍率", item.ModelID)
 				}
 				if err := writeImportedPricing(ctx, existing.ID, &item, paramRules, scheme); err != nil {
 					return err
 				}
 
-				relay.NewDataProvider().InvalidateModelCache(item.ModelId)
-				billing.ClearModelPriceCache(ctx, item.ModelId)
+				relay.NewDataProvider().InvalidateModelCache(item.ModelID)
+				billing.ClearModelPriceCache(ctx, item.ModelID)
 				res.Imported++
 			} else {
 				// 新建模型
 				insertData := do.MdlModels{
-					ModelId:          item.ModelId,
+					ModelId:          item.ModelID,
 					ModelName:        item.ModelName,
 					Category:         item.Category,
 					Vendor:           item.Vendor,
@@ -436,7 +452,7 @@ func (s *sAdmin) ImportModels(ctx context.Context, req *v1.ModelImportReq) (*v1.
 				// 定价写入（pricing JSONB + 官方参考定价 + 展示字段，与 SetModelPricing 口径一致）
 				paramRules, pErr := paramMultipliersFromAPI(item.ParamMultipliers)
 				if pErr != nil {
-					return gerror.Wrapf(pErr, "模型 %s 参数倍率", item.ModelId)
+					return gerror.Wrapf(pErr, "模型 %s 参数倍率", item.ModelID)
 				}
 				if err := writeImportedPricing(ctx, id, &item, paramRules, scheme); err != nil {
 					return err

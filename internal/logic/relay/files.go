@@ -116,11 +116,19 @@ func relayFileURLTTL(ctx context.Context) time.Duration {
 	return time.Duration(minutes) * time.Minute
 }
 
-// relayFilesAllowedTypes 读取类型白名单配置（逗号分隔），空/未配置 = 不限制。
+// defaultRelayFilesAllowedTypes 类型白名单默认值（此前空配置 = 完全不限制，2026-11 审计
+// §5 要求给默认值）。覆盖文件 API 常见用途（assistants/batch/fine-tune 的语料 +
+// vision 的图片）；需要放开其他类型时配置 relay_files_allowed_types 显式扩展。
+var defaultRelayFilesAllowedTypes = []string{
+	"jsonl", "json", "txt", "csv", "md", "pdf",
+	"png", "jpg", "jpeg", "webp", "gif",
+}
+
+// relayFilesAllowedTypes 读取类型白名单配置（逗号分隔），空/未配置 = 默认白名单。
 func relayFilesAllowedTypes(ctx context.Context) []string {
 	raw := strings.TrimSpace(common.Config().GetString(ctx, "relay_files_allowed_types"))
 	if raw == "" {
-		return nil
+		return defaultRelayFilesAllowedTypes
 	}
 	parts := strings.Split(raw, ",")
 	entries := make([]string, 0, len(parts))
@@ -132,13 +140,16 @@ func relayFilesAllowedTypes(ctx context.Context) []string {
 	return entries
 }
 
-// relayFilesMaxSizeBytes 读取单文件大小上限配置，0 = 不限制。
+// defaultRelayFilesMaxSizeMB 单文件大小上限默认值（此前 0 = 不限制，仅靠传输层全局兜底）。
+const defaultRelayFilesMaxSizeMB = 32
+
+// relayFilesMaxSizeBytes 读取单文件大小上限配置，未配置 = 默认 32MB。
 // 传输层另有全局 clientMaxBodySize（RelayBodyLimit 中间件 413），实际生效
 // 上限为二者较小值；本配置提供独立于全局值的收紧旋钮。
 func relayFilesMaxSizeBytes(ctx context.Context) int64 {
 	mb := common.Config().GetInt(ctx, "relay_files_max_size_mb")
 	if mb <= 0 {
-		return 0
+		mb = defaultRelayFilesMaxSizeMB
 	}
 	return int64(mb) * 1024 * 1024
 }

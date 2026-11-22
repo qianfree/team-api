@@ -17,7 +17,7 @@ type TenantCreateReq struct {
 }
 
 type TenantCreateRes struct {
-	Id int64 `json:"id"`
+	ID int64 `json:"id"`
 }
 
 // TenantListReq 租户列表请求
@@ -65,7 +65,7 @@ type TenantItem struct {
 // TenantGetReq 获取租户详情
 type TenantGetReq struct {
 	g.Meta `path:"/tenants/{id}" method:"get" mime:"json" tags:"管理后台-租户管理" summary:"租户详情"`
-	Id     int64 `json:"id" in:"path" v:"required" dc:"租户ID"`
+	ID     int64 `json:"id" in:"path" v:"required" dc:"租户ID"`
 }
 
 type TenantGetRes struct {
@@ -76,14 +76,14 @@ type TenantGetRes struct {
 // TenantChannelScopeUpdateReq 更新租户默认渠道范围
 type TenantChannelScopeUpdateReq struct {
 	g.Meta              `path:"/tenants/{id}/channel-scope" method:"put" mime:"json" tags:"管理后台-租户管理" summary:"更新租户渠道范围"`
-	Id                  int64   `json:"id" in:"path" v:"required" dc:"租户ID"`
+	ID                  int64   `json:"id" in:"path" v:"required" dc:"租户ID"`
 	DefaultChannelScope *string `json:"default_channel_scope" dc:"默认渠道范围JSON数组，如[1,5,12]，null或[]表示全部"`
 }
 
 // TenantUpdateStatusReq 更新租户状态
 type TenantUpdateStatusReq struct {
 	g.Meta `path:"/tenants/{id}/status" method:"put" mime:"json" tags:"管理后台-租户管理" summary:"更新租户状态"`
-	Id     int64  `json:"id" in:"path" v:"required" dc:"租户ID"`
+	ID     int64  `json:"id" in:"path" v:"required" dc:"租户ID"`
 	Status string `json:"status" v:"required|in:active,suspended,closed#请选择状态|状态值无效" dc:"状态：active / suspended / closed"`
 }
 
@@ -92,7 +92,7 @@ type TenantUpdateStatusRes struct{}
 // TenantUpdateReq 更新租户信息
 type TenantUpdateReq struct {
 	g.Meta         `path:"/tenants/{id}" method:"put" mime:"json" tags:"管理后台-租户管理" summary:"更新租户"`
-	Id             int64    `json:"id" in:"path" v:"required" dc:"租户ID"`
+	ID             int64    `json:"id" in:"path" v:"required" dc:"租户ID"`
 	Name           string   `json:"name" dc:"租户名称"`
 	MaxMembers     *int     `json:"max_members" dc:"最大成员数"`
 	MaxConcurrency *int     `json:"max_concurrency" dc:"租户总并发上限（0表示不限制）"`
@@ -143,7 +143,7 @@ type AdminMemberItem struct {
 
 // TenantExportReq 导出租户列表请求
 type TenantExportReq struct {
-	g.Meta  `path:"/tenants/export" method:"get" mime:"json" tags:"管理后台-租户" summary:"导出租户列表"`
+	g.Meta  `path:"/tenants/export" method:"get" mime:"json" tags:"管理后台-租户管理" summary:"导出租户列表"`
 	Format  string `json:"format" in:"query" d:"csv" v:"in:csv,xlsx" dc:"导出格式：csv / xlsx"`
 	Keyword string `json:"keyword" in:"query" dc:"搜索关键词（名称/代码）"`
 	Status  string `json:"status" in:"query" dc:"状态筛选：active/suspended/closed"`

@@ -25,6 +25,7 @@ import (
 	"github.com/qianfree/team-api/internal/logic/relay"
 	do "github.com/qianfree/team-api/internal/model/do"
 	"github.com/qianfree/team-api/internal/utility/export"
+	"github.com/qianfree/team-api/internal/utility/safego"
 )
 
 // modelOptionsCache 模型下拉选项缓存（全量模型，单个条目）。
@@ -91,7 +92,7 @@ func (s *sAdmin) ListModelOptions(ctx context.Context, req *v1.ModelOptionsReq) 
 		}
 		list = append(list, v1.ModelOptionItem{
 			ID:        r.ID,
-			ModelId:   r.ModelId,
+			ModelID:   r.ModelId,
 			ModelName: r.ModelName,
 			Category:  r.Category,
 			Status:    r.Status,
@@ -116,6 +117,13 @@ func (s *sAdmin) ListModels(ctx context.Context, req *v1.ModelListReq) (*v1.Mode
 	}
 	if req.Search != "" {
 		query = query.Where("model_id LIKE ? OR model_name LIKE ?", "%"+req.Search+"%", "%"+req.Search+"%")
+	}
+	// 广场展示位筛选（"true"/"false"，空=不过滤；布尔字符串约定与告警规则 Enabled 筛选一致）
+	if req.IsRecommended == "true" || req.IsRecommended == "false" {
+		query = query.Where("is_recommended", req.IsRecommended == "true")
+	}
+	if req.IsNew == "true" || req.IsNew == "false" {
+		query = query.Where("is_new", req.IsNew == "true")
 	}
 	// 定价状态筛选（pricing JSONB 唯一真相：任一模式有正价即已定价）
 	// 已配价谓词：token 价>0 / per_request 价>0 / per_second 矩阵非空 / tiered 任一档价>0
@@ -225,7 +233,7 @@ func (s *sAdmin) ListModels(ctx context.Context, req *v1.ModelListReq) (*v1.Mode
 	for _, m := range models {
 		item := v1.ModelItem{
 			ID:           m.ID,
-			ModelId:      m.ModelId,
+			ModelID:      m.ModelId,
 			ModelName:    m.ModelName,
 			Category:     m.Category,
 			Vendor:       m.Vendor,
@@ -291,7 +299,7 @@ func (s *sAdmin) ListModels(ctx context.Context, req *v1.ModelListReq) (*v1.Mode
 
 // CreateModel 创建模型（自动创建默认 token 定价记录）
 func (s *sAdmin) CreateModel(ctx context.Context, req *v1.ModelCreateReq) (*v1.ModelCreateRes, error) {
-	count, err := dao.MdlModels.Ctx(ctx).Where(do.MdlModels{ModelId: req.ModelId}).Count()
+	count, err := dao.MdlModels.Ctx(ctx).Where(do.MdlModels{ModelId: req.ModelID}).Count()
 	if err != nil {
 		return nil, err
 	}
@@ -300,7 +308,7 @@ func (s *sAdmin) CreateModel(ctx context.Context, req *v1.ModelCreateReq) (*v1.M
 	}
 
 	insertData := do.MdlModels{
-		ModelId:          req.ModelId,
+		ModelId:          req.ModelID,
 		ModelName:        req.ModelName,
 		Category:         req.Category,
 		Vendor:           req.Vendor, // 空串=未分类
@@ -475,7 +483,7 @@ func (s *sAdmin) UpdateModel(ctx context.Context, req *v1.ModelUpdateReq) (*v1.M
 
 		// 状态从 active → deprecated 时额外发送通知
 		if req.Status == "deprecated" && oldModel.Status == "active" {
-			go func() {
+			safego.Run(ctx, "admin:model_deprecation_notify", func(context.Context) {
 				bgCtx := context.Background()
 				variables := g.Map{
 					"model_name":        oldModel.ModelId,
@@ -489,7 +497,7 @@ func (s *sAdmin) UpdateModel(ctx context.Context, req *v1.ModelUpdateReq) (*v1.M
 				if err := engine.SendToAllTenants(bgCtx, "model_deprecated", variables, ""); err != nil {
 					g.Log().Errorf(bgCtx, "[ModelDeprecation] send notification for %s failed: %v", oldModel.ModelId, err)
 				}
-			}()
+			})
 		}
 	}
 
@@ -606,6 +614,17 @@ func (s *sAdmin) GetModelPricing(ctx context.Context, req *v1.PricingGetReq) (*v
 		discountLabel = derefStr(row.DiscountLabel)
 		priceChangeNote = derefStr(row.PriceChangeNote)
 	}
+	// 无定价行（row==nil）时主三字段兜底为空切片，避免 "list": null。
+	// 官方参考三字段保留 nil=未配置的三态语义（是否配置过以 OfficialItems 是否为 nil 判定）。
+	if result == nil {
+		result = make([]v1.PricingItem, 0)
+	}
+	if timeSegments == nil {
+		timeSegments = make([]v1.TimeSegmentItem, 0)
+	}
+	if paramRules == nil {
+		paramRules = make([]v1.ParamMultiplierItem, 0)
+	}
 	return &v1.PricingGetRes{
 		List:                     result,
 		TimeSegments:             timeSegments,
@@ -651,8 +670,10 @@ func expandPricingBlob(mode string, blob *billing.PricingBlob) ([]v1.PricingItem
 			} else if i == 0 && blob.CacheCreationPrice != nil {
 				item.CacheCreationPrice = *blob.CacheCreationPrice
 			}
-			// 1h TTL 价仅存 blob 顶层锚点（计费引擎不读档内值），随首档还原
-			if i == 0 && blob.CacheCreation1hPrice != nil {
+			// 1h TTL 价：档内值优先（计费按命中档生效）；档内无值时首档回退 blob 顶层锚点（存量兼容）
+			if tier.CacheCreation1hPrice != nil {
+				item.CacheCreation1hPrice = *tier.CacheCreation1hPrice
+			} else if i == 0 && blob.CacheCreation1hPrice != nil {
 				item.CacheCreation1hPrice = *blob.CacheCreation1hPrice
 			}
 			items = append(items, item)
@@ -689,8 +710,22 @@ func expandPricingBlob(mode string, blob *billing.PricingBlob) ([]v1.PricingItem
 		}
 		items = append(items, item)
 	}
-	// 时段与倍率横切所有计费模式（含 tiered），随 blob 顶层还原
-	return items, timeSegmentsToAPI(blob.TimeSegments), paramMultipliersToAPI(blob.ParamMultipliers)
+	// 时段与倍率横切所有计费模式（含 tiered），随 blob 顶层还原；nil 兜底为空切片（list 规范：可为空不可为 null）
+	var segsAPI []v1.TimeSegmentItem
+	if blob.TimeSegments != nil {
+		segsAPI = timeSegmentsToAPI(*blob.TimeSegments)
+	}
+	if segsAPI == nil {
+		segsAPI = make([]v1.TimeSegmentItem, 0)
+	}
+	var rulesAPI []v1.ParamMultiplierItem
+	if blob.ParamMultipliers != nil {
+		rulesAPI = paramMultipliersToAPI(*blob.ParamMultipliers)
+	}
+	if rulesAPI == nil {
+		rulesAPI = make([]v1.ParamMultiplierItem, 0)
+	}
+	return items, segsAPI, rulesAPI
 }
 
 // derefStr 字符串指针安全解引用（NULL → 空串）
@@ -827,7 +862,9 @@ func writePricingForModel(ctx context.Context, modelDBID int64, items []v1.Prici
 	if err != nil {
 		return err
 	}
-	blob.ParamMultipliers = paramRules
+	if len(paramRules) > 0 {
+		blob.ParamMultipliers = &paramRules
+	}
 	blob.Scheme = scheme
 	blob.SchemeConfig = schemeConfig
 	blobJSON, err := json.Marshal(blob)
@@ -949,11 +986,15 @@ func buildOfficialBlob(items []v1.PricingItem, segments []v1.TimeSegmentItem, ru
 			return nil, err
 		}
 	}
-	blob.TimeSegments = segs
-	blob.ParamMultipliers = paramRules
+	if len(segs) > 0 {
+		blob.TimeSegments = &segs
+	}
+	if len(paramRules) > 0 {
+		blob.ParamMultipliers = &paramRules
+	}
 	empty := blob.InputPrice == nil && blob.OutputPrice == nil && blob.CacheReadPrice == nil &&
 		blob.CacheCreationPrice == nil && len(blob.Tiers) == 0 && blob.Price == nil &&
-		len(blob.Prices) == 0 && len(blob.TimeSegments) == 0 && len(blob.ParamMultipliers) == 0
+		len(blob.Prices) == 0 && blob.TimeSegmentsEmpty() && blob.ParamMultipliersEmpty()
 	if empty {
 		return nil, nil
 	}

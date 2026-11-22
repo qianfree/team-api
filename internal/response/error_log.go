@@ -74,11 +74,19 @@ func captureStackTrace(skip int) string {
 // 截断点须回退到合法 UTF-8 边界：中文请求体按字节切会落在多字节字符中间，
 // 产生非法序列被 PostgreSQL（UTF8 库）拒绝，整条错误日志落库失败。
 func truncateString(s string, maxLen int) string {
+	// 输入本身含非法 UTF-8（上游 GBK/二进制体）时先归一化为替换字符：否则即便
+	// 不截断，非法序列也会让 PG 拒收整条日志。归一化后串恒为合法 UTF-8，
+	// 后续回退循环必在 utf8.UTFMax-1 步内到达边界——消除旧实现无界回退
+	// 会一路退到空串、把日志内容全丢掉的陷阱。
+	if !utf8.ValidString(s) {
+		s = strings.ToValidUTF8(s, "\uFFFD")
+	}
 	if len(s) <= maxLen {
 		return s
 	}
 	cut := s[:maxLen]
-	for len(cut) > 0 && !utf8.ValidString(cut) {
+	// 合法输入的多字节字符至多 4 字节，切在中间至多回退 3 字节必达边界。
+	for i := 0; i < utf8.UTFMax-1 && len(cut) > 0 && !utf8.ValidString(cut); i++ {
 		cut = cut[:len(cut)-1]
 	}
 	return cut + "..."

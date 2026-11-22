@@ -14,6 +14,7 @@ import (
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	do "github.com/qianfree/team-api/internal/model/do"
 	"github.com/qianfree/team-api/internal/model/entity"
+	"github.com/qianfree/team-api/internal/utility/safego"
 )
 
 // 维护任务（阶段 3）：
@@ -50,7 +51,8 @@ func RequestHealthSnapshot(channelID int64) {
 
 // startMaintenance 启动维护循环（wire 组装时调用一次）。
 func startMaintenance(ctx context.Context, stop <-chan struct{}) {
-	go func() {
+	// 维护循环 panic 退出会停掉预扣清扫/健康快照（冻结残留不自愈），RunLoop 自愈重启
+	safego.RunLoop(ctx, "dispatch:maintenance_loop", func(ctx context.Context) {
 		ticker := time.NewTicker(maintenanceInterval)
 		defer ticker.Stop()
 		for {
@@ -58,13 +60,21 @@ func startMaintenance(ctx context.Context, stop <-chan struct{}) {
 			case <-ticker.C:
 				runMaintenance(ctx)
 			case channelID := <-healthRefresh:
-				time.Sleep(healthRefreshDelay)
-				refreshChannelHealth(ctx, channelID)
+				// 去抖等待放独立 goroutine：原在 select 分支内 Sleep，500ms 等待期间
+				// ticker 任务与后续按需重算信号全部被拖延；改出后主循环立即回到 select
+				safego.Run(ctx, "dispatch:health_refresh", func(ctx context.Context) {
+					select {
+					case <-time.After(healthRefreshDelay):
+					case <-stop:
+						return
+					}
+					refreshChannelHealth(ctx, channelID)
+				})
 			case <-stop:
 				return
 			}
 		}
-	}()
+	})
 }
 
 // refreshChannelHealth 按需重算单个渠道的健康快照。
@@ -287,12 +297,15 @@ func autoDisableChannel(ctx context.Context, channelID int64, openDurationMs int
 
 	// 全租户通知（异步，失败仅记日志）
 	var chName *string
-	_ = dao.ChnChannels.Ctx(ctx).Where("id", channelID).Fields("name").Scan(&chName)
+	if nameErr := dao.ChnChannels.Ctx(ctx).Where("id", channelID).Fields("name").Scan(&chName); nameErr != nil {
+		// 查询失败时通知缺渠道名（空值兜底），留痕排查
+		g.Log().Warningf(ctx, "[Dispatch] 查询渠道名失败（自动禁用通知）channel=%d: %v", channelID, nameErr)
+	}
 	channelName := ""
 	if chName != nil {
 		channelName = *chName
 	}
-	go func() {
+	safego.Run(ctx, "dispatch:channel_auto_disable_notify", func(context.Context) {
 		bgCtx := context.Background()
 		engine := lcommon.NewNotificationEngine()
 		if err := engine.SendToAllTenants(bgCtx, "channel_auto_disabled", g.Map{
@@ -301,7 +314,7 @@ func autoDisableChannel(ctx context.Context, channelID int64, openDurationMs int
 		}, ""); err != nil {
 			g.Log().Errorf(bgCtx, "[Dispatch] 自动禁用通知发送失败: %v", err)
 		}
-	}()
+	})
 }
 
 func clampFloat(v, lo, hi float64) float64 {

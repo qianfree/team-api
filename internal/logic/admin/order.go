@@ -65,7 +65,7 @@ func (s *sAdmin) ListOrders(ctx context.Context, req *v1.OrderListReq) (*v1.Orde
 func (s *sAdmin) GetOrder(ctx context.Context, req *v1.OrderDetailReq) (*v1.OrderDetailRes, error) {
 	var order *v1.OrderItem
 	err := dao.OrdOrders.Ctx(ctx).
-		Where("id", req.Id).
+		Where("id", req.ID).
 		Scan(&order)
 	if err != nil {
 		return nil, err
@@ -105,7 +105,7 @@ func (s *sAdmin) RefundOrder(ctx context.Context, req *v1.OrderRefundReq) (*v1.O
 			PaymentChannel string  `json:"payment_channel"`
 		}
 		err := dao.OrdOrders.Ctx(ctx).
-			Where("id", req.Id).
+			Where("id", req.ID).
 			LockUpdate().
 			Scan(&order)
 		if err != nil {
@@ -119,7 +119,7 @@ func (s *sAdmin) RefundOrder(ctx context.Context, req *v1.OrderRefundReq) (*v1.O
 		}
 
 		// 幂等：已有退款记录直接拒绝（持有订单行锁，检查无并发窗口）
-		refundCount, err := dao.OrdRefunds.Ctx(ctx).Where("order_id", req.Id).Count()
+		refundCount, err := dao.OrdRefunds.Ctx(ctx).Where("order_id", req.ID).Count()
 		if err != nil {
 			return err
 		}
@@ -133,7 +133,7 @@ func (s *sAdmin) RefundOrder(ctx context.Context, req *v1.OrderRefundReq) (*v1.O
 			// 已履约：钱包已入账 USD，必须原额扣回；未履约（paid）钱包未入账，无需扣减
 			if order.Status == "fulfilled" {
 				orderTenantID = order.TenantID
-				deducted, err := deductWalletForRefundTx(ctx, req.Id, order.TenantID)
+				deducted, err := deductWalletForRefundTx(ctx, req.ID, order.TenantID)
 				// 先记录已发生的 Redis 扣款（可能 >0 即使整体失败），供事务回滚后补偿逆转
 				redisDeductedAmount = deducted
 				if err != nil {
@@ -161,7 +161,7 @@ func (s *sAdmin) RefundOrder(ctx context.Context, req *v1.OrderRefundReq) (*v1.O
 		// 原子状态流转：paid/fulfilled → refunded。持有行锁时理论上必命中；
 		// 0 行说明状态被并发改动，回滚整个退款事务（含钱包扣减）。
 		result, err := dao.OrdOrders.Ctx(ctx).
-			Where("id", req.Id).
+			Where("id", req.ID).
 			WhereIn("status", g.Slice{"paid", "fulfilled"}).
 			Data(do.OrdOrders{Status: "refunded"}).
 			Update()
@@ -173,13 +173,13 @@ func (s *sAdmin) RefundOrder(ctx context.Context, req *v1.OrderRefundReq) (*v1.O
 			return err
 		}
 		if affected == 0 {
-			return gerror.Newf("order %d refund aborted: status changed concurrently", req.Id)
+			return gerror.Newf("order %d refund aborted: status changed concurrently", req.ID)
 		}
 
 		// 退款记录：金额为订单原始 CNY。线上侧（状态流转 + 余额扣减）已完成，
 		// 渠道打款由管理员线下原路退回，故直接置 completed。
 		if _, err = dao.OrdRefunds.Ctx(ctx).Insert(do.OrdRefunds{
-			OrderId:        req.Id,
+			OrderId:        req.ID,
 			TenantId:       order.TenantID,
 			Amount:         order.FinalAmount,
 			Reason:         req.Reason,
@@ -202,7 +202,7 @@ func (s *sAdmin) RefundOrder(ctx context.Context, req *v1.OrderRefundReq) (*v1.O
 			if _, _, compErr := billing.CreditWalletRedis(compCtx, orderTenantID, redisDeductedAmount); compErr != nil {
 				g.Log().Errorf(ctx,
 					"CRITICAL: compensate refund redis debit failed: tenant=%d usd=%s order=%d: %v — wallet under-credited, manual fix required",
-					orderTenantID, redisDeductedAmount.String(), req.Id, compErr)
+					orderTenantID, redisDeductedAmount.String(), req.ID, compErr)
 			}
 		}
 		return nil, err
@@ -288,7 +288,7 @@ func deductWalletForRefundTx(ctx context.Context, orderID int64, tenantID int64)
 func (s *sAdmin) OrderComplete(ctx context.Context, req *v1.OrderCompleteReq) (*v1.OrderCompleteRes, error) {
 	adminUserID := common.GetCtxUserID(ctx)
 
-	orderNo, err := getOrderForComplete(ctx, req.Id)
+	orderNo, err := getOrderForComplete(ctx, req.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -296,11 +296,11 @@ func (s *sAdmin) OrderComplete(ctx context.Context, req *v1.OrderCompleteReq) (*
 	payment.LockOrder(orderNo)
 	defer payment.UnlockOrder(orderNo)
 
-	if err := markOrderPaidByAdmin(ctx, req.Id, adminUserID); err != nil {
+	if err := markOrderPaidByAdmin(ctx, req.ID, adminUserID); err != nil {
 		return nil, err
 	}
 
-	if err := payment.FulfillOrder(ctx, req.Id); err != nil {
+	if err := payment.FulfillOrder(ctx, req.ID); err != nil {
 		return nil, err
 	}
 

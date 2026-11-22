@@ -7,6 +7,7 @@ import (
 
 	"github.com/gogf/gf/v2/errors/gcode"
 	"github.com/gogf/gf/v2/errors/gerror"
+	"github.com/gogf/gf/v2/frame/g"
 
 	v1 "github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/consts"
@@ -17,7 +18,9 @@ import (
 func (s *sAdmin) UpdateCheck(ctx context.Context, req *v1.UpdateCheckReq) (*v1.UpdateCheckRes, error) {
 	result, err := update.CheckForUpdate(ctx, req.Force)
 	if err != nil {
-		return nil, gerror.NewCode(gcode.New(500, err.Error(), nil))
+		// 失败细节（上游 URL/网络错误）只进日志，不透给客户端
+		g.Log().Warningf(ctx, "检查更新失败: %v", err)
+		return nil, gerror.NewCode(gcode.New(consts.CodeUpdateCheckFailed, "检查更新失败，请稍后重试", nil))
 	}
 
 	return &v1.UpdateCheckRes{
@@ -140,7 +143,9 @@ func (s *sAdmin) UpdateExecute(ctx context.Context, req *v1.UpdateExecuteReq) (*
 
 	// Execute update
 	if err := update.ExecuteUpdate(ctx, req.Version, cached.DownloadURL, cached.ChecksumURL, cached.AssetSize); err != nil {
-		return nil, gerror.NewCode(gcode.New(consts.CodeUpdateDownloadFailed, err.Error(), nil))
+		// 下载/校验失败细节（URL、网络错误）只进日志，不透给客户端
+		g.Log().Errorf(ctx, "执行更新失败 version=%s: %v", req.Version, err)
+		return nil, gerror.NewCode(gcode.New(consts.CodeUpdateDownloadFailed, "更新执行失败，请查看服务端日志", nil))
 	}
 
 	return &v1.UpdateExecuteRes{
@@ -160,7 +165,9 @@ func (s *sAdmin) UpdateRollback(ctx context.Context, req *v1.UpdateRollbackReq) 
 	}
 
 	if err := update.Rollback(ctx); err != nil {
-		return nil, gerror.NewCode(gcode.New(consts.CodeUpdateRollbackFailed, consts.MsgUpdateRollbackFailed+": "+err.Error(), nil))
+		// 回滚失败细节（备份路径/IO 错误）只进日志，不透给客户端
+		g.Log().Errorf(ctx, "回滚失败: %v", err)
+		return nil, gerror.NewCode(gcode.New(consts.CodeUpdateRollbackFailed, consts.MsgUpdateRollbackFailed, nil))
 	}
 
 	return &v1.UpdateRollbackRes{

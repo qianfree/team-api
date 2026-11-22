@@ -12,37 +12,23 @@ import (
 	"github.com/qianfree/team-api/internal/middleware"
 )
 
-// pricingTierRow 阶梯定价行（与 billing.pricingTierRow 结构一致）
-type pricingTierRow struct {
-	MinTokens   int64   `json:"min_tokens"`
-	MaxTokens   *int64  `json:"max_tokens"`
-	InputPrice  float64 `json:"input_price"`
-	OutputPrice float64 `json:"output_price"`
-}
-
 // memberModelScopeNoAccess 表示成员无权访问任何模型的哨兵值
 const memberModelScopeNoAccess = -1
 
-// tenantModelPriceRow 显式分配模型的价格查询结果（平台基础价统一从 pricing JSONB 解析）
+// tenantModelPriceRow 显式分配模型的价格查询结果（平台基础价统一从 pricing JSONB 解析；
+// 租户覆盖统一从 custom_pricing blob 读取——000030 已删扁平价格列）
 type tenantModelPriceRow struct {
-	ModelDBID                int64    `json:"model_db_id"`
-	ID                       int64    `json:"id"`
-	BillingMode              *string  `json:"billing_mode"`
-	PerRequestPrice          *float64 `json:"per_request_price"`
-	DiscountRatio            *float64 `json:"discount_ratio"`
-	MaxConcurrency           *int     `json:"max_concurrency"`
-	BaseBillingMode          string   `json:"base_billing_mode"`
-	BaseDiscountLabel        *string  `json:"base_discount_label"`
-	BasePriceChangeNote      *string  `json:"base_price_change_note"`
-	CustomInputPrice         *float64 `json:"custom_input_price"`
-	CustomOutputPrice        *float64 `json:"custom_output_price"`
-	CustomCacheReadPrice     *float64 `json:"custom_cache_read_price"`
-	CustomCacheCreationPrice *float64 `json:"custom_cache_creation_price"`
-	CustomPricingTiers       string   `json:"custom_pricing_tiers"`
-	CustomPricing            string   `json:"custom_pricing"` // 定价覆盖补丁（矩阵/时段/参数倍率）
-	CustomDiscountLabel      *string  `json:"discount_label"`
-	CustomPriceChangeNote    *string  `json:"price_change_note"`
-	BasePricing              string   `json:"base_pricing"` // pricing JSONB（唯一真相）
+	ModelDBID             int64    `json:"model_db_id"`
+	ID                    int64    `json:"id"`
+	DiscountRatio         *float64 `json:"discount_ratio"`
+	MaxConcurrency        *int     `json:"max_concurrency"`
+	BaseBillingMode       string   `json:"base_billing_mode"`
+	BaseDiscountLabel     *string  `json:"base_discount_label"`
+	BasePriceChangeNote   *string  `json:"base_price_change_note"`
+	CustomPricing         string   `json:"custom_pricing"` // 定价覆盖 blob（PricingBlob 形状，唯一覆盖源）
+	CustomDiscountLabel   *string  `json:"discount_label"`
+	CustomPriceChangeNote *string  `json:"price_change_note"`
+	BasePricing           string   `json:"base_pricing"` // 平台 pricing JSONB（唯一真相）
 }
 
 // groupPriceRow 分组模型的 base 价格查询结果
@@ -116,10 +102,10 @@ func (p *priceInfo) EffectiveTimeSegments() []billing.TimeSegment {
 	if p.Patch != nil && p.Patch.TimeSegments != nil {
 		return *p.Patch.TimeSegments
 	}
-	if p.BaseBlob == nil {
+	if p.BaseBlob == nil || p.BaseBlob.TimeSegments == nil {
 		return nil
 	}
-	return p.BaseBlob.TimeSegments
+	return *p.BaseBlob.TimeSegments
 }
 
 // groupPriceInfo 分组模型的价格信息
@@ -188,7 +174,7 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 			LeftJoin("mdl_pricing p ON p.model_id = mdl_tenant_models.model_id").
 			Where("mdl_tenant_models.tenant_id", tenantID).
 			WhereIn("mdl_tenant_models.model_id", explicitDBIDs).
-			Fields("mdl_tenant_models.model_id AS model_db_id, mdl_tenant_models.id, mdl_tenant_models.billing_mode, mdl_tenant_models.per_request_price, mdl_tenant_models.discount_ratio, mdl_tenant_models.max_concurrency, p.billing_mode AS base_billing_mode, p.pricing AS base_pricing, p.discount_label AS base_discount_label, p.price_change_note AS base_price_change_note, mdl_tenant_models.custom_input_price, mdl_tenant_models.custom_output_price, mdl_tenant_models.custom_cache_read_price, mdl_tenant_models.custom_cache_creation_price, mdl_tenant_models.custom_pricing_tiers, mdl_tenant_models.custom_pricing, mdl_tenant_models.discount_label AS custom_discount_label, mdl_tenant_models.price_change_note AS custom_price_change_note").
+			Fields("mdl_tenant_models.model_id AS model_db_id, mdl_tenant_models.id, mdl_tenant_models.discount_ratio, mdl_tenant_models.max_concurrency, p.billing_mode AS base_billing_mode, p.pricing AS base_pricing, p.discount_label AS base_discount_label, p.price_change_note AS base_price_change_note, mdl_tenant_models.custom_pricing, mdl_tenant_models.discount_label AS custom_discount_label, mdl_tenant_models.price_change_note AS custom_price_change_note").
 			Scan(&priceResults)
 		if err != nil {
 			return nil, err
@@ -199,26 +185,34 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 	priceMap := make(map[int64]*priceInfo, len(priceResults))
 	for _, r := range priceResults {
 		pi := &priceInfo{
-			ID:                       r.ID,
-			BillingMode:              r.BillingMode,
-			PerRequestPrice:          r.PerRequestPrice,
-			DiscountRatio:            r.DiscountRatio,
-			MaxConcurrency:           r.MaxConcurrency,
-			BaseBillingMode:          r.BaseBillingMode,
-			BaseDiscountLabel:        r.BaseDiscountLabel,
-			BasePriceChangeNote:      r.BasePriceChangeNote,
-			CustomInputPrice:         r.CustomInputPrice,
-			CustomOutputPrice:        r.CustomOutputPrice,
-			CustomCacheReadPrice:     r.CustomCacheReadPrice,
-			CustomCacheCreationPrice: r.CustomCacheCreationPrice,
-			CustomPricingTiers:       r.CustomPricingTiers,
-			CustomDiscountLabel:      r.CustomDiscountLabel,
-			CustomPriceChangeNote:    r.CustomPriceChangeNote,
-			BaseBlob:                 billing.ParsePricingBlob(r.BasePricing),
-			Patch:                    billing.ParseTenantPricingPatch(r.CustomPricing),
+			ID:                    r.ID,
+			DiscountRatio:         r.DiscountRatio,
+			MaxConcurrency:        r.MaxConcurrency,
+			BaseBillingMode:       r.BaseBillingMode,
+			BaseDiscountLabel:     r.BaseDiscountLabel,
+			BasePriceChangeNote:   r.BasePriceChangeNote,
+			CustomDiscountLabel:   r.CustomDiscountLabel,
+			CustomPriceChangeNote: r.CustomPriceChangeNote,
+			BaseBlob:              billing.ParsePricingBlob(r.BasePricing),
+			Patch:                 billing.ParseTenantPricingPatch(r.CustomPricing),
 		}
 		pi.BaseInputPrice, pi.BaseOutputPrice, pi.BaseCacheReadPrice, pi.BaseCacheCreationPrice, pi.BasePerRequestPrice =
 			fillFromBlob(pi.BaseBlob)
+		// 定价覆盖读侧统一：custom_pricing blob 价格键（唯一覆盖源，000030 已删扁平列），
+		// 与 GetModelPriceAt 覆盖链同口径。Patch 三键（矩阵/时段/参数）与 blob 同源
+		if cb := billing.ParsePricingBlob(r.CustomPricing); cb != nil {
+			pi.CustomInputPrice = cb.InputPrice
+			pi.CustomOutputPrice = cb.OutputPrice
+			pi.CustomCacheReadPrice = cb.CacheReadPrice
+			pi.CustomCacheCreationPrice = cb.CacheCreationPrice
+			pi.PerRequestPrice = cb.Price
+			pi.BillingMode = cb.BillingMode
+			if len(cb.Tiers) > 0 {
+				if b, err := json.Marshal(cb.Tiers); err == nil {
+					pi.CustomPricingTiers = string(b)
+				}
+			}
+		}
 		priceMap[r.ModelDBID] = pi
 	}
 
@@ -290,8 +284,8 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 				continue
 			}
 		}
-		if len(blob.TimeSegments) > 0 {
-			timeSegmentsMap[m.ModelDBID] = blob.TimeSegments
+		if blob.TimeSegments != nil && len(*blob.TimeSegments) > 0 {
+			timeSegmentsMap[m.ModelDBID] = *blob.TimeSegments
 		}
 	}
 
@@ -566,7 +560,7 @@ func effectiveStrPtr(custom, base *string) *string {
 // 显式模型与分组模型共用；baseTiers 为空时按锚点价合成单档兜底。
 func buildTiers(customTiersJSON string, baseInputPrice, baseOutputPrice float64, baseTiers []v1.PricingTierItem) []v1.PricingTierItem {
 	if customTiersJSON != "" && customTiersJSON != "null" && customTiersJSON != "[]" {
-		var raw []pricingTierRow
+		var raw []billing.PricingTierRow
 		if json.Unmarshal([]byte(customTiersJSON), &raw) == nil && len(raw) > 0 {
 			tiers := make([]v1.PricingTierItem, 0, len(raw))
 			for _, t := range raw {

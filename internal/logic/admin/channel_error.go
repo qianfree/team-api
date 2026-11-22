@@ -185,7 +185,7 @@ func (s *sAdmin) ChannelErrorTopChannels(ctx context.Context, req *v1.ChannelErr
 // ChannelErrorCategories 错误分类选项
 func (s *sAdmin) ChannelErrorCategories(ctx context.Context, req *v1.ChannelErrorCategoriesReq) (*v1.ChannelErrorCategoriesRes, error) {
 	return &v1.ChannelErrorCategoriesRes{
-		Data: []map[string]string{
+		List: []map[string]string{
 			{"value": "rate_limit", "label": "频率限制"},
 			{"value": "auth_error", "label": "认证错误"},
 			{"value": "timeout", "label": "超时"},

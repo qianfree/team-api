@@ -64,7 +64,9 @@ type relayValidation struct {
 	isStream        bool
 	estimatedTokens int
 	maxTokens       int
-	imageCount      int // 图片协议顶层 n（生成张数），n>1 时按次计费按张数放大
+	imageCount      int    // 图片协议顶层 n（生成张数），n>1 时按次计费按张数放大
+	reasoningEffort string // 请求体推理强度/思考预算（OpenAI effort 枚举 / Claude budget:N / Gemini level），用量日志展示
+	serviceTier     string // 请求体服务等级（OpenAI/Claude 顶层 service_tier），用量日志展示
 	depInfo         *common.DeprecationInfo
 	billingResult   *BillingResult
 	sessionSignals  dispatch.SessionSignals // 请求体中的会话信号（影子模式/新调度用）
@@ -360,6 +362,8 @@ func validateRelayRequest(
 		estimatedTokens: estimatedInputTokens,
 		maxTokens:       maxTokens,
 		imageCount:      imageCount,
+		reasoningEffort: extractReasoningEffort(rawRequest),
+		serviceTier:     extractServiceTier(rawRequest),
 		depInfo:         depInfo,
 		billingResult:   billingResult,
 		sessionSignals:  extractSessionSignals(rawRequest),
@@ -411,6 +415,91 @@ func extractSessionSignals(rawRequest map[string]json.RawMessage) dispatch.Sessi
 	return sig
 }
 
+// extractReasoningEffort 从请求体提取推理强度（用量日志 reasoning_effort 列，VARCHAR(20)）。
+// 协议归一（各协议字段互斥共存于顶层，按常见度顺序命中）：
+//   - OpenAI chat 顶层 reasoning_effort（o 系 / gpt-5+，枚举 minimal/low/medium/high 等）
+//   - Responses reasoning.effort
+//   - Claude thinking.budget_tokens（无枚举语义，记 budget:N 保留真实预算）
+//   - Gemini generationConfig.thinkingConfig.thinkingLevel（枚举）/ thinkingBudget（数字）
+//
+// 未携带返回空串；结果按字符截断到列宽（PostgreSQL VARCHAR 超长报错而非截断，
+// 防异常长值导致用量记录落库失败）
+func extractReasoningEffort(rawRequest map[string]json.RawMessage) string {
+	strVal := func(raw json.RawMessage) (string, bool) {
+		var s string
+		if len(raw) == 0 || json.Unmarshal(raw, &s) != nil || s == "" {
+			return "", false
+		}
+		return s, true
+	}
+
+	// OpenAI chat：顶层 reasoning_effort
+	if s, ok := strVal(rawRequest["reasoning_effort"]); ok {
+		return truncateChars(s, 20)
+	}
+	// Responses：reasoning.effort
+	if raw, ok := rawRequest["reasoning"]; ok {
+		var r struct {
+			Effort string `json:"effort"`
+		}
+		if json.Unmarshal(raw, &r) == nil && r.Effort != "" {
+			return truncateChars(r.Effort, 20)
+		}
+	}
+	// Claude：thinking.budget_tokens
+	if raw, ok := rawRequest["thinking"]; ok {
+		var t struct {
+			BudgetTokens int `json:"budget_tokens"`
+		}
+		if json.Unmarshal(raw, &t) == nil && t.BudgetTokens > 0 {
+			// budget 为客户端可控的 64 位整数，超长值截断到列宽（防落库失败丢用量日志）
+			return truncateChars(fmt.Sprintf("budget:%d", t.BudgetTokens), 20)
+		}
+	}
+	// Gemini：generationConfig.thinkingConfig（枚举优先于数字预算）
+	if raw, ok := rawRequest["generationConfig"]; ok {
+		var g struct {
+			ThinkingConfig struct {
+				ThinkingLevel  string `json:"thinkingLevel"`
+				ThinkingBudget int    `json:"thinkingBudget"`
+			} `json:"thinkingConfig"`
+		}
+		if json.Unmarshal(raw, &g) == nil {
+			if g.ThinkingConfig.ThinkingLevel != "" {
+				return truncateChars(g.ThinkingConfig.ThinkingLevel, 20)
+			}
+			if g.ThinkingConfig.ThinkingBudget > 0 {
+				return truncateChars(fmt.Sprintf("budget:%d", g.ThinkingConfig.ThinkingBudget), 20)
+			}
+		}
+	}
+	return ""
+}
+
+// extractServiceTier 从请求体提取服务等级（用量日志 service_tier 列，VARCHAR(16)）。
+// OpenAI chat/Responses 与 Claude 均为顶层 service_tier（default/flex/priority 等），
+// 未携带返回空串；按字符截断到列宽（同 extractReasoningEffort 的防落库失败考量）
+func extractServiceTier(rawRequest map[string]json.RawMessage) string {
+	var s string
+	if raw, ok := rawRequest["service_tier"]; ok && json.Unmarshal(raw, &s) == nil && s != "" {
+		return truncateChars(s, 16)
+	}
+	return ""
+}
+
+// truncateChars 按字符数截断（len(s) 不超 n 字节的 ASCII 快路径；
+// PostgreSQL VARCHAR(n) 计量单位是字符不是字节）
+func truncateChars(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	r := []rune(s)
+	if len(r) > n {
+		r = r[:n]
+	}
+	return string(r)
+}
+
 // newSettleContext 创建结算/退款/调度上报专用上下文：脱离请求取消（客户端断开不得影响结算），
 // 且超时预算从调用时刻起算。不可在请求发出前创建后跨 DoRequest/DoResponse 复用——
 // 上游请求与流式转发全程可能远超 30s，提前起算的预算会在结算前耗尽，
@@ -419,8 +508,19 @@ func newSettleContext(parent context.Context) (context.Context, context.CancelFu
 	return context.WithTimeout(context.WithoutCancel(parent), 30*time.Second)
 }
 
+// releasePreDeduct 失败路径释放预扣冻结的统一入口（原各处 `_ = billing.SettleFailed(...)` 静默吞错）：
+// 冻结款未释放会持续占用租户资金，失败必须留痕排查；prededuct_sweep cron 每 2 分钟
+// 按「重算 frozen = Σ 幸存预扣」自愈兜底，此处日志即自愈前的排障线索。
+func releasePreDeduct(ctx context.Context, billing common.BillingProvider, tenantID int64, requestID string, amount float64) {
+	if rErr := billing.SettleFailed(ctx, tenantID, requestID, amount); rErr != nil {
+		g.Log().Errorf(ctx, "[RelayHandler] 释放预扣冻结失败（等待 prededuct_sweep 自愈）: request=%s tenant=%d frozen=%.6f err=%v",
+			requestID, tenantID, amount, rErr)
+	}
+}
+
 // settleSuccessfulRequest 成功路径的计费结算、健康度更新和用量记录。
 func settleSuccessfulRequest(
+	ctx context.Context,
 	rc *RelayContext,
 	v *relayValidation,
 	usage *common.Usage,
@@ -433,8 +533,9 @@ func settleSuccessfulRequest(
 	path string,
 ) *BillingResult {
 	// 16. 结算费用（使用完整 Usage 含 cache token）
-	// 重新创建 context，上游 DoResponse 可能耗时很长（长文本流式输出）
-	postCtx, postCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// 重新创建 context，上游 DoResponse 可能耗时很长（长文本流式输出）；
+	// WithoutCancel 保留 request_id 等链路值，超时预算从结算时刻起算（与 newSettleContext 同口径）
+	postCtx, postCancel := newSettleContext(ctx)
 	defer postCancel()
 
 	// 上游未返回 usage 时回退请求侧估算（仅 embeddings/rerank），避免漏计费
@@ -509,7 +610,13 @@ func settleSuccessfulRequest(
 
 		// Cache token 明细。cache_creation_tokens 列统一记录「写入缓存的 token」：
 		// Claude 为 cache_creation_input_tokens，OpenAI 为 cache_write_tokens（同一物理事件，
-		// 计费侧 resolveTokenCounts 合并桶按 CacheCreationPrice 计价）
+		// 计费侧 resolveTokenCounts 合并桶按 CacheCreationPrice 计价）。
+		// 两条来源路径互斥填充、相加恒为单次值：原生 Claude 通道只填顶层
+		// CacheCreationTokens（details 不含 CacheWriteTokens）；relaykit 转换路径
+		// 由 bridge 只映射 details.CacheWriteTokens（不填顶层，防同源双计）——Claude 系
+		// 转换器 details 内 CachedCreationTokens 与 CacheWriteTokens 同值并存，本列只
+		// 读后者，计费侧取分桶/max 亦不叠加。
+		// 5m/1h 分桶列为 TTL 归一双桶（短桶含 GPT 30m、长桶含 GPT 12h，见 common.NormalizeCacheWriteTTL）
 		CacheCreationTokens: usage.CacheCreationTokens +
 			tokenDetailField(usage.PromptTokensDetails, func(d *common.TokenDetails) int { return d.CacheWriteTokens }),
 		CacheCreation5mTokens: tokenDetailField(usage.PromptTokensDetails, func(d *common.TokenDetails) int { return d.CachedCreation5mTokens }),
@@ -530,6 +637,8 @@ func settleSuccessfulRequest(
 		UserAgent:         headers.Get("User-Agent"),
 		ClientIP:          rc.ClientIP,
 		FirstTokenMs:      firstTokenMs,
+		ServiceTier:       v.serviceTier,     // 请求体顶层 service_tier（用量日志展示，此前断链恒空）
+		ReasoningEffort:   v.reasoningEffort, // 请求体推理强度/思考预算（同上）
 		InboundEndpoint:   path,
 		UpstreamRequestID: info.UpstreamRequestID,
 
@@ -642,7 +751,13 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			if errors.Is(err, common.ErrBillingFormulaEval) {
 				return nil, nil, constant.NewRequestError(common.ErrBillingFormulaEval.Error()+": "+v.modelName, err)
 			}
-			return nil, nil, constant.NewQuotaError("insufficient balance", err)
+			// 钱包余额不足（Lua 返回码 0 哨兵）：402；其余（DB/Redis/定价查询故障）是
+			// 内部错误，冒充 402 会误导排障方向且向客户端泄露内部细节，一律 500。
+			// 402 不带 Cause：客户端只见干净文案，完整错误链留在写出器 5xx 日志中。
+			if errors.Is(err, common.ErrInsufficientBalance) {
+				return nil, nil, constant.NewQuotaError("insufficient balance", nil)
+			}
+			return nil, nil, constant.NewInternalError("billing temporarily unavailable", err)
 		}
 		preDeductAmount = amt
 		v.billingResult.PreDeductAmount = amt
@@ -651,12 +766,12 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		// 各多付一次 Redis 往返，只为让"额度已耗尽"的请求少走一步预扣+退款，得不偿失
 		//（该场景已被上游 QPS 限流兜底），故移除。
 		if err := billing.CheckApiKeyQuota(ctx, rc.ApiKeyID, amt); err != nil {
-			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, amt)
-			return nil, nil, constant.NewQuotaError("API key quota exceeded", err)
+			releasePreDeduct(ctx, billing, rc.TenantID, rc.RequestID, amt)
+			return nil, nil, constant.NewQuotaError("API key quota exceeded", nil)
 		}
 		if err := billing.CheckMemberQuota(ctx, rc.TenantID, rc.UserID, amt); err != nil {
-			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, amt)
-			return nil, nil, constant.NewQuotaError("member quota exceeded", err)
+			releasePreDeduct(ctx, billing, rc.TenantID, rc.RequestID, amt)
+			return nil, nil, constant.NewQuotaError("member quota exceeded", nil)
 		}
 	}
 
@@ -684,7 +799,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		// 不记失败用量、不打无可用渠道告警（与下方 MaterializeSelection 的处理一致）
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			if billing != nil && preDeductAmount > 0 {
-				_ = billing.SettleFailed(context.WithoutCancel(ctx), rc.TenantID, rc.RequestID, preDeductAmount)
+				releasePreDeduct(context.WithoutCancel(ctx), billing, rc.TenantID, rc.RequestID, preDeductAmount)
 			}
 			return nil, v.billingResult, err
 		}
@@ -722,7 +837,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			// 不打无可用渠道告警、不污染渠道健康统计
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				if billing != nil && preDeductAmount > 0 {
-					_ = billing.SettleFailed(context.WithoutCancel(ctx), rc.TenantID, rc.RequestID, preDeductAmount)
+					releasePreDeduct(context.WithoutCancel(ctx), billing, rc.TenantID, rc.RequestID, preDeductAmount)
 				}
 				return nil, v.billingResult, ctxErr
 			}
@@ -733,7 +848,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			// 也不按全部渠道失败记 ERROR 告警/失败用量；事件仍由审计日志与调度监控计数覆盖
 			if len(channelErrors) > 0 && statefulMismatchCount == len(channelErrors) {
 				if billing != nil && preDeductAmount > 0 {
-					_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
+					releasePreDeduct(ctx, billing, rc.TenantID, rc.RequestID, preDeductAmount)
 				}
 				return nil, v.billingResult, constant.NewRequestError(
 					constant.StatefulResponsesSwitchEndpointHint, nil)
@@ -749,7 +864,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			// 静默退出，不记入 channelErrors，不触发渠道健康惩罚，退还预扣款项后返回
 			if errors.Is(mErr, context.Canceled) || errors.Is(mErr, context.DeadlineExceeded) {
 				if billing != nil && preDeductAmount > 0 {
-					_ = billing.SettleFailed(context.WithoutCancel(ctx), rc.TenantID, rc.RequestID, preDeductAmount)
+					releasePreDeduct(context.WithoutCancel(ctx), billing, rc.TenantID, rc.RequestID, preDeductAmount)
 				}
 				return nil, v.billingResult, mErr
 			}
@@ -776,7 +891,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		if v.relayMode == constant.RelayModeImagesGenerations &&
 			constant.IsAsyncImageModel(constant.ProviderType(selection.ChannelType), selection.UpstreamModelName) {
 			if billing != nil && preDeductAmount > 0 {
-				_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
+				releasePreDeduct(ctx, billing, rc.TenantID, rc.RequestID, preDeductAmount)
 			}
 			return nil, v.billingResult, constant.NewRequestError(
 				"this image model uses asynchronous generation on Alibaba DashScope; submit via POST /v1/images/generations/async and poll for the result", nil)
@@ -816,7 +931,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		if adaptor == nil {
 			g.Log().Errorf(ctx, "[RelayHandler] No adaptor found for channelType: %d", selection.ChannelType)
 			if billing != nil && preDeductAmount > 0 {
-				_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
+				releasePreDeduct(ctx, billing, rc.TenantID, rc.RequestID, preDeductAmount)
 			}
 			dbgAttempt.MarkFinal(fmt.Errorf("unsupported channel type: %d", selection.ChannelType))
 			return nil, v.billingResult, fmt.Errorf("unsupported channel type: %d", selection.ChannelType)
@@ -841,7 +956,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 					attempt, selection.ChannelID, selection.ChannelName, v.modelName, err))
 				if reportProtocolMismatch(ctx, sess, err) == dispatch.DecisionAbort {
 					if billing != nil && preDeductAmount > 0 {
-						_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
+						releasePreDeduct(ctx, billing, rc.TenantID, rc.RequestID, preDeductAmount)
 					}
 					dbgAttempt.MarkFinal(err)
 					return nil, v.billingResult, constant.NewRequestError(
@@ -851,7 +966,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 				continue
 			}
 			if billing != nil && preDeductAmount > 0 {
-				_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
+				releasePreDeduct(ctx, billing, rc.TenantID, rc.RequestID, preDeductAmount)
 			}
 			dbgAttempt.MarkFinal(err)
 			return nil, v.billingResult, err
@@ -896,7 +1011,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 						rc.RequestID, rc.TenantID, rErr)
 				}
 			}
-			recordFailedUsage(provider, rc, selection, attempt, v.modelName, v.relayMode, v.isStream, err, info.StreamStatus, info.UpstreamRequestID)
+			recordFailedUsage(settleCtx, provider, rc, selection, attempt, v.modelName, v.relayMode, v.isStream, err, info.StreamStatus, info.UpstreamRequestID, v.reasoningEffort)
 			recordChannelError(rc, selection, v.modelName, attempt, true, err, info.LatencyMs())
 			finalizeTrace(trace, rc, hop, false, attempt, selection, err.Error(), info.LatencyMs())
 			dbgAttempt.MarkFinal(err)
@@ -951,7 +1066,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 					}
 					interruptSettle = settleResult
 				}
-				recordFailedUsageWithTokens(provider, rc, selection, attempt, v.modelName, v.relayMode, v.isStream, err, streamUsage, interruptSettle, info.StreamStatus, info.UpstreamRequestID)
+				recordFailedUsageWithTokens(settleCtx, provider, rc, selection, attempt, v.modelName, v.relayMode, v.isStream, err, streamUsage, interruptSettle, info.StreamStatus, info.UpstreamRequestID, v.reasoningEffort)
 				finalizeTrace(trace, rc, hop, false, attempt, selection, err.Error(), info.LatencyMs())
 				dbgAttempt.MarkFinal(err)
 				return usage, v.billingResult, err
@@ -1006,7 +1121,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 						rc.RequestID, rc.TenantID, rErr)
 				}
 			}
-			recordFailedUsage(provider, rc, selection, attempt, v.modelName, v.relayMode, v.isStream, err, info.StreamStatus, info.UpstreamRequestID)
+			recordFailedUsage(settleCtx, provider, rc, selection, attempt, v.modelName, v.relayMode, v.isStream, err, info.StreamStatus, info.UpstreamRequestID, v.reasoningEffort)
 			recordChannelError(rc, selection, v.modelName, attempt, true, err, info.LatencyMs())
 			finalizeTrace(trace, rc, hop, false, attempt, selection, err.Error(), info.LatencyMs())
 			dbgAttempt.MarkFinal(err)
@@ -1024,7 +1139,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		trace.ModelMapped = selection.IsModelMapped
 		rc.ForwardingTrace = trace
 
-		result := settleSuccessfulRequest(rc, v, usage, info, selection, preDeductAmount, provider, billing, headers, path)
+		result := settleSuccessfulRequest(ctx, rc, v, usage, info, selection, preDeductAmount, provider, billing, headers, path)
 		return usage, result, nil
 	}
 }
@@ -1196,7 +1311,7 @@ func handleChannelUnavailable(
 ) *channelUnavailableResult {
 	if err != common.ErrChannelUnavailable {
 		if billing != nil && preDeductAmount > 0 {
-			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
+			releasePreDeduct(ctx, billing, rc.TenantID, rc.RequestID, preDeductAmount)
 		}
 		return &channelUnavailableResult{nil, v.billingResult, err}
 	}
@@ -1208,7 +1323,7 @@ func handleChannelUnavailable(
 
 	if len(channelErrors) > 0 {
 		if billing != nil && preDeductAmount > 0 {
-			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
+			releasePreDeduct(ctx, billing, rc.TenantID, rc.RequestID, preDeductAmount)
 		}
 		// 全部渠道失败是真实运营告警，保留 ERROR 级别；但调用栈固定无意义，禁用堆栈打印
 		g.Log().Stack(false).Errorf(ctx, "[RelayHandler] All %d channels failed for model=%s tenant=%d user=%d request=%s.%s Failure details: %s",
@@ -1229,12 +1344,12 @@ func handleChannelUnavailable(
 		)
 		// 用量日志补录最后一次实际发出请求的渠道（多渠道连环失败不再渠道留空）；
 		// error_message 对租户可见，保持通用文案不拼渠道详情，完整明细看审计转发链路
-		recordFailedUsage(provider, rc, last.selection, last.attempt, v.modelName, v.relayMode, v.isStream, allFailedErr, nil, "")
+		recordFailedUsage(ctx, provider, rc, last.selection, last.attempt, v.modelName, v.relayMode, v.isStream, allFailedErr, nil, "", v.reasoningEffort)
 		return &channelUnavailableResult{nil, v.billingResult, allFailedErr}
 	}
 
 	if billing != nil && preDeductAmount > 0 {
-		_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
+		releasePreDeduct(ctx, billing, rc.TenantID, rc.RequestID, preDeductAmount)
 	}
 	// 无可用渠道属于正常业务条件（模型未配渠道/容量满/熔断中等），降级为 Warning 并禁用堆栈打印；
 	// 具体原因由调度器的排除明细摘要给出（熔断OPEN/半开探测限流/容量租约满/凭证冷却/目录为空）
@@ -1332,7 +1447,7 @@ func applyStreamEndDiag(record *common.UsageRecord, streamStatus *common.StreamS
 // 全部渠道失败时为最后一次实际发出上游请求的渠道（从未发出过则 nil，渠道字段留空）。
 // attempt 为该次尝试的重试轮次（0=首次），落 retry_index，与成功路径口径一致。
 // streamStatus 非 nil 且已有结束原因时，同步落 stream_end_reason 并修正 error_message。
-func recordFailedUsage(provider common.DataProvider, rc *RelayContext, selection *common.ChannelSelection, attempt int, modelName string, relayMode constant.RelayMode, isStream bool, err error, streamStatus *common.StreamStatus, upstreamRequestID string) {
+func recordFailedUsage(ctx context.Context, provider common.DataProvider, rc *RelayContext, selection *common.ChannelSelection, attempt int, modelName string, relayMode constant.RelayMode, isStream bool, err error, streamStatus *common.StreamStatus, upstreamRequestID string, reasoningEffort string) {
 	record := &common.UsageRecord{
 		TenantID:       rc.TenantID,
 		UserID:         rc.UserID,
@@ -1348,7 +1463,8 @@ func recordFailedUsage(provider common.DataProvider, rc *RelayContext, selection
 		Status:         "error",
 		// 租户端用量日志可见 error_message，须经脱敏（上游域名/URL/IP 禁止落库）；
 		// 完整原始错误保留在应用日志与审计 ForwardingTrace（仅管理员可见）
-		ErrorMessage: helper.SafeUpstreamErrorMessage(err),
+		ErrorMessage:    helper.SafeUpstreamErrorMessage(err),
+		ReasoningEffort: reasoningEffort,
 	}
 	applyStreamEndDiag(record, streamStatus, err)
 	record.UpstreamRequestID = upstreamRequestID
@@ -1358,13 +1474,13 @@ func recordFailedUsage(provider common.DataProvider, rc *RelayContext, selection
 		record.ChannelType = selection.ChannelType
 		record.UpstreamModel = selection.UpstreamModelName
 	}
-	provider.RecordUsage(context.Background(), record)
+	provider.RecordUsage(context.WithoutCancel(ctx), record)
 }
 
 // recordFailedUsageWithTokens 记录失败用量（含 token 明细，用于流中断等已有部分 usage 的场景）。
 // 与 recordFailedUsage 的区别：此函数会填充 token 字段，避免报表中流中断记录的 token 全为 0。
 // attempt 为失败尝试的重试轮次（0=首次），落 retry_index。
-func recordFailedUsageWithTokens(provider common.DataProvider, rc *RelayContext, selection *common.ChannelSelection, attempt int, modelName string, relayMode constant.RelayMode, isStream bool, err error, usage *common.Usage, settleResult *common.SettlementResult, streamStatus *common.StreamStatus, upstreamRequestID string) {
+func recordFailedUsageWithTokens(ctx context.Context, provider common.DataProvider, rc *RelayContext, selection *common.ChannelSelection, attempt int, modelName string, relayMode constant.RelayMode, isStream bool, err error, usage *common.Usage, settleResult *common.SettlementResult, streamStatus *common.StreamStatus, upstreamRequestID string, reasoningEffort string) {
 	record := &common.UsageRecord{
 		TenantID:       rc.TenantID,
 		UserID:         rc.UserID,
@@ -1380,7 +1496,8 @@ func recordFailedUsageWithTokens(provider common.DataProvider, rc *RelayContext,
 		Status:         "error",
 		// 租户端用量日志可见 error_message，须经脱敏（上游域名/URL/IP 禁止落库）；
 		// 完整原始错误保留在应用日志与审计 ForwardingTrace（仅管理员可见）
-		ErrorMessage: helper.SafeUpstreamErrorMessage(err),
+		ErrorMessage:    helper.SafeUpstreamErrorMessage(err),
+		ReasoningEffort: reasoningEffort,
 	}
 	applyStreamEndDiag(record, streamStatus, err)
 	record.UpstreamRequestID = upstreamRequestID
@@ -1406,7 +1523,7 @@ func recordFailedUsageWithTokens(provider common.DataProvider, rc *RelayContext,
 		record.BillingMode = settleResult.BillingMode
 		record.BillingSource = settleResult.BillingSource
 	}
-	provider.RecordUsage(context.Background(), record)
+	provider.RecordUsage(context.WithoutCancel(ctx), record)
 }
 
 // recordChannelError 记录渠道错误事件到 chn_error_events（异步，不阻塞请求）

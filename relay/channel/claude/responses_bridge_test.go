@@ -136,9 +136,11 @@ func TestDoResponse_ResponsesInboundStream_TextAndToolCall(t *testing.T) {
 		t.Errorf("completed output should contain function_call item:\n%s", completed)
 	}
 
-	// 计费返回值按 Claude 口径（input 不含缓存，cache 独立）
-	if usage.PromptTokens != 10 || usage.CompletionTokens != 7 {
-		t.Errorf("billing usage = %+v, want prompt=10 completion=7", usage)
+	// 计费返回值须为含缓存口径（prompt = input 10 + cache_read 4）——桥接层置
+	// CacheIncludedInPrompt=true 扣减缓存还原 base input（=10），不含缓存口径
+	// 会被双重扣减导致输入少计
+	if usage.PromptTokens != 14 || usage.CompletionTokens != 7 {
+		t.Errorf("billing usage = %+v, want prompt=14(含缓存) completion=7", usage)
 	}
 	if usage.PromptTokensDetails == nil || usage.PromptTokensDetails.CachedTokens != 4 {
 		t.Errorf("billing usage cache detail = %+v, want cached_tokens=4", usage.PromptTokensDetails)

@@ -204,6 +204,44 @@ func TestGeminiUsageFromClaude_NilAndEmpty(t *testing.T) {
 	}
 }
 
+// TestClaudeUsageToTokenDetails_CacheWriteTokens 计费明细必须携带 CacheWriteTokens：
+// 宿主日志列 cache_creation_tokens = 顶层 + details.CacheWriteTokens 互斥相加，bridge
+// 不填顶层，此键缺失则该方向（Claude 上游→Gemini 客户端）日志恒为 0；TTL 分桶
+// （5m/1h）与官方对位键（ttl_30m/12h）须并存透传，供计费侧分桶计价
+func TestClaudeUsageToTokenDetails_CacheWriteTokens(t *testing.T) {
+	// 无 TTL 细分：仅有总量
+	td := claudeUsageToTokenDetails(&dto.ClaudeUsage{
+		CacheReadInputTokens:     10,
+		CacheCreationInputTokens: 7,
+	})
+	if td == nil {
+		t.Fatal("usage 非空应返回明细")
+	}
+	if td.CacheWriteTokens != 7 {
+		t.Errorf("CacheWriteTokens = %d, want 7（日志列唯一来源，缺失记 0）", td.CacheWriteTokens)
+	}
+	if td.CachedCreationTokens != 7 || td.CachedTokens != 10 {
+		t.Errorf("缓存读写明细不对: %+v", td)
+	}
+
+	// 带 TTL 细分：双桶 + 官方对位键并存
+	five, one := 3, 4
+	td = claudeUsageToTokenDetails(&dto.ClaudeUsage{
+		CacheCreationInputTokens: 7,
+		CacheCreation:            &dto.ClaudeCacheUsage{Ephemeral5mInputTokens: five, Ephemeral1hInputTokens: one},
+	})
+	if td.CachedCreation5mTokens != 3 || td.CachedCreation1hTokens != 4 {
+		t.Errorf("TTL 分桶不对: %+v", td)
+	}
+	if td.CacheWriteTokensDetails == nil ||
+		td.CacheWriteTokensDetails.TTL30mTokens != 3 || td.CacheWriteTokensDetails.TTL12hTokens != 4 {
+		t.Errorf("官方对位 TTL 键不对: %+v", td.CacheWriteTokensDetails)
+	}
+	if claudeUsageToTokenDetails(nil) != nil {
+		t.Error("nil usage 应返回 nil")
+	}
+}
+
 // ===== 流式 =====
 
 // TestClaudeToGeminiStream_TextAndThinking 思考与正文分别映射为 thought part / 普通 part，
@@ -268,13 +306,15 @@ func TestClaudeToGeminiStream_TextAndThinking(t *testing.T) {
 		t.Errorf("modelName = %q, want claude-sonnet-5", final.ModelName)
 	}
 
-	// 计费口径：Claude 的 input_tokens 不含缓存，随收尾帧携带
+	// 计费口径：侧信道须为含缓存口径（prompt = input 40 + cache_read 10）——
+	// 宿主桥接层置 CacheIncludedInPrompt=true 并按明细扣减还原 base input（=40），
+	// 发不含缓存的 Claude 口径会被双重扣减导致输入少计
 	lastEvent := events[len(events)-1]
 	if lastEvent.Usage == nil {
 		t.Fatal("收尾帧必须携带计费用量")
 	}
-	if lastEvent.Usage.PromptTokens != 40 || lastEvent.Usage.CompletionTokens != 20 {
-		t.Errorf("计费用量 = %d/%d, want 40/20", lastEvent.Usage.PromptTokens, lastEvent.Usage.CompletionTokens)
+	if lastEvent.Usage.PromptTokens != 50 || lastEvent.Usage.CompletionTokens != 20 {
+		t.Errorf("计费用量 = %d/%d, want 50(included cache)/20", lastEvent.Usage.PromptTokens, lastEvent.Usage.CompletionTokens)
 	}
 	if lastEvent.Usage.PromptTokensDetails == nil || lastEvent.Usage.PromptTokensDetails.CachedTokens != 10 {
 		t.Errorf("计费缓存明细不对: %+v", lastEvent.Usage.PromptTokensDetails)

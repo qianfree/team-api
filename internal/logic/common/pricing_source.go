@@ -62,7 +62,7 @@ func FetchLiteLLMPricing(ctx context.Context) (map[string]*LiteLLMModelEntry, er
 
 	g.Log().Info(ctx, "[PricingSource] fetching LiteLLM pricing data from remote...")
 
-	resp, err := g.Client().SetHeaderMap(map[string]string{
+	resp, err := g.Client().SetTimeout(30*time.Second).SetHeaderMap(map[string]string{
 		"User-Agent": "github.com/qianfree/team-api/1.0",
 	}).Get(ctx, litellmPricingURL)
 	if err != nil {
@@ -179,7 +179,7 @@ func FetchModelsDevPricing(ctx context.Context) (map[string]*ModelsDevModelEntry
 
 	g.Log().Info(ctx, "[PricingSource] fetching models.dev pricing data from remote...")
 
-	resp, err := g.Client().SetHeaderMap(map[string]string{
+	resp, err := g.Client().SetTimeout(30*time.Second).SetHeaderMap(map[string]string{
 		"User-Agent": "github.com/qianfree/team-api/1.0",
 	}).Get(ctx, modelsDevURL)
 	if err != nil {
@@ -324,7 +324,7 @@ func FetchBaseLLMPricing(ctx context.Context) (map[string]*BaseLLMModelEntry, er
 
 	g.Log().Info(ctx, "[PricingSource] fetching BaseLLM pricing data from remote...")
 
-	resp, err := g.Client().SetHeaderMap(map[string]string{
+	resp, err := g.Client().SetTimeout(30*time.Second).SetHeaderMap(map[string]string{
 		"User-Agent": "github.com/qianfree/team-api/1.0",
 	}).Get(ctx, baseLLMURL)
 	if err != nil {
@@ -474,7 +474,7 @@ func FetchOpenRouterModels(ctx context.Context) (map[string]*OpenRouterModelEntr
 
 	g.Log().Info(ctx, "[PricingSource] fetching OpenRouter model data from remote...")
 
-	resp, err := g.Client().SetHeaderMap(map[string]string{
+	resp, err := g.Client().SetTimeout(30*time.Second).SetHeaderMap(map[string]string{
 		"User-Agent": "github.com/qianfree/team-api/1.0",
 	}).Get(ctx, openRouterURL)
 	if err != nil {

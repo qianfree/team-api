@@ -282,18 +282,23 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 			if errors.Is(billErr, common.ErrBillingFormulaEval) {
 				return nil, nil, constant.NewRequestError(common.ErrBillingFormulaEval.Error()+": "+modelName, billErr)
 			}
-			return nil, nil, constant.NewQuotaError("insufficient balance", billErr)
+			// 钱包余额不足 → 402；其余（DB/Redis/定价查询故障）为内部错误 → 500，
+			// 与 RelayHandler 同口径（见 relay_handler.go 预扣段注释）
+			if errors.Is(billErr, common.ErrInsufficientBalance) {
+				return nil, nil, constant.NewQuotaError("insufficient balance", nil)
+			}
+			return nil, nil, constant.NewInternalError("billing temporarily unavailable", billErr)
 		}
 		preDeductAmount = amt
 		// 成员/Key 额度检查只做这一次（带实际预扣额），与 RelayHandler 一致：
 		// 预扣前的 Check(0) 快速闸门对全量请求多付 Redis 往返，收益不成比例，已移除。
 		if err := billing.CheckApiKeyQuota(ctx, rc.ApiKeyID, amt); err != nil {
-			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, amt)
-			return nil, billingResult, constant.NewQuotaError("API key quota exceeded", err)
+			releasePreDeduct(ctx, billing, rc.TenantID, rc.RequestID, amt)
+			return nil, billingResult, constant.NewQuotaError("API key quota exceeded", nil)
 		}
 		if err := billing.CheckMemberQuota(ctx, rc.TenantID, rc.UserID, amt); err != nil {
-			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, amt)
-			return nil, billingResult, constant.NewQuotaError("member quota exceeded", err)
+			releasePreDeduct(ctx, billing, rc.TenantID, rc.RequestID, amt)
+			return nil, billingResult, constant.NewQuotaError("member quota exceeded", nil)
 		}
 	}
 
@@ -305,7 +310,7 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 		// 拨号失败上报健康（绑定不删除，由守卫自然失效）；realtime 不做跨渠道重试，保持原语义
 		_, _ = sess.Report(ctx, 0, err, deliveryStateOfRequestErr(err), float64(time.Since(realtimeStart).Milliseconds()), 0)
 		if billing != nil && preDeductAmount > 0 {
-			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
+			releasePreDeduct(ctx, billing, rc.TenantID, rc.RequestID, preDeductAmount)
 		}
 		recordRealtimeUsage(provider, rc, r, selection, modelName, nil, nil, err, int(time.Since(realtimeStart).Milliseconds()))
 		return nil, billingResult, err
@@ -318,7 +323,7 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 	if firstMsg != nil {
 		if err := proxy.GetTargetConn().WriteMessage(websocket.TextMessage, firstMsg); err != nil {
 			if billing != nil && preDeductAmount > 0 {
-				_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
+				releasePreDeduct(ctx, billing, rc.TenantID, rc.RequestID, preDeductAmount)
 			}
 			recordRealtimeUsage(provider, rc, r, selection, modelName, nil, nil, err, int(time.Since(realtimeStart).Milliseconds()))
 			return nil, billingResult, err
@@ -345,8 +350,14 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 			if streamUsage == nil {
 				streamUsage = &common.Usage{}
 			}
-			settleResult, _ = billing.SettleStreamInterrupted(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
+			var settleErr error
+			settleResult, settleErr = billing.SettleStreamInterrupted(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
 				modelName, rc.RequestID, "realtime", streamUsage, preDeductAmount, rc.ProjectID, info.ImageCount, info.StartTime, r.Header, nil)
+			if settleErr != nil {
+				// 结算失败 = 请求已服务但漏计费 + 冻结残留（prededuct_sweep 自愈），必须留痕排障
+				g.Log().Warningf(ctx, "[RealtimeHandler] Stream interrupted settlement failed: tenant=%d project=%d request=%s err=%v",
+					rc.TenantID, rc.ProjectID, rc.RequestID, settleErr)
+			}
 			if settleResult != nil && settleResult.ActualCost > 0 && !settleResult.DuplicateSkip {
 				billing.IncrMemberQuotaUsed(ctx, rc.TenantID, rc.UserID, settleResult.ActualCost)
 				billing.IncrApiKeyQuotaUsed(ctx, rc.ApiKeyID, settleResult.ActualCost)
@@ -359,6 +370,16 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 			if settleResult != nil && settleResult.ActualCost > 0 && !settleResult.DuplicateSkip {
 				billing.IncrMemberQuotaUsed(ctx, rc.TenantID, rc.UserID, settleResult.ActualCost)
 				billing.IncrApiKeyQuotaUsed(ctx, rc.ApiKeyID, settleResult.ActualCost)
+			}
+			if settleResult == nil {
+				// 结算失败：对齐 HTTP 成功路径（settleSuccessfulRequest），尝试释放预扣冻结，
+				// 失败等 prededuct_sweep 每 2 分钟自愈
+				g.Log().Warningf(ctx, "[RealtimeHandler] Settlement failed for request=%s model=%s, refunding pre-deduct amount=%.6f",
+					rc.RequestID, modelName, preDeductAmount)
+				if rErr := billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount); rErr != nil {
+					g.Log().Errorf(ctx, "[RealtimeHandler] Refund pre-deduct failed after settlement failure (needs reconciliation): request=%s tenant=%d err=%v",
+						rc.RequestID, rc.TenantID, rErr)
+				}
 			}
 		}
 	}
@@ -450,7 +471,7 @@ func recordRealtimeUsage(
 		record.CacheReadCost = settleResult.CacheReadCost
 	}
 
-	provider.RecordUsage(context.Background(), record)
+	provider.RecordUsage(context.WithoutCancel(r.Context()), record)
 }
 
 // extractModelFromEvent 从 WebSocket 事件中提取模型名称

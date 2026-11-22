@@ -446,7 +446,7 @@ func TestCancelTask(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	result, taskErr := CancelTask(upstream.URL, "sk-test", "424010985738629", false)
+	result, taskErr := CancelTask(context.Background(), upstream.URL, "sk-test", "424010985738629", false)
 	if taskErr != nil {
 		t.Fatalf("cancel: %+v", taskErr)
 	}
@@ -466,7 +466,7 @@ func TestCancelTask_UpstreamError(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	result, taskErr := CancelTask(upstream.URL, "sk-test", "424010985738629", false)
+	result, taskErr := CancelTask(context.Background(), upstream.URL, "sk-test", "424010985738629", false)
 	if result != nil || taskErr == nil {
 		t.Fatalf("expected error, got result=%+v err=%+v", result, taskErr)
 	}

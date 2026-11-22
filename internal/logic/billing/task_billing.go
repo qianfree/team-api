@@ -16,6 +16,7 @@ import (
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/billing/formula"
 	do "github.com/qianfree/team-api/internal/model/do"
+	"github.com/qianfree/team-api/internal/utility/safego"
 	"github.com/qianfree/team-api/relay/common"
 )
 
@@ -189,7 +190,7 @@ func (b *TaskBillingProviderImpl) PreDeductTask(ctx context.Context, tenantID in
 	ok, err := PreDeduct(ctx, tenantID, estimatedFloat, requestID, modelName)
 	if !ok {
 		if err == nil {
-			return Zero, fmt.Errorf("pre-deduct task failed: insufficient balance")
+			return Zero, fmt.Errorf("pre-deduct task failed: %w", common.ErrInsufficientBalance)
 		}
 		return Zero, fmt.Errorf("pre-deduct task failed: %w", err)
 	}
@@ -298,7 +299,11 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 			}
 			var id int64
 			if billingResult != nil {
-				id, _ = billingResult.LastInsertId()
+				var idErr error
+				if id, idErr = billingResult.LastInsertId(); idErr != nil {
+					// 计费记录已落库（钱已由 Lua 扣），仅流水 RelatedId 关联断裂，留痕排障
+					g.Log().Warningf(ctx, "task billing: 取计费记录 ID 失败（流水 RelatedId 将为 0）: %v", idErr)
+				}
 			}
 			return id, nil
 		},
@@ -347,7 +352,9 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 	}
 
 	// 4. 异步检查余额预警
-	go CheckBalanceWarning(context.Background(), tenantID)
+	safego.Run(context.WithoutCancel(ctx), "billing:balance_warning", func(ctx context.Context) {
+		CheckBalanceWarning(ctx, tenantID)
+	})
 
 	// 5. 差额已在步骤 3 一次性结清，此处不得再做任何解冻/退款：
 	//    SettleClaim 已 frozen -= 全部预扣认领金额（释放冻结）、balance -= actualCost

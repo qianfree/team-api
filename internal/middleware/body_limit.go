@@ -25,10 +25,10 @@ var (
 // 使用完全相同的键和解析方式（gfile.StrToSize，支持 "32MB" 等写法），保证预检阈值
 // 与 http.MaxBytesReader 实际生效的上限一致，不会出现预检放过、实际读取仍 500 的情况。
 // 未配置或解析失败时回退到 GoFrame 默认 8MB。
-func relayClientMaxBodySize() int64 {
+func relayClientMaxBodySize(ctx context.Context) int64 {
 	relayBodyLimitOnce.Do(func() {
 		relayBodyLimitBytes = defaultClientMaxBodySize
-		if v, err := g.Cfg().Get(context.Background(), "server.clientMaxBodySize"); err == nil && v != nil {
+		if v, err := g.Cfg().Get(ctx, "server.clientMaxBodySize"); err == nil && v != nil {
 			if s := v.String(); s != "" {
 				if n := gfile.StrToSize(s); n > 0 {
 					relayBodyLimitBytes = n
@@ -50,7 +50,7 @@ func relayClientMaxBodySize() int64 {
 // 局限：无 Content-Length 的分块传输无法预检，仍会走 GoFrame 的 500 兜底（罕见，
 // 主流 SDK 均携带 Content-Length）。
 func RelayBodyLimit(r *ghttp.Request) {
-	limit := relayClientMaxBodySize()
+	limit := relayClientMaxBodySize(r.Context())
 	if r.ContentLength <= limit {
 		r.Middleware.Next()
 		return

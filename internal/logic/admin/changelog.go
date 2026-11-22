@@ -28,7 +28,7 @@ func (s *sAdmin) CreateChangelog(ctx context.Context, req *v1.ChangelogCreateReq
 	}
 
 	id, _ := result.LastInsertId()
-	return &v1.ChangelogCreateRes{Id: id}, nil
+	return &v1.ChangelogCreateRes{ID: id}, nil
 }
 
 // ListChangelogs 更新日志列表（管理后台，含草稿）
@@ -65,7 +65,7 @@ func (s *sAdmin) UpdateChangelog(ctx context.Context, req *v1.ChangelogUpdateReq
 	var cl *struct {
 		Id int64 `json:"id"`
 	}
-	err := dao.ClgChangelogs.Ctx(ctx).Where("id", req.Id).Scan(&cl)
+	err := dao.ClgChangelogs.Ctx(ctx).Where("id", req.ID).Scan(&cl)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
@@ -74,7 +74,7 @@ func (s *sAdmin) UpdateChangelog(ctx context.Context, req *v1.ChangelogUpdateReq
 	}
 
 	_, err = dao.ClgChangelogs.Ctx(ctx).
-		Where("id", req.Id).
+		Where("id", req.ID).
 		Data(do.ClgChangelogs{
 			Version: req.Version,
 			Title:   req.Title,
@@ -95,7 +95,7 @@ func (s *sAdmin) DeleteChangelog(ctx context.Context, req *v1.ChangelogDeleteReq
 	var cl *struct {
 		Id int64 `json:"id"`
 	}
-	err := dao.ClgChangelogs.Ctx(ctx).Where("id", req.Id).Scan(&cl)
+	err := dao.ClgChangelogs.Ctx(ctx).Where("id", req.ID).Scan(&cl)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
@@ -103,7 +103,7 @@ func (s *sAdmin) DeleteChangelog(ctx context.Context, req *v1.ChangelogDeleteReq
 		return nil, common.NewBusinessError(consts.CodeChangelogNotFound, consts.MsgChangelogNotFound)
 	}
 
-	_, err = dao.ClgChangelogs.Ctx(ctx).Where("id", req.Id).Delete()
+	_, err = dao.ClgChangelogs.Ctx(ctx).Where("id", req.ID).Delete()
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +117,7 @@ func (s *sAdmin) PublishChangelog(ctx context.Context, req *v1.ChangelogPublishR
 		Id     int64  `json:"id"`
 		Status string `json:"status"`
 	}
-	err := dao.ClgChangelogs.Ctx(ctx).Where("id", req.Id).Scan(&cl)
+	err := dao.ClgChangelogs.Ctx(ctx).Where("id", req.ID).Scan(&cl)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
@@ -129,7 +129,7 @@ func (s *sAdmin) PublishChangelog(ctx context.Context, req *v1.ChangelogPublishR
 	}
 
 	_, err = dao.ClgChangelogs.Ctx(ctx).
-		Where("id", req.Id).
+		Where("id", req.ID).
 		Data(do.ClgChangelogs{
 			Status:      "published",
 			PublishedAt: gtime.Now(),

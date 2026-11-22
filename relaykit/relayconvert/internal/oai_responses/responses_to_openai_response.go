@@ -91,9 +91,12 @@ func responsesResponseToChatCompletions(resp *dto.OpenAIResponsesResponse, id st
 				CachedTokens:        resp.Usage.InputTokensDetails.CachedTokens,
 				CachedTokensDetails: resp.Usage.InputTokensDetails.CachedTokensDetails,
 				CacheWriteTokens:    resp.Usage.InputTokensDetails.CacheWriteTokens,
-				AudioTokens:         resp.Usage.InputTokensDetails.AudioTokens,
-				TextTokens:          resp.Usage.InputTokensDetails.TextTokens,
-				ImageTokens:         resp.Usage.InputTokensDetails.ImageTokens,
+				// TTL 细分必透传：宿主 NormalizeCacheWriteTTL 据此把 12h 写入归一到长时桶
+				//（2.5×）计价，丢失则全落短桶（1.25×）少收
+				CacheWriteTokensDetails: resp.Usage.InputTokensDetails.CacheWriteTokensDetails,
+				AudioTokens:             resp.Usage.InputTokensDetails.AudioTokens,
+				TextTokens:              resp.Usage.InputTokensDetails.TextTokens,
+				ImageTokens:             resp.Usage.InputTokensDetails.ImageTokens,
 			}
 		}
 		if resp.Usage.OutputTokenDetails != nil {

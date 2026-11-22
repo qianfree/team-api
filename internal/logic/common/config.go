@@ -17,6 +17,8 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/util/gconv"
 	"golang.org/x/sync/singleflight"
+
+	"github.com/qianfree/team-api/internal/utility/safego"
 )
 
 // ConfigService provides configuration management with a registry-driven schema,
@@ -398,7 +400,8 @@ func (s *ConfigService) Warmup(ctx context.Context) {
 // StartSubscriber subscribes to Redis Pub/Sub for cross-instance cache invalidation.
 // Called once at startup in cmd.go.
 func (s *ConfigService) StartSubscriber(ctx context.Context) {
-	go func() {
+	// 设置变更订阅 panic 退出会让本实例配置缓存永不失效，RunLoop 自愈重启
+	safego.RunLoop(ctx, "config:settings_subscriber", func(ctx context.Context) {
 		var reconnectCount int
 		for {
 			conn, _, err := g.Redis().Subscribe(ctx, "settings:changed")
@@ -441,7 +444,7 @@ func (s *ConfigService) StartSubscriber(ctx context.Context) {
 
 			conn.Close(ctx)
 		}
-	}()
+	})
 }
 
 // ──────────────────────────────────────────

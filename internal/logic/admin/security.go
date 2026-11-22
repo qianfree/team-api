@@ -35,7 +35,7 @@ func (s *sAdmin) Verify2FA(ctx context.Context, req *v1.Admin2FAVerifyReq) (*v1.
 	httpReq := g.RequestFromCtx(ctx)
 	ipAddress := httpReq.GetClientIp()
 	ua := httpReq.Header.Get("User-Agent")
-	deviceFP := common.DeviceFingerprint(req.DeviceId, ua)
+	deviceFP := common.DeviceFingerprint(req.DeviceID, ua)
 
 	// Verify 2FA code
 	valid, err := common.Verify2FACode(ctx, "admin", claims.UserID, req.Code)
@@ -238,7 +238,7 @@ func (s *sAdmin) LoginHistory(ctx context.Context, req *v1.AdminLoginHistoryReq)
 	for i, r := range records {
 		items[i] = v1.LoginHistoryItem{
 			ID:          r.Id,
-			UserId:      r.UserId,
+			UserID:      r.UserId,
 			Username:    userMap[r.UserId].Username,
 			DisplayName: userMap[r.UserId].DisplayName,
 			LoginMethod: r.LoginMethod,
@@ -365,8 +365,8 @@ func (s *sAdmin) TenantLoginHistory(ctx context.Context, req *v1.AdminTenantLogi
 	for i, r := range records {
 		items[i] = v1.AdminTenantLoginHistoryItem{
 			ID:          r.Id,
-			UserId:      r.UserId,
-			TenantId:    r.TenantId,
+			UserID:      r.UserId,
+			TenantID:    r.TenantId,
 			Username:    userMap[r.UserId].Username,
 			DisplayName: userMap[r.UserId].DisplayName,
 			LoginMethod: r.LoginMethod,

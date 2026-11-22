@@ -16,7 +16,7 @@ type ChangelogCreateReq struct {
 }
 
 type ChangelogCreateRes struct {
-	Id int64 `json:"id"`
+	ID int64 `json:"id"`
 }
 
 type ChangelogListReq struct {
@@ -28,7 +28,7 @@ type ChangelogListReq struct {
 }
 
 type ChangelogItem struct {
-	Id          int64       `json:"id"`
+	ID          int64       `json:"id"`
 	Version     string      `json:"version"`
 	Title       string      `json:"title"`
 	Content     string      `json:"content"`
@@ -48,7 +48,7 @@ type ChangelogListRes struct {
 
 type ChangelogUpdateReq struct {
 	g.Meta  `path:"/changelogs/{id}" method:"put" mime:"json" tags:"管理后台-更新日志" summary:"更新更新日志"`
-	Id      int64  `json:"id" in:"path" v:"required|min:1"`
+	ID      int64  `json:"id" in:"path" v:"required|min:1"`
 	Version string `json:"version" v:"required|length:1,50" dc:"版本号"`
 	Title   string `json:"title" v:"required|length:1,200" dc:"标题"`
 	Content string `json:"content" v:"required" dc:"Markdown 内容"`
@@ -60,14 +60,14 @@ type ChangelogUpdateRes struct{}
 
 type ChangelogDeleteReq struct {
 	g.Meta `path:"/changelogs/{id}" method:"delete" mime:"json" tags:"管理后台-更新日志" summary:"删除更新日志"`
-	Id     int64 `json:"id" in:"path" v:"required|min:1"`
+	ID     int64 `json:"id" in:"path" v:"required|min:1"`
 }
 
 type ChangelogDeleteRes struct{}
 
 type ChangelogPublishReq struct {
 	g.Meta `path:"/changelogs/{id}/publish" method:"post" mime:"json" tags:"管理后台-更新日志" summary:"发布更新日志"`
-	Id     int64 `json:"id" in:"path" v:"required|min:1"`
+	ID     int64 `json:"id" in:"path" v:"required|min:1"`
 }
 
 type ChangelogPublishRes struct{}

@@ -76,10 +76,10 @@ func TestEqualChunksExcluding(t *testing.T) {
 
 func TestLoadSaveRoundTrip(t *testing.T) {
 	tc := TestCase{
-		Name:       "roundtrip",
-		From:       types.RelayFormatOpenAI,
-		To:         types.RelayFormatClaude,
-		Request:    map[string]any{"model": "gpt-4"},
+		Name:        "roundtrip",
+		From:        types.RelayFormatOpenAI,
+		To:          types.RelayFormatClaude,
+		Request:     map[string]any{"model": "gpt-4"},
 		ConverterID: "test_converter",
 	}
 	path := filepath.Join(t.TempDir(), "case.json")

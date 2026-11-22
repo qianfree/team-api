@@ -62,11 +62,11 @@ func RefreshExpiringOAuthTokens(ctx context.Context) error {
 		var newToken *oauth.OAuthKeyData
 		switch oauthData.Platform {
 		case "claude":
-			newToken, err = oauth.ClaudeRefreshToken(oauthData.RefreshToken)
+			newToken, err = oauth.ClaudeRefreshToken(ctx, oauthData.RefreshToken)
 		case "openai", "codex":
-			newToken, err = oauth.OpenAIRefreshToken(oauthData.RefreshToken)
+			newToken, err = oauth.OpenAIRefreshToken(ctx, oauthData.RefreshToken)
 		case "gemini":
-			newToken, err = oauth.GeminiRefreshToken(oauthData.RefreshToken)
+			newToken, err = oauth.GeminiRefreshToken(ctx, oauthData.RefreshToken)
 		default:
 			g.Log().Warningf(ctx, "[OAuthRefresh] Unknown platform %s for key %d", oauthData.Platform, key.ID)
 			continue

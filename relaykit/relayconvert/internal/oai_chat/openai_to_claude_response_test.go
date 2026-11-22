@@ -247,3 +247,89 @@ func TestMapOpenAIFinishReasonToClaude(t *testing.T) {
 		}
 	}
 }
+
+// TestOpenAIToClaudeResponseConverter_UsageWithCacheWriteTTL 缓存写入按 Claude 语义回写：
+// cache_write（含 ttl_30m/ttl_12h 细分）映射 cache_creation_input_tokens + cache_creation
+// 对象（30m→ephemeral_5m 短桶、12h→ephemeral_1h 长桶）；input_tokens 同步扣减写入部分
+// （Claude 协议 cache 三项并列报告，未扣减会导致客户端重复计账）。
+func TestOpenAIToClaudeResponseConverter_UsageWithCacheWriteTTL(t *testing.T) {
+	converter := &OpenAIToClaudeResponseConverter{}
+	openaiResp := &dto.ChatCompletionResponse{
+		ID:      "chatcmpl-ttl",
+		Model:   "gpt-5.6",
+		Choices: []dto.Choice{{Index: 0, Message: dto.Message{Role: "assistant", Content: "hi"}, FinishReason: "stop"}},
+		Usage: dto.UsageWithDetails{
+			PromptTokens:     12000,
+			CompletionTokens: 100,
+			TotalTokens:      12100,
+			PromptTokensDetails: &dto.TokenDetails{
+				CachedTokens:     4000,
+				CacheWriteTokens: 7000,
+				CacheWriteTokensDetails: &dto.CacheWriteTokensDetail{
+					TTL30mTokens: 3000,
+					TTL12hTokens: 4000,
+				},
+			},
+		},
+	}
+
+	result, err := converter.ConvertResponse(context.Background(), newClaudeInboundMeta(), openaiResp)
+	if err != nil {
+		t.Fatalf("ConvertResponse error: %v", err)
+	}
+	resp := result.(*dto.ClaudeResponse)
+
+	// 未缓存输入 = 12000 − 4000(读) − 7000(写) = 1000（OpenAI 官方口径）
+	if resp.Usage.InputTokens != 1000 {
+		t.Errorf("InputTokens = %d, want 1000 (prompt − cached − cache_write)", resp.Usage.InputTokens)
+	}
+	if resp.Usage.CacheReadInputTokens != 4000 {
+		t.Errorf("CacheReadInputTokens = %d, want 4000", resp.Usage.CacheReadInputTokens)
+	}
+	if resp.Usage.CacheCreationInputTokens != 7000 {
+		t.Errorf("CacheCreationInputTokens = %d, want 7000", resp.Usage.CacheCreationInputTokens)
+	}
+	if resp.Usage.CacheCreation == nil {
+		t.Fatal("expected cache_creation TTL 细分对象")
+	}
+	if resp.Usage.CacheCreation.Ephemeral5mInputTokens != 3000 {
+		t.Errorf("ephemeral_5m = %d, want 3000 (ttl_30m 归一短桶)", resp.Usage.CacheCreation.Ephemeral5mInputTokens)
+	}
+	if resp.Usage.CacheCreation.Ephemeral1hInputTokens != 4000 {
+		t.Errorf("ephemeral_1h = %d, want 4000 (ttl_12h 归一长桶)", resp.Usage.CacheCreation.Ephemeral1hInputTokens)
+	}
+}
+
+// TestOpenAIToClaudeResponseConverter_UsageWithCacheWriteNoTTL 无 TTL 细分的老结构：
+// cache_write 总量仍映射 cache_creation_input_tokens（不再丢弃），但不产出 cache_creation 对象
+func TestOpenAIToClaudeResponseConverter_UsageWithCacheWriteNoTTL(t *testing.T) {
+	converter := &OpenAIToClaudeResponseConverter{}
+	openaiResp := &dto.ChatCompletionResponse{
+		ID:      "chatcmpl-legacy",
+		Model:   "gpt-4o",
+		Choices: []dto.Choice{{Index: 0, Message: dto.Message{Role: "assistant", Content: "hi"}, FinishReason: "stop"}},
+		Usage: dto.UsageWithDetails{
+			PromptTokens:     10000,
+			CompletionTokens: 100,
+			PromptTokensDetails: &dto.TokenDetails{
+				CacheWriteTokens: 2000,
+			},
+		},
+	}
+
+	result, err := converter.ConvertResponse(context.Background(), newClaudeInboundMeta(), openaiResp)
+	if err != nil {
+		t.Fatalf("ConvertResponse error: %v", err)
+	}
+	resp := result.(*dto.ClaudeResponse)
+
+	if resp.Usage.InputTokens != 8000 {
+		t.Errorf("InputTokens = %d, want 8000 (写入扣减)", resp.Usage.InputTokens)
+	}
+	if resp.Usage.CacheCreationInputTokens != 2000 {
+		t.Errorf("CacheCreationInputTokens = %d, want 2000 (总量不再丢弃)", resp.Usage.CacheCreationInputTokens)
+	}
+	if resp.Usage.CacheCreation != nil {
+		t.Errorf("无细分不应产出 cache_creation 对象, got %+v", resp.Usage.CacheCreation)
+	}
+}

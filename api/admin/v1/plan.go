@@ -17,7 +17,7 @@ type PlanListReq struct {
 }
 
 type PlanItem struct {
-	Id                 int64       `json:"id"`
+	ID                 int64       `json:"id"`
 	Name               string      `json:"name"`
 	Identifier         string      `json:"identifier"`
 	Description        string      `json:"description"`
@@ -58,7 +58,7 @@ type PlanCreateRes struct {
 
 type PlanDetailReq struct {
 	g.Meta `path:"/plans/{id}" method:"get" mime:"json" tags:"管理后台-套餐" summary:"套餐详情"`
-	Id     int64 `json:"id" in:"path" v:"required|min:1"`
+	ID     int64 `json:"id" in:"path" v:"required|min:1"`
 }
 
 // PlanDetailRes 详情对象平铺进统一响应的 data 字段（json:"-" + 自定义 MarshalJSON），
@@ -73,7 +73,7 @@ func (r *PlanDetailRes) MarshalJSON() ([]byte, error) {
 
 type PlanUpdateReq struct {
 	g.Meta `path:"/plans/{id}" method:"put" mime:"json" tags:"管理后台-套餐" summary:"更新套餐"`
-	Id     int64                  `json:"id" in:"path" v:"required|min:1"`
+	ID     int64                  `json:"id" in:"path" v:"required|min:1"`
 	Update map[string]interface{} `json:"update" v:"required"`
 }
 
@@ -81,14 +81,14 @@ type PlanUpdateRes struct{}
 
 type PlanArchiveReq struct {
 	g.Meta `path:"/plans/{id}" method:"delete" mime:"json" tags:"管理后台-套餐" summary:"下架套餐"`
-	Id     int64 `json:"id" in:"path" v:"required|min:1"`
+	ID     int64 `json:"id" in:"path" v:"required|min:1"`
 }
 
 type PlanArchiveRes struct{}
 
 type PlanToggleRecommendReq struct {
 	g.Meta `path:"/plans/{id}/toggle-recommend" method:"put" mime:"json" tags:"管理后台-套餐" summary:"切换推荐"`
-	Id     int64 `json:"id" in:"path" v:"required|min:1"`
+	ID     int64 `json:"id" in:"path" v:"required|min:1"`
 }
 
 type PlanToggleRecommendRes struct{}

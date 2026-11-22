@@ -7,6 +7,8 @@ import (
 
 	"github.com/gogf/gf/v2/errors/gcode"
 	"github.com/gogf/gf/v2/errors/gerror"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/lib/pq"
 
 	"github.com/qianfree/team-api/internal/consts"
 )
@@ -62,11 +64,20 @@ func IgnoreScanNoRows(err error) error {
 // violation (SQLSTATE 23505). Used to convert race-condition insert failures
 // into friendly business errors at the data layer's last line of defense.
 //
-// Uses string matching on the driver error message. Switch to a typed assertion
-// (pq.Error / pgconn.PgError) if a Postgres driver becomes a direct dependency.
+// 优先用驱动类型化断言（pgconn.PgError / lib/pq），PG 升级或错误文案变化不影响判定；
+// 字符串兜底仅保留 "duplicate key"（覆盖被 ORM 层重新拼装、丢失类型的错误），
+// 不再匹配裸 "23505"。
 func IsDuplicateKeyError(err error) bool {
 	if err == nil {
 		return false
 	}
-	return strings.Contains(err.Error(), "23505") || strings.Contains(err.Error(), "duplicate key")
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "23505"
+	}
+	var pqErr *pq.Error
+	if errors.As(err, &pqErr) {
+		return pqErr.Code == "23505"
+	}
+	return strings.Contains(err.Error(), "duplicate key")
 }

@@ -29,8 +29,8 @@ func (s *sAdmin) CreateHelpCategory(ctx context.Context, req *v1.HelpCategoryCre
 	}
 
 	// 父分类校验：必须存在、必须是顶级分类（仅支持两级）
-	if req.ParentId > 0 {
-		if err = s.validateHelpCategoryParent(ctx, 0, req.ParentId); err != nil {
+	if req.ParentID > 0 {
+		if err = s.validateHelpCategoryParent(ctx, 0, req.ParentID); err != nil {
 			return nil, err
 		}
 	}
@@ -41,7 +41,7 @@ func (s *sAdmin) CreateHelpCategory(ctx context.Context, req *v1.HelpCategoryCre
 	}
 
 	result, err := dao.SptCategories.Ctx(ctx).Data(do.SptCategories{
-		ParentId:    req.ParentId,
+		ParentId:    req.ParentID,
 		Name:        req.Name,
 		Slug:        req.Slug,
 		Description: req.Description,
@@ -54,7 +54,7 @@ func (s *sAdmin) CreateHelpCategory(ctx context.Context, req *v1.HelpCategoryCre
 	}
 
 	id, _ := result.LastInsertId()
-	return &v1.HelpCategoryCreateRes{Id: id}, nil
+	return &v1.HelpCategoryCreateRes{ID: id}, nil
 }
 
 // UpdateHelpCategory 更新帮助分类
@@ -62,7 +62,7 @@ func (s *sAdmin) UpdateHelpCategory(ctx context.Context, req *v1.HelpCategoryUpd
 	var cat *struct {
 		Id int64 `json:"id"`
 	}
-	err := dao.SptCategories.Ctx(ctx).Where("id", req.Id).Scan(&cat)
+	err := dao.SptCategories.Ctx(ctx).Where("id", req.ID).Scan(&cat)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
@@ -71,7 +71,7 @@ func (s *sAdmin) UpdateHelpCategory(ctx context.Context, req *v1.HelpCategoryUpd
 	}
 
 	// 检查 slug 唯一性（排除自身）
-	count, err := dao.SptCategories.Ctx(ctx).Where("slug", req.Slug).WhereNot("id", req.Id).Count()
+	count, err := dao.SptCategories.Ctx(ctx).Where("slug", req.Slug).WhereNot("id", req.ID).Count()
 	if err != nil {
 		return nil, err
 	}
@@ -80,19 +80,19 @@ func (s *sAdmin) UpdateHelpCategory(ctx context.Context, req *v1.HelpCategoryUpd
 	}
 
 	// 不允许将分类设置为自己的子分类
-	if req.ParentId > 0 && req.ParentId == req.Id {
+	if req.ParentID > 0 && req.ParentID == req.ID {
 		return nil, common.NewBusinessError(consts.CodeBadRequest, "不能将分类设置为自己的子分类")
 	}
 
 	// 父分类校验：必须存在、必须是顶级分类（仅支持两级），且祖先链中不能出现自己（防环导致分类互相锁定无法删除）
-	if req.ParentId > 0 {
-		if err = s.validateHelpCategoryParent(ctx, req.Id, req.ParentId); err != nil {
+	if req.ParentID > 0 {
+		if err = s.validateHelpCategoryParent(ctx, req.ID, req.ParentID); err != nil {
 			return nil, err
 		}
 	}
 
 	updateData := do.SptCategories{
-		ParentId:    req.ParentId,
+		ParentId:    req.ParentID,
 		Name:        req.Name,
 		Slug:        req.Slug,
 		Description: req.Description,
@@ -104,7 +104,7 @@ func (s *sAdmin) UpdateHelpCategory(ctx context.Context, req *v1.HelpCategoryUpd
 	}
 
 	_, err = dao.SptCategories.Ctx(ctx).
-		Where("id", req.Id).
+		Where("id", req.ID).
 		Data(updateData).
 		Update()
 	if err != nil {
@@ -158,7 +158,7 @@ func (s *sAdmin) DeleteHelpCategory(ctx context.Context, req *v1.HelpCategoryDel
 	var cat *struct {
 		Id int64 `json:"id"`
 	}
-	err := dao.SptCategories.Ctx(ctx).Where("id", req.Id).Scan(&cat)
+	err := dao.SptCategories.Ctx(ctx).Where("id", req.ID).Scan(&cat)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
@@ -167,7 +167,7 @@ func (s *sAdmin) DeleteHelpCategory(ctx context.Context, req *v1.HelpCategoryDel
 	}
 
 	// 检查是否有子分类
-	childCount, err := dao.SptCategories.Ctx(ctx).Where("parent_id", req.Id).Count()
+	childCount, err := dao.SptCategories.Ctx(ctx).Where("parent_id", req.ID).Count()
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +176,7 @@ func (s *sAdmin) DeleteHelpCategory(ctx context.Context, req *v1.HelpCategoryDel
 	}
 
 	// 检查分类下是否有文章
-	articleCount, err := dao.SptArticles.Ctx(ctx).Where("category_id", req.Id).Count()
+	articleCount, err := dao.SptArticles.Ctx(ctx).Where("category_id", req.ID).Count()
 	if err != nil {
 		return nil, err
 	}
@@ -184,7 +184,7 @@ func (s *sAdmin) DeleteHelpCategory(ctx context.Context, req *v1.HelpCategoryDel
 		return nil, common.NewBusinessError(consts.CodeBadRequest, "该分类下有文章，请先删除或移动文章")
 	}
 
-	_, err = dao.SptCategories.Ctx(ctx).Where("id", req.Id).Delete()
+	_, err = dao.SptCategories.Ctx(ctx).Where("id", req.ID).Delete()
 	if err != nil {
 		return nil, err
 	}
@@ -197,8 +197,8 @@ func (s *sAdmin) ListHelpCategories(ctx context.Context, req *v1.HelpCategoryLis
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
 	query := dao.SptCategories.Ctx(ctx)
-	if req.ParentId >= 0 {
-		query = query.Where("parent_id", req.ParentId)
+	if req.ParentID >= 0 {
+		query = query.Where("parent_id", req.ParentID)
 	}
 
 	var total int
@@ -228,7 +228,7 @@ func (s *sAdmin) CreateHelpArticle(ctx context.Context, req *v1.HelpArticleCreat
 	var cat *struct {
 		Id int64 `json:"id"`
 	}
-	err := dao.SptCategories.Ctx(ctx).Where("id", req.CategoryId).Scan(&cat)
+	err := dao.SptCategories.Ctx(ctx).Where("id", req.CategoryID).Scan(&cat)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
@@ -246,7 +246,7 @@ func (s *sAdmin) CreateHelpArticle(ctx context.Context, req *v1.HelpArticleCreat
 	}
 
 	data := do.SptArticles{
-		CategoryId: req.CategoryId,
+		CategoryId: req.CategoryID,
 		Title:      req.Title,
 		Slug:       req.Slug,
 		Content:    req.Content,
@@ -268,9 +268,9 @@ func (s *sAdmin) CreateHelpArticle(ctx context.Context, req *v1.HelpArticleCreat
 	id, _ := result.LastInsertId()
 
 	// 更新分类的文章计数
-	s.refreshCategoryArticleCount(ctx, req.CategoryId)
+	s.refreshCategoryArticleCount(ctx, req.CategoryID)
 
-	return &v1.HelpArticleCreateRes{Id: id}, nil
+	return &v1.HelpArticleCreateRes{ID: id}, nil
 }
 
 // UpdateHelpArticle 更新帮助文章
@@ -281,7 +281,7 @@ func (s *sAdmin) UpdateHelpArticle(ctx context.Context, req *v1.HelpArticleUpdat
 		Status      string      `json:"status"`
 		PublishedAt *gtime.Time `json:"published_at"`
 	}
-	err := dao.SptArticles.Ctx(ctx).Where("id", req.Id).Scan(&article)
+	err := dao.SptArticles.Ctx(ctx).Where("id", req.ID).Scan(&article)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
@@ -290,7 +290,7 @@ func (s *sAdmin) UpdateHelpArticle(ctx context.Context, req *v1.HelpArticleUpdat
 	}
 
 	// 检查 slug 唯一性（排除自身）
-	count, err := dao.SptArticles.Ctx(ctx).Where("slug", req.Slug).WhereNot("id", req.Id).Count()
+	count, err := dao.SptArticles.Ctx(ctx).Where("slug", req.Slug).WhereNot("id", req.ID).Count()
 	if err != nil {
 		return nil, err
 	}
@@ -302,7 +302,7 @@ func (s *sAdmin) UpdateHelpArticle(ctx context.Context, req *v1.HelpArticleUpdat
 	var cat *struct {
 		Id int64 `json:"id"`
 	}
-	err = dao.SptCategories.Ctx(ctx).Where("id", req.CategoryId).Scan(&cat)
+	err = dao.SptCategories.Ctx(ctx).Where("id", req.CategoryID).Scan(&cat)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
@@ -311,7 +311,7 @@ func (s *sAdmin) UpdateHelpArticle(ctx context.Context, req *v1.HelpArticleUpdat
 	}
 
 	data := do.SptArticles{
-		CategoryId: req.CategoryId,
+		CategoryId: req.CategoryID,
 		Title:      req.Title,
 		Slug:       req.Slug,
 		Summary:    req.Summary,
@@ -329,7 +329,7 @@ func (s *sAdmin) UpdateHelpArticle(ctx context.Context, req *v1.HelpArticleUpdat
 	}
 
 	_, err = dao.SptArticles.Ctx(ctx).
-		Where("id", req.Id).
+		Where("id", req.ID).
 		Data(data).
 		Update()
 	if err != nil {
@@ -337,14 +337,14 @@ func (s *sAdmin) UpdateHelpArticle(ctx context.Context, req *v1.HelpArticleUpdat
 	}
 
 	// 更新旧分类和新分类的文章计数
-	if article.CategoryId != req.CategoryId {
+	if article.CategoryId != req.CategoryID {
 		s.refreshCategoryArticleCount(ctx, article.CategoryId)
-		s.refreshCategoryArticleCount(ctx, req.CategoryId)
+		s.refreshCategoryArticleCount(ctx, req.CategoryID)
 	}
 
 	// 状态变更（草稿↔已发布）也需要刷新计数
 	if article.Status != req.Status {
-		s.refreshCategoryArticleCount(ctx, req.CategoryId)
+		s.refreshCategoryArticleCount(ctx, req.CategoryID)
 	}
 
 	return &v1.HelpArticleUpdateRes{}, nil
@@ -356,7 +356,7 @@ func (s *sAdmin) DeleteHelpArticle(ctx context.Context, req *v1.HelpArticleDelet
 		Id         int64 `json:"id"`
 		CategoryId int64 `json:"category_id"`
 	}
-	err := dao.SptArticles.Ctx(ctx).Where("id", req.Id).Scan(&article)
+	err := dao.SptArticles.Ctx(ctx).Where("id", req.ID).Scan(&article)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
@@ -364,7 +364,7 @@ func (s *sAdmin) DeleteHelpArticle(ctx context.Context, req *v1.HelpArticleDelet
 		return nil, common.NewBusinessError(consts.CodeHelpArticleNotFound, consts.MsgHelpArticleNotFound)
 	}
 
-	_, err = dao.SptArticles.Ctx(ctx).Where("id", req.Id).Delete()
+	_, err = dao.SptArticles.Ctx(ctx).Where("id", req.ID).Delete()
 	if err != nil {
 		return nil, err
 	}
@@ -380,8 +380,8 @@ func (s *sAdmin) ListHelpArticles(ctx context.Context, req *v1.HelpArticleListRe
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
 	query := dao.SptArticles.Ctx(ctx)
-	if req.CategoryId > 0 {
-		query = query.Where("category_id", req.CategoryId)
+	if req.CategoryID > 0 {
+		query = query.Where("category_id", req.CategoryID)
 	}
 	if req.Status != "" {
 		query = query.Where("status", req.Status)
@@ -407,7 +407,7 @@ func (s *sAdmin) ListHelpArticles(ctx context.Context, req *v1.HelpArticleListRe
 // GetHelpArticle 帮助文章详情（管理后台）
 func (s *sAdmin) GetHelpArticle(ctx context.Context, req *v1.HelpArticleGetReq) (*v1.HelpArticleGetRes, error) {
 	var article *v1.HelpArticleGetRes
-	err := dao.SptArticles.Ctx(ctx).Where("id", req.Id).Scan(&article)
+	err := dao.SptArticles.Ctx(ctx).Where("id", req.ID).Scan(&article)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}

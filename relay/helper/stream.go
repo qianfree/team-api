@@ -2,6 +2,7 @@ package helper
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/qianfree/team-api/internal/utility/safego"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/dto"
 )
@@ -455,7 +457,7 @@ func PingTicker(w http.ResponseWriter, interval time.Duration) (stop func()) {
 	ticker := time.NewTicker(interval)
 	done := make(chan struct{})
 
-	go func() {
+	safego.Run(context.Background(), "relay:sse_ping_ticker", func(context.Context) {
 		defer ticker.Stop()
 		for {
 			select {
@@ -467,7 +469,7 @@ func PingTicker(w http.ResponseWriter, interval time.Duration) (stop func()) {
 				return
 			}
 		}
-	}()
+	})
 
 	return func() {
 		close(done)

@@ -71,7 +71,7 @@ func (s *sAdmin) ListUsers(ctx context.Context, req *v1.AdminUserListReq) (*v1.A
 			Role:        u.Role,
 			Status:      u.Status,
 			LastLoginAt: u.LastLoginAt.String(),
-			LastLoginIp: u.LastLoginIp,
+			LastLoginIP: u.LastLoginIp,
 			LockedUntil: lockedUntil,
 			CreatedAt:   u.CreatedAt.String(),
 			Roles:       rolesByUser[u.Id],
@@ -255,7 +255,7 @@ func (s *sAdmin) UpdateUser(ctx context.Context, req *v1.AdminUserUpdateReq) (*v
 		Role string `json:"role"`
 	}
 	err := dao.SysAdminUsers.Ctx(ctx).
-		Where("id", req.Id).Scan(&targetUser)
+		Where("id", req.ID).Scan(&targetUser)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
@@ -265,7 +265,7 @@ func (s *sAdmin) UpdateUser(ctx context.Context, req *v1.AdminUserUpdateReq) (*v
 	if targetUser.Role == "super_admin" {
 		return nil, common.NewBadRequestError("不能修改超级管理员信息")
 	}
-	if err := assertCanManageAdminUser(ctx, req.Id, targetUser.Role); err != nil {
+	if err := assertCanManageAdminUser(ctx, req.ID, targetUser.Role); err != nil {
 		return nil, err
 	}
 
@@ -277,7 +277,7 @@ func (s *sAdmin) UpdateUser(ctx context.Context, req *v1.AdminUserUpdateReq) (*v
 		email := strings.ToLower(strings.TrimSpace(*req.Email))
 		// Check uniqueness (normalized to lowercase)
 		count, err := dao.SysAdminUsers.Ctx(ctx).
-			Where("email", email).Where("id != ?", req.Id).Count()
+			Where("email", email).Where("id != ?", req.ID).Count()
 		if err != nil {
 			return nil, err
 		}
@@ -296,7 +296,7 @@ func (s *sAdmin) UpdateUser(ctx context.Context, req *v1.AdminUserUpdateReq) (*v
 		data.Role = *req.Role
 	}
 
-	_, err = dao.SysAdminUsers.Ctx(ctx).Where("id", req.Id).Update(data)
+	_, err = dao.SysAdminUsers.Ctx(ctx).Where("id", req.ID).Update(data)
 	if err != nil {
 		if common.IsDuplicateKeyError(err) {
 			return nil, common.NewBusinessError(consts.CodeEmailExists, consts.MsgEmailExists)
@@ -311,7 +311,7 @@ func (s *sAdmin) UpdateUser(ctx context.Context, req *v1.AdminUserUpdateReq) (*v
 func (s *sAdmin) DeleteUser(ctx context.Context, req *v1.AdminUserDeleteReq) (*v1.AdminUserDeleteRes, error) {
 	currentUserID := common.GetCtxUserID(ctx)
 
-	if req.Id == currentUserID {
+	if req.ID == currentUserID {
 		return nil, common.NewBadRequestError("不能删除当前登录的用户")
 	}
 
@@ -320,7 +320,7 @@ func (s *sAdmin) DeleteUser(ctx context.Context, req *v1.AdminUserDeleteReq) (*v
 		Role string `json:"role"`
 	}
 	err := dao.SysAdminUsers.Ctx(ctx).
-		Where("id", req.Id).Scan(&user)
+		Where("id", req.ID).Scan(&user)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
@@ -330,7 +330,7 @@ func (s *sAdmin) DeleteUser(ctx context.Context, req *v1.AdminUserDeleteReq) (*v
 	if user.Role == "super_admin" {
 		return nil, common.NewBadRequestError("不能删除超级管理员")
 	}
-	if err := assertCanManageAdminUser(ctx, req.Id, user.Role); err != nil {
+	if err := assertCanManageAdminUser(ctx, req.ID, user.Role); err != nil {
 		return nil, err
 	}
 
@@ -340,26 +340,26 @@ func (s *sAdmin) DeleteUser(ctx context.Context, req *v1.AdminUserDeleteReq) (*v
 	// 权限相关记录同事务清理：这些表都没有外键，数据库不会代劳，
 	// 漏删会留下悬空的角色关联与特批权限。
 	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		if _, err := dao.SysAdminUsers.Ctx(ctx).Where("id", req.Id).Delete(); err != nil {
+		if _, err := dao.SysAdminUsers.Ctx(ctx).Where("id", req.ID).Delete(); err != nil {
 			return err
 		}
-		if _, err := dao.SysAdminUserRoles.Ctx(ctx).Where("admin_user_id", req.Id).Delete(); err != nil {
+		if _, err := dao.SysAdminUserRoles.Ctx(ctx).Where("admin_user_id", req.ID).Delete(); err != nil {
 			return err
 		}
-		if _, err := dao.SysAdminRolePerms.Ctx(ctx).Where("admin_user_id", req.Id).Delete(); err != nil {
+		if _, err := dao.SysAdminRolePerms.Ctx(ctx).Where("admin_user_id", req.ID).Delete(); err != nil {
 			return err
 		}
-		_, err := dao.SysAdminDataScopes.Ctx(ctx).Where("admin_user_id", req.Id).Delete()
+		_, err := dao.SysAdminDataScopes.Ctx(ctx).Where("admin_user_id", req.ID).Delete()
 		return err
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	InvalidateUserPermCache(ctx, req.Id)
+	InvalidateUserPermCache(ctx, req.ID)
 
 	// Revoke all sessions
-	common.RevokeAllSessions(ctx, "admin", req.Id)
+	common.RevokeAllSessions(ctx, "admin", req.ID)
 
 	return nil, nil
 }
@@ -368,7 +368,7 @@ func (s *sAdmin) DeleteUser(ctx context.Context, req *v1.AdminUserDeleteReq) (*v
 func (s *sAdmin) UpdateUserStatus(ctx context.Context, req *v1.AdminUserUpdateStatusReq) (*v1.AdminUserUpdateStatusRes, error) {
 	currentUserID := common.GetCtxUserID(ctx)
 
-	if req.Id == currentUserID {
+	if req.ID == currentUserID {
 		return nil, common.NewBadRequestError("不能修改当前登录用户的状态")
 	}
 
@@ -381,7 +381,7 @@ func (s *sAdmin) UpdateUserStatus(ctx context.Context, req *v1.AdminUserUpdateSt
 		Role string `json:"role"`
 	}
 	err := dao.SysAdminUsers.Ctx(ctx).
-		Where("id", req.Id).Scan(&user)
+		Where("id", req.ID).Scan(&user)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
@@ -391,11 +391,11 @@ func (s *sAdmin) UpdateUserStatus(ctx context.Context, req *v1.AdminUserUpdateSt
 	if user.Role == "super_admin" {
 		return nil, common.NewBadRequestError("不能修改超级管理员状态")
 	}
-	if err := assertCanManageAdminUser(ctx, req.Id, user.Role); err != nil {
+	if err := assertCanManageAdminUser(ctx, req.ID, user.Role); err != nil {
 		return nil, err
 	}
 
-	_, err = dao.SysAdminUsers.Ctx(ctx).Where("id", req.Id).Update(do.SysAdminUsers{
+	_, err = dao.SysAdminUsers.Ctx(ctx).Where("id", req.ID).Update(do.SysAdminUsers{
 		Status: req.Status,
 	})
 	if err != nil {
@@ -404,7 +404,7 @@ func (s *sAdmin) UpdateUserStatus(ctx context.Context, req *v1.AdminUserUpdateSt
 
 	// If disabling, revoke all sessions
 	if req.Status == "disabled" {
-		common.RevokeAllSessions(ctx, "admin", req.Id)
+		common.RevokeAllSessions(ctx, "admin", req.ID)
 	}
 
 	return nil, nil
@@ -419,18 +419,18 @@ func (s *sAdmin) UnlockUser(ctx context.Context, req *v1.AdminUserUnlockReq) (*v
 		Id   int64  `json:"id"`
 		Role string `json:"role"`
 	}
-	err := dao.SysAdminUsers.Ctx(ctx).Where("id", req.Id).Fields("id, role").Scan(&user)
+	err := dao.SysAdminUsers.Ctx(ctx).Where("id", req.ID).Fields("id, role").Scan(&user)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if user == nil {
 		return nil, common.NewNotFoundError("管理员")
 	}
-	if err := assertCanManageAdminUser(ctx, req.Id, user.Role); err != nil {
+	if err := assertCanManageAdminUser(ctx, req.ID, user.Role); err != nil {
 		return nil, err
 	}
 
-	_, err = dao.SysAdminUsers.Ctx(ctx).Where("id", req.Id).Data(map[string]interface{}{
+	_, err = dao.SysAdminUsers.Ctx(ctx).Where("id", req.ID).Data(map[string]interface{}{
 		"failed_attempts": 0,
 		"locked_until":    nil,
 	}).Update()
@@ -450,14 +450,14 @@ func (s *sAdmin) ResetUserPassword(ctx context.Context, req *v1.AdminUserResetPa
 	var targetUser *struct {
 		Role string `json:"role"`
 	}
-	err := dao.SysAdminUsers.Ctx(ctx).Where("id", req.Id).Fields("role").Scan(&targetUser)
+	err := dao.SysAdminUsers.Ctx(ctx).Where("id", req.ID).Fields("role").Scan(&targetUser)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if targetUser == nil {
 		return nil, common.NewNotFoundError("管理员")
 	}
-	if err := assertCanManageAdminUser(ctx, req.Id, targetUser.Role); err != nil {
+	if err := assertCanManageAdminUser(ctx, req.ID, targetUser.Role); err != nil {
 		return nil, err
 	}
 
@@ -466,7 +466,7 @@ func (s *sAdmin) ResetUserPassword(ctx context.Context, req *v1.AdminUserResetPa
 		return nil, err
 	}
 
-	_, err = dao.SysAdminUsers.Ctx(ctx).Where("id", req.Id).Update(do.SysAdminUsers{
+	_, err = dao.SysAdminUsers.Ctx(ctx).Where("id", req.ID).Update(do.SysAdminUsers{
 		PasswordHash: passwordHash,
 	})
 	if err != nil {
@@ -474,7 +474,7 @@ func (s *sAdmin) ResetUserPassword(ctx context.Context, req *v1.AdminUserResetPa
 	}
 
 	// Force re-login
-	common.RevokeAllSessions(ctx, "admin", req.Id)
+	common.RevokeAllSessions(ctx, "admin", req.ID)
 
 	return nil, nil
 }

@@ -491,7 +491,8 @@ func (p *DataProviderImpl) RecordAudit(ctx context.Context, record *common.Audit
 			}
 		}()
 
-		bgCtx := context.Background()
+		// WithoutCancel：异步落库可能晚于请求结束，脱离取消但保留 ctxvar（request_id）
+		bgCtx := context.WithoutCancel(ctx)
 
 		// 分别获取全局级别和租户级别
 		globalLevel, tenantLevel := lcommon.GetAuditLevels(bgCtx, record.TenantID)
@@ -642,7 +643,8 @@ func (p *DataProviderImpl) UpdateTaskAudit(ctx context.Context, record *common.A
 			return
 		}
 
-		bgCtx := context.Background()
+		// WithoutCancel：异步落库可能晚于请求结束，脱离取消但保留 ctxvar（request_id）
+		bgCtx := context.WithoutCancel(ctx)
 		globalLevel, tenantLevel := lcommon.GetAuditLevels(bgCtx, record.TenantID)
 
 		// 按审计级别处理任务结果。task_result 为库内单列（无租户副本），落库只按全局级别
@@ -1261,11 +1263,11 @@ func refreshOAuthKeyLocked(ctx context.Context, keyID int64, encKey []byte) (str
 
 	switch oauthData.Platform {
 	case "claude":
-		newToken, err = loauth.ClaudeRefreshToken(oauthData.RefreshToken)
+		newToken, err = loauth.ClaudeRefreshToken(ctx, oauthData.RefreshToken)
 	case "openai", "codex":
-		newToken, err = loauth.OpenAIRefreshToken(oauthData.RefreshToken)
+		newToken, err = loauth.OpenAIRefreshToken(ctx, oauthData.RefreshToken)
 	case "gemini":
-		newToken, err = loauth.GeminiRefreshToken(oauthData.RefreshToken)
+		newToken, err = loauth.GeminiRefreshToken(ctx, oauthData.RefreshToken)
 	default:
 		return "", fmt.Errorf("unknown oauth platform: %s", oauthData.Platform)
 	}

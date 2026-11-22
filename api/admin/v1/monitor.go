@@ -56,7 +56,7 @@ type MonitorModelPerformanceReq struct {
 	StartDate string `json:"start_date" in:"query"` // YYYY-MM-DD，缺省=近30天起点
 	EndDate   string `json:"end_date" in:"query"`   // YYYY-MM-DD，缺省=今天
 	// 可选渠道筛选：0=全部渠道（选定渠道后当天数据改从 bil_usage_logs 明细实时聚合；0 哨兵被占用，无法筛「无渠道」）
-	ChannelId int64 `json:"channel_id" in:"query" d:"0"`
+	ChannelID int64 `json:"channel_id" in:"query" d:"0"`
 	// 可选模型筛选：空=全部模型（与 bil_usage_daily.model_name 同口径）
 	ModelName string `json:"model_name" in:"query"`
 }
@@ -259,7 +259,7 @@ type AlertRuleCreateRes struct {
 
 type AlertRuleUpdateReq struct {
 	g.Meta              `path:"/alert/rules/{id}" method:"put" mime:"json" tags:"管理后台-告警" summary:"更新告警规则"`
-	Id                  int64    `json:"id" in:"path" v:"required|min:1"`
+	ID                  int64    `json:"id" in:"path" v:"required|min:1"`
 	Name                string   `json:"name"`
 	MetricType          string   `json:"metric_type"`
 	Condition           string   `json:"condition"`
@@ -276,21 +276,21 @@ type AlertRuleUpdateRes struct{}
 
 type AlertRuleDeleteReq struct {
 	g.Meta `path:"/alert/rules/{id}" method:"delete" mime:"json" tags:"管理后台-告警" summary:"删除告警规则"`
-	Id     int64 `json:"id" in:"path" v:"required|min:1"`
+	ID     int64 `json:"id" in:"path" v:"required|min:1"`
 }
 
 type AlertRuleDeleteRes struct{}
 
 type AlertRuleToggleReq struct {
 	g.Meta `path:"/alert/rules/{id}/toggle" method:"put" mime:"json" tags:"管理后台-告警" summary:"切换告警规则"`
-	Id     int64 `json:"id" in:"path" v:"required|min:1"`
+	ID     int64 `json:"id" in:"path" v:"required|min:1"`
 }
 
 type AlertRuleToggleRes struct{}
 
 type AlertTestReq struct {
 	g.Meta `path:"/alert/rules/{id}/test" method:"post" mime:"json" tags:"管理后台-告警" summary:"测试告警"`
-	Id     int64 `json:"id" in:"path" v:"required|min:1"`
+	ID     int64 `json:"id" in:"path" v:"required|min:1"`
 }
 
 type AlertTestRes struct {
@@ -317,14 +317,14 @@ type AlertEventListRes struct {
 
 type AlertEventAcknowledgeReq struct {
 	g.Meta `path:"/alert/events/{id}/acknowledge" method:"put" mime:"json" tags:"管理后台-告警" summary:"确认告警"`
-	Id     int64 `json:"id" in:"path" v:"required|min:1"`
+	ID     int64 `json:"id" in:"path" v:"required|min:1"`
 }
 
 type AlertEventAcknowledgeRes struct{}
 
 type AlertEventResolveReq struct {
 	g.Meta `path:"/alert/events/{id}/resolve" method:"put" mime:"json" tags:"管理后台-告警" summary:"解决告警"`
-	Id     int64  `json:"id" in:"path" v:"required|min:1"`
+	ID     int64  `json:"id" in:"path" v:"required|min:1"`
 	Notes  string `json:"notes"`
 }
 

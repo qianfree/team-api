@@ -338,7 +338,7 @@ func (s *sAdmin) UpdateAnnouncement(ctx context.Context, req *v1.AnnouncementUpd
 	}
 
 	_, err := dao.NtfAnnouncements.Ctx(ctx).
-		Where("id", req.Id).
+		Where("id", req.ID).
 		Data(data).
 		Update()
 	if err != nil {
@@ -377,7 +377,7 @@ func (s *sAdmin) ListAnnouncements(ctx context.Context, req *v1.AnnouncementList
 
 // PublishAnnouncement 发布公告
 func (s *sAdmin) PublishAnnouncement(ctx context.Context, req *v1.AnnouncementPublishReq) (*v1.AnnouncementPublishRes, error) {
-	count, err := dao.NtfAnnouncements.Ctx(ctx).Where("id", req.Id).Count()
+	count, err := dao.NtfAnnouncements.Ctx(ctx).Where("id", req.ID).Count()
 	if err != nil {
 		return nil, err
 	}
@@ -385,7 +385,7 @@ func (s *sAdmin) PublishAnnouncement(ctx context.Context, req *v1.AnnouncementPu
 		return nil, common.NewNotFoundError("公告")
 	}
 	_, err = dao.NtfAnnouncements.Ctx(ctx).
-		Where("id", req.Id).
+		Where("id", req.ID).
 		Data(do.NtfAnnouncements{
 			Status: "published",
 		}).Update()
@@ -399,7 +399,7 @@ func (s *sAdmin) PublishAnnouncement(ctx context.Context, req *v1.AnnouncementPu
 // ArchiveAnnouncement 归档公告
 func (s *sAdmin) ArchiveAnnouncement(ctx context.Context, req *v1.AnnouncementArchiveReq) (*v1.AnnouncementArchiveRes, error) {
 	_, err := dao.NtfAnnouncements.Ctx(ctx).
-		Where("id", req.Id).
+		Where("id", req.ID).
 		Data(do.NtfAnnouncements{
 			Status: "archived",
 		}).Update()

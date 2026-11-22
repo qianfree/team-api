@@ -28,7 +28,7 @@ type EmailSendLogListRes struct {
 
 type EmailSendLogDetailReq struct {
 	g.Meta `path:"/email/send-logs/{id}" method:"get" mime:"json" tags:"管理后台-邮件" summary:"邮件发送记录详情"`
-	Id     int64 `json:"id" in:"path" v:"required|min:1"`
+	ID     int64 `json:"id" in:"path" v:"required|min:1"`
 }
 
 type EmailSendLogDetailRes struct {

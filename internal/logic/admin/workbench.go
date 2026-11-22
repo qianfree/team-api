@@ -126,7 +126,7 @@ func (s *sAdmin) GetWorkbenchSummary(ctx context.Context, _ *v1.AdminWorkbenchSu
 
 	res := &v1.AdminWorkbenchSummaryRes{
 		Metrics:     col.Metrics,
-		Items:       out,
+		Todos:       out,
 		Domains:     domainStats,
 		Models:      col.Models,
 		Breakers:    col.Breakers,

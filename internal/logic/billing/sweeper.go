@@ -9,6 +9,7 @@ import (
 	"github.com/gogf/gf/v2/util/gconv"
 
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
+	"github.com/qianfree/team-api/internal/utility/safego"
 )
 
 const (
@@ -40,7 +41,8 @@ func walletMaterializeInterval(ctx context.Context) time.Duration {
 //   - 覆盖期间产生的新变动会重新 SADD 脏标记，下个 tick 收敛（最终一致）。
 func StartWalletMaterializer(ctx context.Context) {
 	interval := walletMaterializeInterval(ctx)
-	go func() {
+	// 钱包物化器 panic 静默退出会让 DB 余额长期滞后，RunLoop 自愈重启
+	safego.RunLoop(ctx, "billing:wallet_materializer", func(ctx context.Context) {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		g.Log().Infof(ctx, "[WALLET MATERIALIZER] started, interval=%s", interval)
@@ -53,7 +55,7 @@ func StartWalletMaterializer(ctx context.Context) {
 				materializeDirtyWallets(ctx)
 			}
 		}
-	}()
+	})
 }
 
 // materializeDirtyWallets 单轮物化：取脏租户样本 → 读 Redis 权威值 → 覆盖 DB → 清脏标记
@@ -180,7 +182,15 @@ func sweepOneTenantPrededucts(ctx context.Context, activeSetKey string) {
 		var staleIDs []any
 		for _, rid := range members.Strings() {
 			amt, err := g.Redis().Do(ctx, "HGET", PreDeductRedisKeyPrefix+rid, "amount")
-			if err != nil || amt.IsNil() {
+			if err != nil {
+				// Redis 故障不得把活跃预扣当成 stale：既会漏加 frozen（写回后余额虚高），
+				// 又会 SREM 掉活跃成员（后续永久不再统计）。整轮放弃重算，留待下个
+				// sweep 周期重试；绝不能 continue 后用不完整的 frozen 走 fenced 写回。
+				g.Log().Warningf(ctx, "[PREDEDUCT SWEEP] read prededuct amount failed, abort recompute: tenant=%d request=%s: %v", tenantID, rid, err)
+				return
+			}
+			if amt.IsNil() {
+				// hash 已过期/丢失才是真正的 stale，可安全清理
 				staleIDs = append(staleIDs, rid)
 				continue
 			}

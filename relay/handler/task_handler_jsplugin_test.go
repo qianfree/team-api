@@ -7,7 +7,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -32,7 +32,9 @@ type jsBillingRecorder struct {
 	refunds       []decimal.Decimal
 }
 
-var errJSPreDeduct = errors.New("insufficient balance")
+// 模拟真实 PreDeductTask 的余额不足错误形状（以 %w 包裹 common.ErrInsufficientBalance，
+// handler 层按哨兵识别为 402；裸 errors.New 会被归入内部错误 500）
+var errJSPreDeduct = fmt.Errorf("pre-deduct task failed: %w", common.ErrInsufficientBalance)
 
 func (s *jsBillingRecorder) EstimateTaskCost(context.Context, int64, string, map[string]any, []byte, http.Header) (decimal.Decimal, error) {
 	return decimal.NewFromFloat(0.1), nil

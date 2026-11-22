@@ -7,18 +7,51 @@ type TokenDetails struct {
 	CachedTokens           int                 `json:"cached_tokens,omitempty"`
 	CachedTokensDetails    *CachedTokenDetails `json:"cached_tokens_details,omitempty"`     // cached_tokens 的模态细分（OpenAI 新结构，观测字段）
 	CachedCreationTokens   int                 `json:"cached_creation_tokens,omitempty"`    // Claude cache_creation_input_tokens
-	CachedCreation5mTokens int                 `json:"cached_creation_5m_tokens,omitempty"` // Claude 5分钟缓存创建
-	CachedCreation1hTokens int                 `json:"cached_creation_1h_tokens,omitempty"` // Claude 1小时缓存创建
+	CachedCreation5mTokens int                 `json:"cached_creation_5m_tokens,omitempty"` // 短 TTL 写入桶（Claude 5m / GPT 30m 归一）
+	CachedCreation1hTokens int                 `json:"cached_creation_1h_tokens,omitempty"` // 长 TTL 写入桶（Claude 1h / GPT 12h 归一）
 	// CacheWriteTokens 本次写入缓存的 token（OpenAI cache_write_tokens）。
 	// 与 Claude 缓存创建是同一物理事件的不同协议报法（互斥出现）：
 	// 计费侧 resolveTokenCounts 合并桶 max(cached_creation, cache_write) 统一按 CacheCreationPrice 计价
-	CacheWriteTokens         int `json:"cache_write_tokens,omitempty"`
-	AudioTokens              int `json:"audio_tokens,omitempty"`
-	TextTokens               int `json:"text_tokens,omitempty"`
-	ImageTokens              int `json:"image_tokens,omitempty"`
-	ReasoningTokens          int `json:"reasoning_tokens,omitempty"`
-	AcceptedPredictionTokens int `json:"accepted_prediction_tokens,omitempty"`
-	RejectedPredictionTokens int `json:"rejected_prediction_tokens,omitempty"`
+	CacheWriteTokens         int                     `json:"cache_write_tokens,omitempty"`
+	CacheWriteTokensDetails  *CacheWriteTokensDetail `json:"cache_write_tokens_details,omitempty"` // OpenAI TTL 细分（观测保留；计费读归一双桶）
+	AudioTokens              int                     `json:"audio_tokens,omitempty"`
+	TextTokens               int                     `json:"text_tokens,omitempty"`
+	ImageTokens              int                     `json:"image_tokens,omitempty"`
+	ReasoningTokens          int                     `json:"reasoning_tokens,omitempty"`
+	AcceptedPredictionTokens int                     `json:"accepted_prediction_tokens,omitempty"`
+	RejectedPredictionTokens int                     `json:"rejected_prediction_tokens,omitempty"`
+}
+
+// CacheWriteTokensDetail OpenAI cache_write_tokens 的 TTL 细分（与 dto 同构，指针直转）。
+// 官方语义：ttl_30m_tokens + ttl_12h_tokens = cache_write_tokens
+type CacheWriteTokensDetail struct {
+	TTL30mTokens int `json:"ttl_30m_tokens"`
+	TTL12hTokens int `json:"ttl_12h_tokens"`
+}
+
+// NormalizeCacheWriteTTL 归一 OpenAI TTL 细分到 Claude 风格短/长双桶：
+// ttl_30m → CachedCreation5mTokens（短桶，与 Claude 5m 同计价档）、
+// ttl_12h → CachedCreation1hTokens（长桶，与 Claude 1h 同档）。
+// 计费引擎、bil_usage_logs 分桶列、快照均只读双桶字段，本函数是 OpenAI 系
+// 用量进入计费链路的统一归一口（DtoTokenDetailsToCommon 内部调用）。
+// 防御：Claude 细分已存在（双报异常）不覆盖；细分和超出 cache_write_tokens
+// 总量（上游异常报数）时丢弃细分，回退合并桶口径，避免重复计费
+func (t *TokenDetails) NormalizeCacheWriteTTL() {
+	if t == nil || t.CacheWriteTokensDetails == nil {
+		return
+	}
+	if t.CachedCreation5mTokens > 0 || t.CachedCreation1hTokens > 0 {
+		return // Claude 细分优先（互斥协议双报防御）
+	}
+	ttl := t.CacheWriteTokensDetails
+	if ttl.TTL30mTokens <= 0 && ttl.TTL12hTokens <= 0 {
+		return // 细分全 0：按无细分处理，回退合并桶
+	}
+	if t.CacheWriteTokens > 0 && ttl.TTL30mTokens+ttl.TTL12hTokens > t.CacheWriteTokens {
+		return // 官方不变式 ttl30m+ttl12h=cache_write 被打破：不可信，回退
+	}
+	t.CachedCreation5mTokens = ttl.TTL30mTokens
+	t.CachedCreation1hTokens = ttl.TTL12hTokens
 }
 
 // CachedTokenDetails cached_tokens 的模态细分（OpenAI 新 usage 结构，观测字段）。
@@ -101,18 +134,21 @@ func (u *Usage) TotalInputTokens() int {
 	return total
 }
 
-// DtoTokenDetailsToCommon 将 dto.TokenDetails 转换为 common.TokenDetails
+// DtoTokenDetailsToCommon 将 dto.TokenDetails 转换为 common.TokenDetails。
+// 转换后执行 OpenAI TTL 细分归一（NormalizeCacheWriteTTL）：OpenAI 系上游的
+// 30m/12h 写入落到 5m/1h 双桶，计费侧无需感知供应商差异
 func DtoTokenDetailsToCommon(d *dto.TokenDetails) *TokenDetails {
 	if d == nil {
 		return nil
 	}
-	return &TokenDetails{
+	td := &TokenDetails{
 		CachedTokens:             d.CachedTokens,
 		CachedTokensDetails:      (*CachedTokenDetails)(d.CachedTokensDetails),
 		CachedCreationTokens:     d.CachedCreationTokens,
 		CachedCreation5mTokens:   d.CachedCreation5mTokens,
 		CachedCreation1hTokens:   d.CachedCreation1hTokens,
 		CacheWriteTokens:         d.CacheWriteTokens,
+		CacheWriteTokensDetails:  (*CacheWriteTokensDetail)(d.CacheWriteTokensDetails),
 		AudioTokens:              d.AudioTokens,
 		TextTokens:               d.TextTokens,
 		ImageTokens:              d.ImageTokens,
@@ -120,9 +156,12 @@ func DtoTokenDetailsToCommon(d *dto.TokenDetails) *TokenDetails {
 		AcceptedPredictionTokens: d.AcceptedPredictionTokens,
 		RejectedPredictionTokens: d.RejectedPredictionTokens,
 	}
+	td.NormalizeCacheWriteTTL()
+	return td
 }
 
 // CommonTokenDetailsToDto 将 common.TokenDetails 转换为 dto.TokenDetails
+// （common 侧已是归一后形态，直接映射不再归一）
 func CommonTokenDetailsToDto(c *TokenDetails) *dto.TokenDetails {
 	if c == nil {
 		return nil
@@ -134,6 +173,7 @@ func CommonTokenDetailsToDto(c *TokenDetails) *dto.TokenDetails {
 		CachedCreation5mTokens:   c.CachedCreation5mTokens,
 		CachedCreation1hTokens:   c.CachedCreation1hTokens,
 		CacheWriteTokens:         c.CacheWriteTokens,
+		CacheWriteTokensDetails:  (*dto.CacheWriteTokensDetail)(c.CacheWriteTokensDetails),
 		AudioTokens:              c.AudioTokens,
 		TextTokens:               c.TextTokens,
 		ImageTokens:              c.ImageTokens,

@@ -29,7 +29,7 @@ type ErrorLogListRes struct {
 
 type ErrorLogDetailReq struct {
 	g.Meta `path:"/error-logs/{id}" method:"get" mime:"json" tags:"管理后台-系统错误" summary:"错误日志详情"`
-	Id     int64 `json:"id" in:"path" v:"required|min:1"`
+	ID     int64 `json:"id" in:"path" v:"required|min:1"`
 }
 
 type ErrorLogDetailRes struct {
@@ -42,7 +42,7 @@ func (r *ErrorLogDetailRes) MarshalJSON() ([]byte, error) {
 
 type ErrorLogResolveReq struct {
 	g.Meta `path:"/error-logs/{id}/resolve" method:"put" mime:"json" tags:"管理后台-系统错误" summary:"标记错误已处理"`
-	Id     int64 `json:"id" in:"path" v:"required|min:1"`
+	ID     int64 `json:"id" in:"path" v:"required|min:1"`
 }
 
 type ErrorLogResolveRes struct{}

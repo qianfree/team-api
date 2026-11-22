@@ -200,7 +200,7 @@ func (s *sAdmin) TaskDetail(ctx context.Context, req *v1.TaskDetailReq) (*v1.Tas
 	}
 
 	return &v1.TaskDetailRes{
-		Task: item,
+		ModelTaskItem: item,
 	}, nil
 }
 

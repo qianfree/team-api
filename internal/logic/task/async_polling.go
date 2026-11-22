@@ -17,6 +17,7 @@ import (
 	"github.com/qianfree/team-api/internal/logic/monitor"
 	"github.com/qianfree/team-api/internal/logic/relay"
 	"github.com/qianfree/team-api/internal/logic/task/artifact"
+	"github.com/qianfree/team-api/internal/utility/safego"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/helper"
@@ -57,7 +58,7 @@ func StartAsyncPolling(ctx context.Context) {
 	g.Log().Info(ctx, "Starting async task polling...")
 	pollStop = make(chan struct{})
 	pollingWg.Add(1)
-	go func() {
+	safego.Run(ctx, "task:async_polling", func(ctx context.Context) {
 		defer pollingWg.Done()
 		ticker := time.NewTicker(pollInterval)
 		defer ticker.Stop()
@@ -68,10 +69,14 @@ func StartAsyncPolling(ctx context.Context) {
 				g.Log().Info(ctx, "Async task polling stopped")
 				return
 			case <-ticker.C:
-				pollOnce(ctx)
+				// 逐轮 Guard：单轮轮询异常只丢当轮（任务由下一轮或超时网兜底），
+				// 轮询器存活继续调度；wg 计数循环不能用 RunLoop 重启（会二次 Done）
+				safego.Guard(ctx, "task:poll_once", func() {
+					pollOnce(ctx)
+				})
 			}
 		}
-	}()
+	})
 }
 
 // StopAsyncPolling 通知轮询 goroutine 停止并等待其退出，在服务停机时调用。
@@ -544,7 +549,14 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 			taskDataMap["plugin_state"] = state
 		}
 	}
-	taskData, _ := json.Marshal(taskDataMap)
+	taskData, mErr := json.Marshal(taskDataMap)
+	if mErr != nil {
+		// taskDataMap 的值多来自上游 JSON（已 json.Valid 预校验），失败概率极低；
+		// 此时 taskData 为 null 字节，原样发给上游 FetchTask 无意义，跳过本轮
+		//（任务保持非终态，下一轮重试；30 分钟超时网兜底）
+		g.Log().Warningf(ctx, "async_polling: 序列化 taskData 失败，跳过本轮轮询 task=%d: %v", task.ID, mErr)
+		return
+	}
 
 	// 渠道调试日志（轮询记录，仅段2/段3——后台轮询无客户端交互）：
 	// 节流规则 = 只在「状态/进度相对上一次轮询发生变化」时落库（任务行 CAS 前的值即上一次

@@ -82,9 +82,11 @@ func (c *ClaudeToOpenAIResponseConverter) ConvertResponse(
 }
 
 // claudeCacheTokenDetails 将 ClaudeUsage 的缓存字段映射为 OpenAI prompt_tokens_details 细分。
-// OpenAI 协议本身无 5m/1h TTL 概念，这两个字段以扩展键（cached_creation_5m/1h_tokens）透出：
-// 宿主计费（resolveTokenCounts 的 TTL 分桶计价）从转换产物捕获用量，细分缺失时 1h 写入
-// 会被兜底按 5m 基础价计费（少收 37.5%），因此与总量一并透传，客户端不识别扩展键无副作用。
+// TTL 双桶对位：OpenAI 官方键 cache_write_tokens / cache_write_tokens_details.ttl_30m|ttl_12h
+// （短桶 5m→30m、长桶 1h→12h 归一映射）+ 扩展键 cached_creation_5m/1h_tokens 并存——
+// 官方键供 OpenAI SDK 客户端原生解析，扩展键保留字面 TTL 真相（5m≠30m）且兼容存量消费方。
+// 宿主计费（resolveTokenCounts 的 TTL 分桶计价）从转换产物捕获用量，细分缺失时长桶写入
+// 会被兜底按短桶基础价计费（少收），因此与总量一并透传，客户端不识别扩展键无副作用。
 // 无任何缓存用量时返回 nil（与 OpenAI 官方行为一致：prompt_tokens_details 省略）。
 func claudeCacheTokenDetails(u *dto.ClaudeUsage) *dto.TokenDetails {
 	if u == nil || (u.CacheReadInputTokens <= 0 && u.CacheCreationInputTokens <= 0) {
@@ -93,10 +95,17 @@ func claudeCacheTokenDetails(u *dto.ClaudeUsage) *dto.TokenDetails {
 	td := &dto.TokenDetails{
 		CachedTokens:         u.CacheReadInputTokens,
 		CachedCreationTokens: u.CacheCreationInputTokens,
+		CacheWriteTokens:     u.CacheCreationInputTokens,
 	}
 	if u.CacheCreation != nil {
 		td.CachedCreation5mTokens = u.CacheCreation.Ephemeral5mInputTokens
 		td.CachedCreation1hTokens = u.CacheCreation.Ephemeral1hInputTokens
+		if u.CacheCreation.Ephemeral5mInputTokens > 0 || u.CacheCreation.Ephemeral1hInputTokens > 0 {
+			td.CacheWriteTokensDetails = &dto.CacheWriteTokensDetail{
+				TTL30mTokens: u.CacheCreation.Ephemeral5mInputTokens,
+				TTL12hTokens: u.CacheCreation.Ephemeral1hInputTokens,
+			}
+		}
 	}
 	return td
 }

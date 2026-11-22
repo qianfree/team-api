@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"context"
 	crand "crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
+	"github.com/shopspring/decimal"
 
 	"github.com/qianfree/team-api/internal/logic/billing"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
@@ -113,7 +115,13 @@ func HandleSyncImageSubmit(r *ghttp.Request, body []byte, rc *relay_handler.Task
 	}
 	preDeduct, err := taskBillingProvider.PreDeductTask(ctx, rc.TenantID, rc.RequestID, estimatedCost, modelName)
 	if err != nil {
-		writeSyncImageError(w, http.StatusPaymentRequired, "insufficient balance")
+		// 钱包余额不足 → 402；其余（DB/Redis 故障）为内部错误 → 500（与 RelayHandler 预扣段同口径）
+		if errors.Is(err, relay_common.ErrInsufficientBalance) {
+			writeSyncImageError(w, http.StatusPaymentRequired, "insufficient balance")
+			return
+		}
+		g.Log().Errorf(ctx, "sync_image: pre-deduct internal error, tenant=%d, model=%s, err=%v", rc.TenantID, modelName, err)
+		writeSyncImageError(w, http.StatusInternalServerError, "billing temporarily unavailable")
 		return
 	}
 
@@ -122,7 +130,7 @@ func HandleSyncImageSubmit(r *ghttp.Request, body []byte, rc *relay_handler.Task
 	// 必须就地退掉上一步的预扣，避免冻结额被永久占用。
 	publicTaskID, err := generateSyncImagePublicID()
 	if err != nil {
-		_ = taskBillingProvider.SettleTaskFailed(ctx, rc.TenantID, rc.RequestID, preDeduct)
+		releaseSyncImagePreDeduct(ctx, rc, preDeduct)
 		g.Log().Errorf(ctx, "sync_image: generate task ID failed, refunded pre-deduct: %v", err)
 		writeSyncImageError(w, http.StatusInternalServerError, "generate task ID failed")
 		return
@@ -174,7 +182,7 @@ func HandleSyncImageSubmit(r *ghttp.Request, body []byte, rc *relay_handler.Task
 		SubmitTime:      &now,
 	}
 	if err := taskDataProvider.CreateTask(ctx, asyncTask); err != nil {
-		_ = taskBillingProvider.SettleTaskFailed(ctx, rc.TenantID, rc.RequestID, preDeduct)
+		releaseSyncImagePreDeduct(ctx, rc, preDeduct)
 		writeSyncImageError(w, http.StatusInternalServerError, "create task record failed: "+err.Error())
 		return
 	}
@@ -209,14 +217,17 @@ func HandleSyncImageSubmit(r *ghttp.Request, body []byte, rc *relay_handler.Task
 		SubmitTime:      now,
 	}
 	if !task.EnqueueSyncImageJob(job) {
-		_ = taskBillingProvider.SettleTaskFailed(ctx, rc.TenantID, rc.RequestID, preDeduct)
-		_ = taskDataProvider.UpdateTaskCAS(ctx, &relay_common.AsyncTask{
+		releaseSyncImagePreDeduct(ctx, rc, preDeduct)
+		if casErr := taskDataProvider.UpdateTaskCAS(ctx, &relay_common.AsyncTask{
 			ID:             created.ID,
 			Status:         "FAILURE",
 			FailReason:     "sync image worker queue full",
 			BillingSettled: true,
 			FinishTime:     &now,
-		}, "QUEUED")
+		}, "QUEUED"); casErr != nil {
+			// CAS 失败任务会滞留 QUEUED 无排障线索（预扣已释放、已向客户端返回 429），必须留痕
+			g.Log().Errorf(ctx, "sync_image: 队列满回滚任务状态失败 task=%s request=%s: %v", publicTaskID, rc.RequestID, casErr)
+		}
 		task.DecrActiveTask()
 		rc.TaskID = ""
 		writeSyncImageError(w, http.StatusTooManyRequests, "server busy, please retry later")
@@ -321,6 +332,15 @@ func generateSyncImagePublicID() (string, error) {
 		return "", err
 	}
 	return "task_" + hex.EncodeToString(b), nil
+}
+
+// releaseSyncImagePreDeduct 失败路径释放预扣冻结（原 `_ = SettleTaskFailed` 静默吞错）：
+// 冻结款未释放会持续占用租户资金，失败必须留痕；prededuct_sweep cron 自愈兜底。
+func releaseSyncImagePreDeduct(ctx context.Context, rc *relay_handler.TaskRelayContext, preDeduct decimal.Decimal) {
+	if rErr := taskBillingProvider.SettleTaskFailed(ctx, rc.TenantID, rc.RequestID, preDeduct); rErr != nil {
+		g.Log().Errorf(ctx, "sync_image: 释放预扣冻结失败（等待 prededuct_sweep 自愈）: request=%s tenant=%d frozen=%s err=%v",
+			rc.RequestID, rc.TenantID, preDeduct, rErr)
+	}
 }
 
 func writeSyncImageError(w http.ResponseWriter, statusCode int, message string) {

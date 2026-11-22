@@ -1,10 +1,11 @@
 package kling
 
 import (
-	"fmt"
+	"context"
 	"strings"
 	"time"
 
+	"github.com/gogf/gf/v2/frame/g"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -25,7 +26,8 @@ func buildKlingJWT(apiKey string) string {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	signed, err := token.SignedString([]byte(secretKey))
 	if err != nil {
-		fmt.Printf("kling jwt sign error: %v\n", err)
+		// 调试残留清理：stdout 打印改为结构化日志，回退明文 key 继续请求（由上游报错暴露问题）
+		g.Log().Warningf(context.Background(), "kling jwt sign error: %v", err)
 		return apiKey
 	}
 	return signed

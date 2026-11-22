@@ -203,7 +203,7 @@ func HandleMiniMaxVideoCancel(
 		return
 	}
 
-	result, taskErr := taskminimax.CancelTask(channel.BaseURL, channel.ApiKey, pd.UpstreamTaskID, parseMiniMaxUseProxy(channel.Settings))
+	result, taskErr := taskminimax.CancelTask(ctx, channel.BaseURL, channel.ApiKey, pd.UpstreamTaskID, parseMiniMaxUseProxy(channel.Settings))
 	if taskErr != nil {
 		// 远程取消失败（含上游判定运行中/已结束不可取消）：以远程结论为准
 		g.Log().Infof(ctx, "MiniMaxVideoCancel: upstream rejected, taskID=%s, status=%d, message=%q", taskID, taskErr.StatusCode, taskErr.Message)

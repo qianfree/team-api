@@ -27,7 +27,7 @@ type AdminUserItem struct {
 	Role        string `json:"role"`
 	Status      string `json:"status"`
 	LastLoginAt string `json:"last_login_at"`
-	LastLoginIp string `json:"last_login_ip"`
+	LastLoginIP string `json:"last_login_ip"`
 	LockedUntil string `json:"locked_until"`
 	CreatedAt   string `json:"created_at"`
 	// Roles 是该账号已分配的角色。role=super_admin 时为空数组（超管权限来自账号属性，
@@ -54,7 +54,7 @@ type AdminUserCreateRes struct {
 // AdminUserUpdateReq 更新管理员请求
 type AdminUserUpdateReq struct {
 	g.Meta      `path:"/users/{id}" method:"put" mime:"json" tags:"管理后台-用户管理" summary:"更新管理员"`
-	Id          int64   `json:"id" in:"path" v:"required" dc:"管理员ID"`
+	ID          int64   `json:"id" in:"path" v:"required" dc:"管理员ID"`
 	DisplayName *string `json:"display_name" v:"regex:^[^<>]*$#显示名称不能包含 < 或 > 字符" dc:"显示名称"`
 	Email       *string `json:"email" dc:"邮箱"`
 	Role        *string `json:"role" v:"in:super_admin,admin#角色只能是 super_admin 或 admin" dc:"角色"`
@@ -65,7 +65,7 @@ type AdminUserUpdateRes struct{}
 // AdminUserDeleteReq 删除管理员请求
 type AdminUserDeleteReq struct {
 	g.Meta `path:"/users/{id}" method:"delete" mime:"json" tags:"管理后台-用户管理" summary:"删除管理员"`
-	Id     int64 `json:"id" in:"path" v:"required" dc:"管理员ID"`
+	ID     int64 `json:"id" in:"path" v:"required" dc:"管理员ID"`
 }
 
 type AdminUserDeleteRes struct{}
@@ -73,7 +73,7 @@ type AdminUserDeleteRes struct{}
 // AdminUserUpdateStatusReq 启用/禁用管理员请求
 type AdminUserUpdateStatusReq struct {
 	g.Meta `path:"/users/{id}/status" method:"put" mime:"json" tags:"管理后台-用户管理" summary:"启用/禁用管理员"`
-	Id     int64  `json:"id" in:"path" v:"required" dc:"管理员ID"`
+	ID     int64  `json:"id" in:"path" v:"required" dc:"管理员ID"`
 	Status string `json:"status" v:"required|in:active,disabled#请选择状态|状态值无效" dc:"状态：active / disabled"`
 }
 
@@ -82,7 +82,7 @@ type AdminUserUpdateStatusRes struct{}
 // AdminUserResetPasswordReq 重置管理员密码请求
 type AdminUserResetPasswordReq struct {
 	g.Meta      `path:"/users/{id}/reset-password" method:"put" mime:"json" tags:"管理后台-用户管理" summary:"重置管理员密码"`
-	Id          int64  `json:"id" in:"path" v:"required" dc:"管理员ID"`
+	ID          int64  `json:"id" in:"path" v:"required" dc:"管理员ID"`
 	NewPassword string `json:"new_password" v:"required|length:8,64#请输入新密码|密码长度为8-64位" dc:"新密码"`
 }
 
@@ -91,7 +91,7 @@ type AdminUserResetPasswordRes struct{}
 // AdminUserUnlockReq 解除管理员登录锁定请求
 type AdminUserUnlockReq struct {
 	g.Meta `path:"/users/{id}/unlock" method:"put" mime:"json" tags:"管理后台-用户管理" summary:"解除管理员登录锁定"`
-	Id     int64 `json:"id" in:"path" v:"required" dc:"管理员ID"`
+	ID     int64 `json:"id" in:"path" v:"required" dc:"管理员ID"`
 }
 
 type AdminUserUnlockRes struct{}

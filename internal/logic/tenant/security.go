@@ -46,7 +46,7 @@ func (s *sTenant) Verify2FA(ctx context.Context, req *v1.Tenant2FAVerifyReq) (*v
 	if !valid {
 		// 审计补全：2FA 步失败此前不入登录历史，造成租户登录审计空洞
 		// （失败计数已在 common.Verify2FACode 内完成，此处只补审计记录）
-		_ = common.RecordLoginHistory(ctx, "tenant", claims.UserID, claims.TenantID, "totp", ipAddress, ua, deviceFP, false, "验证码错误")
+		recordLoginHistorySafe(ctx, "tenant", claims.UserID, claims.TenantID, "totp", ipAddress, ua, deviceFP, false, "验证码错误")
 		return nil, common.NewBusinessError(consts.CodeTotpInvalid, consts.MsgTotpInvalid)
 	}
 
@@ -87,7 +87,7 @@ func (s *sTenant) Verify2FA(ctx context.Context, req *v1.Tenant2FAVerifyReq) (*v
 		LastLoginIp: ipAddress,
 	}).Update()
 
-	_ = common.RecordLoginHistory(ctx, "tenant", user.Id, user.TenantId, "totp", ipAddress, ua, deviceFP, true, "")
+	recordLoginHistorySafe(ctx, "tenant", user.Id, user.TenantId, "totp", ipAddress, ua, deviceFP, true, "")
 
 	// Get tenant info
 	var tenant *entity.TntTenants
@@ -310,10 +310,13 @@ func buildTenantUserMapLocal(ctx context.Context, records []entity.AudLoginHisto
 		ids = append(ids, id)
 	}
 	var users []entity.TntUsers
-	_ = dao.TntUsers.Ctx(ctx).
+	if err := dao.TntUsers.Ctx(ctx).
 		Fields("id, username, display_name").
 		WhereIn("id", ids).
-		Scan(&users)
+		Scan(&users); err != nil {
+		// 查询失败时映射为空（仅影响展示字段），留痕排查
+		g.Log().Warningf(ctx, "查询租户用户摘要失败（构建用户映射）: %v", err)
+	}
 	for _, u := range users {
 		m[u.Id] = tenantUserBriefLocal{Username: u.Username, DisplayName: u.DisplayName}
 	}

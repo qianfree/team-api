@@ -16,6 +16,8 @@ type ModelListReq struct {
 	Status        string `json:"status" dc:"状态筛选：active/deprecated/offline"`
 	Search        string `json:"search" dc:"搜索关键词（模型名或显示名）"`
 	PricingStatus string `json:"pricing_status" dc:"定价状态筛选：priced/unpriced"`
+	IsRecommended string `json:"is_recommended" dc:"广场推荐位筛选：true=在推荐位/false=不在，空=不过滤"`
+	IsNew         string `json:"is_new" dc:"广场上新位筛选：true=在上新位/false=不在，空=不过滤"`
 }
 
 // ModelListRes 模型列表响应
@@ -36,7 +38,7 @@ type ModelChannelInfo struct {
 // ModelItem 模型信息
 type ModelItem struct {
 	ID               int64           `json:"id"`
-	ModelId          string          `json:"model_id"`
+	ModelID          string          `json:"model_id"`
 	ModelName        string          `json:"model_name"`
 	Category         string          `json:"category"`
 	Vendor           string          `json:"vendor"` // 研发厂商（空=未分类）
@@ -68,7 +70,7 @@ type ModelItem struct {
 // ModelCreateReq 创建模型请求
 type ModelCreateReq struct {
 	g.Meta       `path:"/models" method:"post" mime:"json" tags:"管理后台-模型" summary:"创建模型"`
-	ModelId      string          `json:"model_id" v:"required|length:1,100#请输入模型标识|模型标识长度1-100" dc:"模型唯一标识"`
+	ModelID      string          `json:"model_id" v:"required|length:1,100#请输入模型标识|模型标识长度1-100" dc:"模型唯一标识"`
 	ModelName    string          `json:"model_name" dc:"模型显示名称"`
 	Category     string          `json:"category" v:"required|in:chat,embedding,image,audio,rerank,video#请选择分类|分类必须是 chat/embedding/image/audio/rerank/video" dc:"模型分类"`
 	Vendor       string          `json:"vendor" v:"in:openai,anthropic,google,xai,mistral,cohere,meta,alibaba,bytedance,deepseek,zhipu,moonshot,minimax,baidu,tencent,xunfei,kuaishou,midjourney,suno#厂商值不合法" dc:"研发厂商（空=未分类）"`
@@ -333,7 +335,7 @@ type ModelOptionsRes struct {
 // ModelOptionItem 模型选项项（精简字段）
 type ModelOptionItem struct {
 	ID        int64  `json:"id"`
-	ModelId   string `json:"model_id"`
+	ModelID   string `json:"model_id"`
 	ModelName string `json:"model_name"`
 	Category  string `json:"category"`
 	Status    string `json:"status" dc:"模型状态：active/deprecated/offline"`
@@ -403,7 +405,7 @@ type ModelFetchOfficialInfoRes struct {
 // ModelExportJsonReq 导出模型配置（JSON，用于跨环境迁移）
 type ModelExportJsonReq struct {
 	g.Meta   `path:"/models/export-json" method:"post" mime:"json" tags:"管理后台-模型" summary:"导出模型配置JSON"`
-	ModelIds []string `json:"model_ids" v:"required#请至少选择一个模型" dc:"要导出的model_id列表"`
+	ModelIDs []string `json:"model_ids" v:"required#请至少选择一个模型" dc:"要导出的model_id列表"`
 }
 
 // ModelExportJsonRes 导出模型配置JSON响应（直接写入响应流）
@@ -411,19 +413,19 @@ type ModelExportJsonRes struct{}
 
 // ModelImportPreviewReq 导入模型预览请求
 type ModelImportPreviewReq struct {
-	g.Meta `path:"/models/import-preview" method:"post" tags:"管理后台-模型" summary:"导入模型预览"`
+	g.Meta `path:"/models/import-preview" method:"post" mime:"multipart/form-data" tags:"管理后台-模型" summary:"导入模型预览"`
 }
 
-// ModelImportPreviewRes 导入模型预览响应
+// ModelImportPreviewRes 导入模型预览响应（不分页列表，统一 {list} 结构）
 type ModelImportPreviewRes struct {
-	Models []ModelImportPreviewItem `json:"models"`
+	List []ModelImportPreviewItem `json:"list"`
 }
 
 // ModelImportPreviewItem 导入预览项（模型信息 + 冲突标记）。
 // 前端确认导入时把 preview 返回的 models 原样回传，因此该结构必须携带
 // 全量可还原字段（含参数倍率与计费方案声明），缺字段会在回传链路被静默丢弃
 type ModelImportPreviewItem struct {
-	ModelId          string                `json:"model_id"`
+	ModelID          string                `json:"model_id"`
 	ModelName        string                `json:"model_name"`
 	Category         string                `json:"category"`
 	Vendor           string                `json:"vendor"` // 研发厂商（空=未分类）
@@ -460,7 +462,7 @@ type ModelImportReq struct {
 
 // ModelImportItem 导入模型项（含定价/时段/参数倍率，全量替换语义）
 type ModelImportItem struct {
-	ModelId          string                `json:"model_id" v:"required" dc:"模型唯一标识"`
+	ModelID          string                `json:"model_id" v:"required" dc:"模型唯一标识"`
 	ModelName        string                `json:"model_name" dc:"模型显示名称"`
 	Category         string                `json:"category" v:"required|in:chat,embedding,image,audio,rerank,video#请选择分类|分类无效" dc:"模型分类"`
 	Vendor           string                `json:"vendor" v:"in:openai,anthropic,google,xai,mistral,cohere,meta,alibaba,bytedance,deepseek,zhipu,moonshot,minimax,baidu,tencent,xunfei,kuaishou,midjourney,suno#厂商值不合法" dc:"研发厂商（空=未分类）"`

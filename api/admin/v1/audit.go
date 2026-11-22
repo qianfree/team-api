@@ -67,8 +67,8 @@ type RequestAuditLogListReq struct {
 	UserID        int64  `json:"user_id" dc:"用户ID"`
 	ApiKeyID      int    `json:"api_key_id" dc:"API Key ID"`
 	Username      string `json:"username" dc:"用户名（模糊匹配）"`
-	RequestId     string `json:"request_id" dc:"Request ID（精确匹配）"`
-	TaskId        string `json:"task_id" dc:"异步任务ID（精确匹配）"`
+	RequestID     string `json:"request_id" dc:"Request ID（精确匹配）"`
+	TaskID        string `json:"task_id" dc:"异步任务ID（精确匹配）"`
 	Method        string `json:"method" dc:"HTTP 方法"`
 	Path          string `json:"path" dc:"请求路径"`
 	Model         string `json:"model" dc:"模型名称（精确匹配）"`
@@ -88,7 +88,7 @@ type RequestAuditLogListRes struct {
 
 type RequestAuditLogDetailReq struct {
 	g.Meta `path:"/audit/request-logs/{id}" method:"get" mime:"json" tags:"管理后台-审计" summary:"请求审计日志详情"`
-	Id     int64 `json:"id" in:"path" v:"required|min:1"`
+	ID     int64 `json:"id" in:"path" v:"required|min:1"`
 }
 
 type RequestAuditLogDetailRes struct {
@@ -103,7 +103,7 @@ func (r *RequestAuditLogDetailRes) MarshalJSON() ([]byte, error) {
 // （按三层降级关联：会话键 → 内容链 → 身份推断，段/分支/缺失标注齐全）
 type RequestAuditLogConversationReq struct {
 	g.Meta `path:"/audit/request-logs/{id}/conversation" method:"get" mime:"json" tags:"管理后台-审计" summary:"审计日志会话视图（还原完整对话）"`
-	Id     int64 `json:"id" in:"path" v:"required|min:1" dc:"锚点审计记录ID"`
+	ID     int64 `json:"id" in:"path" v:"required|min:1" dc:"锚点审计记录ID"`
 }
 
 // RequestAuditLogConversationRes 会话重组结果平铺（json:"-" + MarshalJSON 避免双层 data）
@@ -118,7 +118,7 @@ func (r *RequestAuditLogConversationRes) MarshalJSON() ([]byte, error) {
 // ForwardingTraceGetReq 按 request_id 查询请求转发路径追踪（用量日志详情懒加载用，仅取 trace 列）。
 type ForwardingTraceGetReq struct {
 	g.Meta    `path:"/audit/forwarding-trace/{request_id}" method:"get" mime:"json" tags:"管理后台-审计" summary:"按 request_id 查转发路径追踪"`
-	RequestId string `json:"request_id" in:"path" v:"required" dc:"请求ID"`
+	RequestID string `json:"request_id" in:"path" v:"required" dc:"请求ID"`
 }
 
 // ForwardingTraceGetRes 返回已解析的 trace 对象（api 包不导入 relay/common，logic 层 json.Unmarshal）。

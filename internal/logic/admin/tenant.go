@@ -281,7 +281,7 @@ func (s *sAdmin) CreateTenant(ctx context.Context, req *v1.TenantCreateReq) (*v1
 		return nil, err
 	}
 
-	return &v1.TenantCreateRes{Id: tenantID}, nil
+	return &v1.TenantCreateRes{ID: tenantID}, nil
 }
 
 // batchTenantAggregates 批量查询一批租户的 owner 名称、成员数、钱包余额，
@@ -510,7 +510,7 @@ func (s *sAdmin) GetTenant(ctx context.Context, req *v1.TenantGetReq) (*v1.Tenan
 		UpdatedAt           *gtime.Time `json:"updated_at"`
 	}
 	err := dao.TntTenants.Ctx(ctx).
-		Where("id", req.Id).Scan(&tenant)
+		Where("id", req.ID).Scan(&tenant)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
@@ -527,12 +527,12 @@ func (s *sAdmin) GetTenant(ctx context.Context, req *v1.TenantGetReq) (*v1.Tenan
 
 	// Get member count
 	memberCount, _ := dao.TntUsers.Ctx(ctx).
-		Where("tenant_id", req.Id).Count()
+		Where("tenant_id", req.ID).Count()
 
 	// Get wallet balance / 累计消费：优先读 Redis 权威值（调整余额/入账/结算后详情页立即可见），DB 物化值兜底
 	walletBalance := "0"
 	totalConsumed := "0"
-	if w, err := billing.GetWallet(ctx, req.Id); err == nil {
+	if w, err := billing.GetWallet(ctx, req.ID); err == nil {
 		walletBalance = strconv.FormatFloat(w.Balance, 'f', -1, 64)
 		totalConsumed = strconv.FormatFloat(w.TotalConsumed, 'f', -1, 64)
 	} else {
@@ -541,7 +541,7 @@ func (s *sAdmin) GetTenant(ctx context.Context, req *v1.TenantGetReq) (*v1.Tenan
 			TotalConsumed string `json:"total_consumed"`
 		}
 		_ = dao.BilWallets.Ctx(ctx).
-			Where("tenant_id", req.Id).Scan(&wallet)
+			Where("tenant_id", req.ID).Scan(&wallet)
 
 		if wallet != nil {
 			if wallet.Balance != "" {
@@ -618,7 +618,7 @@ func (s *sAdmin) UpdateTenantStatus(ctx context.Context, req *v1.TenantUpdateSta
 		Id int64 `json:"id"`
 	}
 	err := dao.TntTenants.Ctx(ctx).
-		Where("id", req.Id).Scan(&tenant)
+		Where("id", req.ID).Scan(&tenant)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
@@ -626,7 +626,7 @@ func (s *sAdmin) UpdateTenantStatus(ctx context.Context, req *v1.TenantUpdateSta
 		return nil, common.NewNotFoundError("租户")
 	}
 
-	_, err = dao.TntTenants.Ctx(ctx).Where("id", req.Id).Update(do.TntTenants{
+	_, err = dao.TntTenants.Ctx(ctx).Where("id", req.ID).Update(do.TntTenants{
 		Status: req.Status,
 	})
 	if err != nil {
@@ -684,7 +684,7 @@ func (s *sAdmin) UpdateTenant(ctx context.Context, req *v1.TenantUpdateReq) (*v1
 		data.Remark = remark
 	}
 
-	_, err := dao.TntTenants.Ctx(ctx).Where("id", req.Id).Update(data)
+	_, err := dao.TntTenants.Ctx(ctx).Where("id", req.ID).Update(data)
 	if err != nil {
 		return nil, err
 	}
@@ -693,7 +693,7 @@ func (s *sAdmin) UpdateTenant(ctx context.Context, req *v1.TenantUpdateReq) (*v1
 	// 与充值自动升级路径（billing.CheckAndUpgradeLevel）行为对齐；
 	// 不清除则旧折扣在 600s 定价缓存 TTL 内继续生效
 	if req.Level != nil {
-		billing.InvalidateTenantLevelCaches(ctx, req.Id)
+		billing.InvalidateTenantLevelCaches(ctx, req.ID)
 	}
 
 	return nil, nil
@@ -710,7 +710,7 @@ func (s *sAdmin) UpdateTenantChannelScope(ctx context.Context, req *v1.TenantCha
 		return nil, gerror.New("default_channel_scope 必须是有效的 JSON（如 [1,5,12]）或 null")
 	}
 
-	_, err := dao.TntTenants.Ctx(ctx).Where("id", req.Id).Data(do.TntTenants{
+	_, err := dao.TntTenants.Ctx(ctx).Where("id", req.ID).Data(do.TntTenants{
 		DefaultChannelScope: scopeValue,
 	}).Update()
 	if err != nil {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/gogf/gf/v2/frame/g"
 
+	"github.com/qianfree/team-api/internal/utility/safego"
 	"github.com/qianfree/team-api/relay/common"
 )
 
@@ -176,7 +177,7 @@ func StreamScannerHandler(
 	pingTicker := time.NewTicker(defaultPingInterval)
 	defer pingTicker.Stop()
 	wg.Add(1)
-	go func() {
+	safego.Run(ctx, "relay:stream_ping", func(ctx context.Context) {
 		defer wg.Done()
 		for {
 			select {
@@ -199,23 +200,44 @@ func StreamScannerHandler(
 				return
 			}
 		}
-	}()
+	})
 
 	// 主 goroutine 阻塞等待（单次 select，用 Timer 实现空闲超时）
 	timeoutTimer := time.NewTimer(streamTimeout)
 	defer timeoutTimer.Stop()
+
+	// shutdown 收尾序列：通知所有协程停止（先 signal 再 wait），各退出分支直接调用后 return
+	// （原 goto shutdown 写法违反规范禁令 goto，重构为闭包 + 早返回，行为不变）
+	shutdown := func() {
+		safeSendBool(stopChan)
+
+		waitDone := make(chan struct{})
+		go func() {
+			wg.Wait()
+			close(waitDone)
+		}()
+
+		select {
+		case <-waitDone:
+		case <-time.After(shutdownWaitTimeout):
+			g.Log().Warning(ctx, "StreamScanner: goroutine shutdown timeout")
+		}
+	}
 
 	for {
 		select {
 		case <-timeoutTimer.C:
 			info.StreamStatus.SetEndReason(common.StreamEndReasonTimeout,
 				fmt.Errorf("stream idle timeout: no data received for %v", streamTimeout))
-			goto shutdown
+			shutdown()
+			return
 		case <-stopChan:
-			goto shutdown
+			shutdown()
+			return
 		case <-ctx.Done():
 			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, ctx.Err())
-			goto shutdown
+			shutdown()
+			return
 		case <-resetChan:
 			// scanner 每读一行都通知重置
 			if !timeoutTimer.Stop() {
@@ -226,22 +248,6 @@ func StreamScannerHandler(
 			}
 			timeoutTimer.Reset(streamTimeout)
 		}
-	}
-
-shutdown:
-	// 通知所有协程停止（先 signal 再 wait）
-	safeSendBool(stopChan)
-
-	waitDone := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(waitDone)
-	}()
-
-	select {
-	case <-waitDone:
-	case <-time.After(shutdownWaitTimeout):
-		g.Log().Warning(ctx, "StreamScanner: goroutine shutdown timeout")
 	}
 }
 

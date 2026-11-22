@@ -192,7 +192,7 @@ func (s *sAdmin) GetUserPermissions(ctx context.Context, req *v1.AdminPermission
 		PermissionPoint string `json:"permission_point" orm:"permission_point"`
 	}
 	err := dao.SysAdminRolePerms.Ctx(ctx).
-		Where("admin_user_id", req.Id).
+		Where("admin_user_id", req.ID).
 		Scan(&perms)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
@@ -210,7 +210,7 @@ func (s *sAdmin) GetUserPermissions(ctx context.Context, req *v1.AdminPermission
 		ScopeValue string `json:"scope_value" orm:"scope_value"`
 	}
 	err = dao.SysAdminDataScopes.Ctx(ctx).
-		Where("admin_user_id", req.Id).
+		Where("admin_user_id", req.ID).
 		Scan(&scopes)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
@@ -238,7 +238,7 @@ func (s *sAdmin) UpdateUserPermissions(ctx context.Context, req *v1.AdminPermiss
 		Role string `json:"role"`
 	}
 	err := dao.SysAdminUsers.Ctx(ctx).
-		Where("id", req.Id).Scan(&user)
+		Where("id", req.ID).Scan(&user)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
@@ -248,7 +248,7 @@ func (s *sAdmin) UpdateUserPermissions(ctx context.Context, req *v1.AdminPermiss
 	if user.Role == "super_admin" {
 		return nil, common.NewBadRequestError("超级管理员无需配置权限")
 	}
-	if err := assertCanManageAdminUser(ctx, req.Id, user.Role); err != nil {
+	if err := assertCanManageAdminUser(ctx, req.ID, user.Role); err != nil {
 		return nil, err
 	}
 
@@ -265,7 +265,7 @@ func (s *sAdmin) UpdateUserPermissions(ctx context.Context, req *v1.AdminPermiss
 	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		// Delete existing permissions
 		_, err := dao.SysAdminRolePerms.Ctx(ctx).
-			Where("admin_user_id", req.Id).
+			Where("admin_user_id", req.ID).
 			Delete()
 		if err != nil {
 			return err
@@ -276,7 +276,7 @@ func (s *sAdmin) UpdateUserPermissions(ctx context.Context, req *v1.AdminPermiss
 			data := make([]do.SysAdminRolePerms, len(perms))
 			for i, p := range perms {
 				data[i] = do.SysAdminRolePerms{
-					AdminUserId:     req.Id,
+					AdminUserId:     req.ID,
 					PermissionPoint: p,
 				}
 			}
@@ -293,7 +293,7 @@ func (s *sAdmin) UpdateUserPermissions(ctx context.Context, req *v1.AdminPermiss
 	}
 
 	// 特批权限参与有效权限计算，变更后必须让该用户的权限缓存失效
-	InvalidateUserPermCache(ctx, req.Id)
+	InvalidateUserPermCache(ctx, req.ID)
 
 	return nil, nil
 }

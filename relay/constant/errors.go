@@ -161,6 +161,17 @@ func NewRateLimitError(message string) *RelayError {
 	}
 }
 
+// NewInternalError 创建内部错误（500）。Cause 仅用于服务端日志（错误写出器对
+// internal_error 类型不向客户端拼接 Cause），Message 必须是通用文案，不得包含内部细节。
+func NewInternalError(message string, cause error) *RelayError {
+	return &RelayError{
+		StatusCode: 500,
+		Message:    message,
+		Type:       "internal_error",
+		Cause:      cause,
+	}
+}
+
 // NewModelGoneError 创建模型已下线错误（410 Gone）
 func NewModelGoneError(modelName, sunsetDate string) *RelayError {
 	return &RelayError{

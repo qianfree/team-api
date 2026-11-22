@@ -88,7 +88,7 @@ func HandleMiniMaxVideoSubmit(r *ghttp.Request) {
 	}
 
 	rc.ForwardingTrace = buildTaskForwardingTrace(r.URL.Path, taskBody, channelMeta, capture.StatusCode())
-	go recordTaskSubmitAudit(r, rc, capture, taskBody)
+	goRecordTaskSubmitAudit(r, rc, capture, taskBody)
 }
 
 // HandleMiniMaxVideoRetrieve 处理 GET /v2/query/video_generation/{task_id}（查询视频任务）
@@ -200,7 +200,7 @@ func HandleMiniMaxVideoV1Submit(r *ghttp.Request) {
 	}
 
 	rc.ForwardingTrace = buildTaskForwardingTrace(r.URL.Path, taskBody, channelMeta, capture.StatusCode())
-	go recordTaskSubmitAudit(r, rc, capture, taskBody)
+	goRecordTaskSubmitAudit(r, rc, capture, taskBody)
 }
 
 // HandleMiniMaxVideoV1Retrieve 处理 GET /v1/query/video_generation?task_id=（v1 官方协议任务查询）

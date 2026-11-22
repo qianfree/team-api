@@ -42,7 +42,7 @@ func (s *sAdmin) ListPlans(ctx context.Context, req *v1.PlanListReq) (*v1.PlanLi
 func (s *sAdmin) GetPlan(ctx context.Context, req *v1.PlanDetailReq) (*v1.PlanDetailRes, error) {
 	var plan *v1.PlanItem
 	err := dao.PlnPlans.Ctx(ctx).
-		Where("id", req.Id).
+		Where("id", req.ID).
 		Scan(&plan)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
@@ -122,7 +122,7 @@ func (s *sAdmin) UpdatePlan(ctx context.Context, req *v1.PlanUpdateReq) (*v1.Pla
 	}
 
 	result, err := dao.PlnPlans.Ctx(ctx).
-		Where("id", req.Id).
+		Where("id", req.ID).
 		Data(data).
 		Update()
 	if err != nil {
@@ -141,7 +141,7 @@ func (s *sAdmin) UpdatePlan(ctx context.Context, req *v1.PlanUpdateReq) (*v1.Pla
 // ArchivePlan 下架套餐（软删除）
 func (s *sAdmin) ArchivePlan(ctx context.Context, req *v1.PlanArchiveReq) (*v1.PlanArchiveRes, error) {
 	result, err := dao.PlnPlans.Ctx(ctx).
-		Where("id", req.Id).
+		Where("id", req.ID).
 		Where("status", "active").
 		Data(do.PlnPlans{
 			Status: "archived",
@@ -159,7 +159,7 @@ func (s *sAdmin) ArchivePlan(ctx context.Context, req *v1.PlanArchiveReq) (*v1.P
 // ToggleRecommend 切换推荐标记
 func (s *sAdmin) ToggleRecommend(ctx context.Context, req *v1.PlanToggleRecommendReq) (*v1.PlanToggleRecommendRes, error) {
 	val, err := dao.PlnPlans.Ctx(ctx).
-		Where("id", req.Id).
+		Where("id", req.ID).
 		Fields("is_recommended").
 		Value()
 	if err != nil {
@@ -168,7 +168,7 @@ func (s *sAdmin) ToggleRecommend(ctx context.Context, req *v1.PlanToggleRecommen
 	isRecommended := val.Bool()
 
 	_, err = dao.PlnPlans.Ctx(ctx).
-		Where("id", req.Id).
+		Where("id", req.ID).
 		Data(do.PlnPlans{
 			IsRecommended: !isRecommended,
 		}).Update()

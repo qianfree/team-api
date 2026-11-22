@@ -114,10 +114,10 @@ func TestGetTimestamp(t *testing.T) {
 }
 
 func TestMaskHostTail(t *testing.T) {
-	assert.Equal(t, []string{"com"}, maskHostTail([]string{"com"}))                  // len<2 原样
-	assert.Equal(t, []string{"com"}, maskHostTail([]string{"example", "com"}))       // 普通两段
-	assert.Equal(t, []string{"co", "uk"}, maskHostTail([]string{"example", "co", "uk"}))      // 国家码 TLD
-	assert.Equal(t, []string{"com", "cn"}, maskHostTail([]string{"sub", "com", "cn"}))        // 国家码 TLD
+	assert.Equal(t, []string{"com"}, maskHostTail([]string{"com"}))                      // len<2 原样
+	assert.Equal(t, []string{"com"}, maskHostTail([]string{"example", "com"}))           // 普通两段
+	assert.Equal(t, []string{"co", "uk"}, maskHostTail([]string{"example", "co", "uk"})) // 国家码 TLD
+	assert.Equal(t, []string{"com", "cn"}, maskHostTail([]string{"sub", "com", "cn"}))   // 国家码 TLD
 }
 
 func TestMaskHostForURL(t *testing.T) {

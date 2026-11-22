@@ -10,6 +10,7 @@ import (
 
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/model/entity"
+	"github.com/qianfree/team-api/internal/utility/safego"
 )
 
 const (
@@ -43,17 +44,26 @@ func InitWebhookDispatcher(ctx context.Context) {
 	}
 	defaultDispatcher = d
 
-	for i := 0; i < dispatcherWorkerCount; i++ {
-		d.wg.Add(1)
-		go d.worker()
-	}
-	go d.sweepLoop()
-	go d.cleanupLoop()
+	d.startWorkers(ctx)
+	safego.RunLoop(ctx, "webhook:sweep_loop", func(context.Context) { d.sweepLoop() })
+	safego.RunLoop(ctx, "webhook:cleanup_loop", func(context.Context) { d.cleanupLoop() })
 
 	// Recover any pending events left from a previous crash
-	go d.recoverPending()
+	safego.Run(ctx, "webhook:recover_pending", func(context.Context) { d.recoverPending() })
 
 	g.Log().Infof(ctx, "webhook dispatcher started: %d workers, sweep every %v, cleanup every %v", dispatcherWorkerCount, dispatcherSweepInterval, cleanupInterval)
+}
+
+// startWorkers 启动 worker 池，wg.Add(1) 与 worker() 内唯一的 defer wg.Done() 一一配对。
+// 注意：外层 safego.Run 只负责 panic 兜底，绝不能再 defer wg.Done()——否则停机时
+// WaitGroup 负计数 panic，且 wg.Wait() 会在尚有 worker 未收尾时提前返回。
+func (d *WebhookDispatcher) startWorkers(ctx context.Context) {
+	for i := 0; i < dispatcherWorkerCount; i++ {
+		d.wg.Add(1)
+		safego.Run(ctx, "webhook:worker", func(context.Context) {
+			d.worker()
+		})
+	}
 }
 
 // NotifyNewEvent pushes an event ID to the dispatcher channel (non-blocking).
@@ -70,13 +80,20 @@ func NotifyNewEvent(eventID int64) {
 
 // worker consumes event IDs from the channel and delivers them.
 func (d *WebhookDispatcher) worker() {
+	// 全实例唯一的 wg.Done()：与 startWorkers 里的 wg.Add(1) 一一配对。
+	// 这里用 defer 是为了即便循环意外 panic（外层 safego.Guard 只保护单次投递），
+	// 计数也能归零，Shutdown 的 wg.Wait 不会永久阻塞。
 	defer d.wg.Done()
 	for {
 		select {
 		case <-d.stopCh:
 			return
 		case eventID := <-d.eventCh:
-			deliverEventByID(d.ctx, eventID)
+			// 逐事件 Guard：单次投递异常只丢当次（sweep 周期兜底重投），
+			// worker 存活继续消费，不重启整个循环（重启会重复执行上面的 Add/Done 配对）
+			safego.Guard(d.ctx, "webhook:deliver", func() {
+				deliverEventByID(d.ctx, eventID)
+			})
 		}
 	}
 }

@@ -446,10 +446,13 @@ func (s *sTenant) JoinByInvite(ctx context.Context, req *v1.TenantMemberJoinReq)
 		Name string `json:"name"`
 		Code string `json:"code"`
 	}
-	_ = dao.TntTenants.Ctx(ctx).
+	if err := dao.TntTenants.Ctx(ctx).
 		Where("id", tenantID).
 		Fields("name", "code").
-		Scan(&tenantInfo)
+		Scan(&tenantInfo); err != nil {
+		// 查询失败仅影响返回的租户名称/代码展示（空值兜底），留痕排查
+		g.Log().Warningf(ctx, "查询租户信息失败（成员加入响应）tenant=%d: %v", tenantID, err)
+	}
 
 	return &v1.TenantMemberJoinRes{
 		AccessToken:  tokenPair.AccessToken,

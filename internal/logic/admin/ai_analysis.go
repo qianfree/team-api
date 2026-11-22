@@ -69,11 +69,13 @@ func (s *sAdmin) AiAnalysisCreate(ctx context.Context, req *v1.AiAnalysisCreateR
 		return nil, common.NewBadRequestError(err.Error())
 	}
 
-	return &v1.AiAnalysisCreateRes{JobId: jobID}, nil
+	return &v1.AiAnalysisCreateRes{JobID: jobID}, nil
 }
 
 // AiAnalysisReportList 报告列表（联查租户/用户名）。
 func (s *sAdmin) AiAnalysisReportList(ctx context.Context, req *v1.AiAnalysisReportListReq) (*v1.AiAnalysisReportListRes, error) {
+	// 走统一分页入口：PageSize 无 v: 上限规则，超大 size 会被拖库，NormalizePagination 封顶 100
+	req.Page, req.PageSize = common.NormalizePagination(req.Page, req.PageSize)
 	m := g.DB().Model(aianalysis.TableReports+" AS r").Ctx(ctx).
 		LeftJoin("tnt_tenants t", "t.id = r.tenant_id").
 		LeftJoin("tnt_users u", "u.id = r.target_user_id")
@@ -118,7 +120,7 @@ func (s *sAdmin) AiAnalysisReportDetail(ctx context.Context, req *v1.AiAnalysisR
 	one, err := g.DB().Model(aianalysis.TableReports+" AS r").Ctx(ctx).
 		LeftJoin("tnt_tenants t", "t.id = r.tenant_id").
 		LeftJoin("tnt_users u", "u.id = r.target_user_id").
-		Where("r.id", req.Id).
+		Where("r.id", req.ID).
 		Fields("r.*, t.name AS tenant_name, u.username AS target_username").
 		One()
 	if err != nil {
@@ -130,7 +132,7 @@ func (s *sAdmin) AiAnalysisReportDetail(ctx context.Context, req *v1.AiAnalysisR
 
 	// 严重度按 high > medium > low 排（字典序不等于枚举序，用 CASE 显式排序）
 	findings, err := g.DB().Model(aianalysis.TableFindings).Ctx(ctx).
-		Where("report_id", req.Id).
+		Where("report_id", req.ID).
 		Order("CASE severity WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, id ASC").
 		All()
 	if err != nil {
@@ -138,7 +140,7 @@ func (s *sAdmin) AiAnalysisReportDetail(ctx context.Context, req *v1.AiAnalysisR
 	}
 
 	common.LogSensitiveAccess(ctx, common.GetCtxUserID(ctx), "admin",
-		"ai_analysis_report", req.Id, "view", "查看AI请求分析报告详情")
+		"ai_analysis_report", req.ID, "view", "查看AI请求分析报告详情")
 
 	data := one.Map()
 	if data == nil {
@@ -152,7 +154,7 @@ func (s *sAdmin) AiAnalysisReportDetail(ctx context.Context, req *v1.AiAnalysisR
 // finding_id 定位发现的锚点日志，调核心会话重组（平台侧副本）。
 func (s *sAdmin) AiAnalysisReportConversation(ctx context.Context, req *v1.AiAnalysisReportConversationReq) (*v1.AiAnalysisReportConversationRes, error) {
 	one, err := g.DB().Model(aianalysis.TableFindings).Ctx(ctx).
-		Where("id = ? AND report_id = ?", req.FindingId, req.Id).
+		Where("id = ? AND report_id = ?", req.FindingID, req.ID).
 		Fields("id, anchor_log_id").
 		One()
 	if err != nil {
@@ -170,7 +172,7 @@ func (s *sAdmin) AiAnalysisReportConversation(ctx context.Context, req *v1.AiAna
 	}
 
 	common.LogSensitiveAccess(ctx, common.GetCtxUserID(ctx), "admin",
-		"ai_analysis_report", req.Id, "view_conversation", "查看分析报告关联的完整会话")
+		"ai_analysis_report", req.ID, "view_conversation", "查看分析报告关联的完整会话")
 
 	b, err := json.Marshal(view)
 	if err != nil {
@@ -184,10 +186,10 @@ func (s *sAdmin) AiAnalysisReportConversation(ctx context.Context, req *v1.AiAna
 // AiAnalysisReportDelete 删除报告，连同发现明细。
 func (s *sAdmin) AiAnalysisReportDelete(ctx context.Context, req *v1.AiAnalysisReportDeleteReq) (*v1.AiAnalysisReportDeleteRes, error) {
 	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		if _, err := g.DB().Model(aianalysis.TableFindings).Ctx(ctx).Where("report_id", req.Id).Delete(); err != nil {
+		if _, err := g.DB().Model(aianalysis.TableFindings).Ctx(ctx).Where("report_id", req.ID).Delete(); err != nil {
 			return err
 		}
-		if _, err := g.DB().Model(aianalysis.TableReports).Ctx(ctx).Where("id", req.Id).Delete(); err != nil {
+		if _, err := g.DB().Model(aianalysis.TableReports).Ctx(ctx).Where("id", req.ID).Delete(); err != nil {
 			return err
 		}
 		return nil
@@ -200,6 +202,8 @@ func (s *sAdmin) AiAnalysisReportDelete(ctx context.Context, req *v1.AiAnalysisR
 
 // AiAnalysisJobList 任务列表与进度。
 func (s *sAdmin) AiAnalysisJobList(ctx context.Context, req *v1.AiAnalysisJobListReq) (*v1.AiAnalysisJobListRes, error) {
+	// 走统一分页入口（PageSize 无 v: 上限规则，NormalizePagination 封顶 100）
+	req.Page, req.PageSize = common.NormalizePagination(req.Page, req.PageSize)
 	m := g.DB().Model(aianalysis.TableJobs).Ctx(ctx)
 	if req.Status != "" {
 		m = m.Where("status", req.Status)

@@ -124,11 +124,14 @@ func GetTenantAvailableModels(ctx context.Context, tenantID int64, category, ven
 		groupQuery = groupQuery.Where("m.model_id LIKE ? OR m.model_name LIKE ?", "%"+EscapeLikePattern(search)+"%", "%"+EscapeLikePattern(search)+"%")
 	}
 
-	_ = groupQuery.
+	if gErr := groupQuery.
 		Fields("DISTINCT m.id AS model_db_id, m.model_id, m.model_name, m.category, m.vendor, m.max_context_tokens, m.max_output_tokens, m.description, m.tags, m.capabilities").
 		OrderAsc("m.category").
 		OrderAsc("m.model_id").
-		Scan(&groupModels)
+		Scan(&groupModels); gErr != nil {
+		// 失败时分组结果为空（只影响模型列表完整性），留痕排查
+		g.Log().Warningf(ctx, "查询分组可用模型失败 tenant=%d: %v", tenantID, gErr)
+	}
 
 	for _, gm := range groupModels {
 		result = append(result, AvailableModelItem{

@@ -11,6 +11,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/utility/safego"
 	"github.com/qianfree/team-api/relay/helper"
 	"github.com/qianfree/team-api/relaykit/dispatch"
 )
@@ -290,8 +291,10 @@ func (c *Catalog) Start(ctx context.Context) {
 	c.Rebuild(rebuildCtx)
 	cancel()
 
-	go c.refreshLoop(ctx)
-	go c.subscribeInvalidate(ctx)
+	// 长驻循环统一走 safego 启动；渠道目录是调度数据源，panic 退出会整体降级
+	//（无渠道可选、失效不感知），RunLoop 自愈重启
+	safego.RunLoop(ctx, "dispatch:catalog_refresh", c.refreshLoop)
+	safego.RunLoop(ctx, "dispatch:catalog_subscribe", c.subscribeInvalidate)
 }
 
 // Stop 停止后台刷新。

@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
+
+	"github.com/qianfree/team-api/internal/utility/safego"
 )
 
 const (
@@ -31,7 +33,7 @@ const (
 //
 // Windows 无自信号机制（且在线更新仅支持 Linux），退化为直接退出。
 func gracefulExit(ctx context.Context, reason string) {
-	go func() {
+	safego.Run(ctx, "update:graceful_exit", func(context.Context) {
 		time.Sleep(exitResponseGrace)
 		g.Log().Infof(ctx, "%s: requesting graceful shutdown", reason)
 
@@ -47,7 +49,7 @@ func gracefulExit(ctx context.Context, reason string) {
 		g.Log().Warningf(ctx, "%s: graceful shutdown not finished within %v, restarting directly",
 			reason, gracefulExitTimeout)
 		restartOrExit(ctx)
-	}()
+	})
 }
 
 // MaybeExecRestart 是 cmd.go defer 链的最后一步（注册在最前、最后执行）。

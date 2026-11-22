@@ -97,7 +97,7 @@ func (s *sAdmin) BatchCreateRedemptions(ctx context.Context, req *v1.RedemptionC
 
 // DisableRedemption 禁用兑换码
 func (s *sAdmin) DisableRedemption(ctx context.Context, req *v1.RedemptionDisableReq) (*v1.RedemptionDisableRes, error) {
-	count, err := dao.OrdRedemptions.Ctx(ctx).Where("id", req.Id).Count()
+	count, err := dao.OrdRedemptions.Ctx(ctx).Where("id", req.ID).Count()
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +105,7 @@ func (s *sAdmin) DisableRedemption(ctx context.Context, req *v1.RedemptionDisabl
 		return nil, common.NewNotFoundError("兑换码")
 	}
 	_, err = dao.OrdRedemptions.Ctx(ctx).
-		Where("id", req.Id).
+		Where("id", req.ID).
 		Where("status", "active").
 		Data(do.OrdRedemptions{
 			Status: "disabled",
@@ -153,11 +153,11 @@ func (s *sAdmin) ListRedemptionUsages(ctx context.Context, req *v1.RedemptionUsa
 		LeftJoin("tnt_users u", "ord_redemption_usages.user_id = u.id AND ord_redemption_usages.tenant_id = u.tenant_id").
 		Fields("ord_redemption_usages.*, COALESCE(r.code, '') as code, COALESCE(t.name, '') as tenant_name, COALESCE(u.username, '') as username")
 
-	if req.RedemptionId > 0 {
-		m = m.Where("ord_redemption_usages.redemption_id", req.RedemptionId)
+	if req.RedemptionID > 0 {
+		m = m.Where("ord_redemption_usages.redemption_id", req.RedemptionID)
 	}
-	if req.TenantId > 0 {
-		m = m.Where("ord_redemption_usages.tenant_id", req.TenantId)
+	if req.TenantID > 0 {
+		m = m.Where("ord_redemption_usages.tenant_id", req.TenantID)
 	}
 
 	var total int
@@ -172,16 +172,16 @@ func (s *sAdmin) ListRedemptionUsages(ctx context.Context, req *v1.RedemptionUsa
 	list := make([]*v1.RedemptionUsageItem, 0, len(rows))
 	for _, r := range rows {
 		list = append(list, &v1.RedemptionUsageItem{
-			Id:            r.Id,
-			RedemptionId:  r.RedemptionId,
+			ID:            r.Id,
+			RedemptionID:  r.RedemptionId,
 			Code:          r.Code,
-			TenantId:      r.TenantId,
+			TenantID:      r.TenantId,
 			TenantName:    r.TenantName,
-			UserId:        r.UserId,
+			UserID:        r.UserId,
 			Username:      r.Username,
 			Type:          r.Type,
 			Value:         r.Value,
-			TransactionId: r.TransactionId,
+			TransactionID: r.TransactionId,
 			CreatedAt:     r.CreatedAt,
 		})
 	}

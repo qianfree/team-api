@@ -1,8 +1,11 @@
 package oauth
 
 import (
+	"context"
 	"sync"
 	"time"
+
+	"github.com/qianfree/team-api/internal/utility/safego"
 )
 
 // OAuthSession 存储进行中的 OAuth 授权流程状态
@@ -34,7 +37,9 @@ func NewSessionStore() *SessionStore {
 		sessions: make(map[string]*OAuthSession),
 		stopCh:   make(chan struct{}),
 	}
-	go s.cleanupLoop()
+	safego.Run(context.Background(), "oauth:session_cleanup", func(context.Context) {
+		s.cleanupLoop()
+	})
 	return s
 }
 

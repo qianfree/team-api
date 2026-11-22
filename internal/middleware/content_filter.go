@@ -10,6 +10,7 @@ import (
 
 	"github.com/qianfree/team-api/internal/logic/common"
 	do "github.com/qianfree/team-api/internal/model/do"
+	"github.com/qianfree/team-api/internal/utility/safego"
 )
 
 const (
@@ -47,30 +48,37 @@ type contentFilterLogEntry struct {
 
 func init() {
 	for i := 0; i < contentFilterLogWorkers; i++ {
-		go contentFilterLogWorker()
+		// worker 消亡后 channel 满会导致审计日志静默丢失，必须 panic 防护保活
+		safego.Run(context.Background(), "content_filter:log_worker", func(context.Context) {
+			contentFilterLogWorker()
+		})
 	}
 }
 
 func contentFilterLogWorker() {
 	ctx := context.Background()
 	for entry := range contentFilterLogCh {
-		_, err := common.AuditModelCtx(ctx, "aud_content_filter_logs").Data(do.AudContentFilterLogs{
-			TenantId:        entry.TenantId,
-			UserId:          entry.UserId,
-			ApiKeyId:        entry.ApiKeyId,
-			ProjectId:       entry.ProjectId,
-			RequestId:       entry.RequestId,
-			Method:          entry.Method,
-			Path:            entry.Path,
-			ClientIp:        entry.ClientIp,
-			FilterMode:      entry.FilterMode,
-			MatchedWords:    entry.MatchedWords,
-			OriginalSnippet: entry.Snippet,
-			Blocked:         entry.Blocked,
-		}).Insert()
-		if err != nil {
-			g.Log().Warningf(ctx, "[ContentFilter] failed to insert filter log: %v", err)
-		}
+		// 逐条 Guard：单条落库异常只丢当条，worker 存活继续消费
+		//（worker 消亡后 channel 满、生产端 select-default 静默丢审计日志）
+		safego.Guard(ctx, "content_filter:log_insert", func() {
+			_, err := common.AuditModelCtx(ctx, "aud_content_filter_logs").Data(do.AudContentFilterLogs{
+				TenantId:        entry.TenantId,
+				UserId:          entry.UserId,
+				ApiKeyId:        entry.ApiKeyId,
+				ProjectId:       entry.ProjectId,
+				RequestId:       entry.RequestId,
+				Method:          entry.Method,
+				Path:            entry.Path,
+				ClientIp:        entry.ClientIp,
+				FilterMode:      entry.FilterMode,
+				MatchedWords:    entry.MatchedWords,
+				OriginalSnippet: entry.Snippet,
+				Blocked:         entry.Blocked,
+			}).Insert()
+			if err != nil {
+				g.Log().Warningf(ctx, "[ContentFilter] failed to insert filter log: %v", err)
+			}
+		})
 	}
 }
 

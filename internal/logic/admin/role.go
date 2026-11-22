@@ -419,7 +419,7 @@ func (s *sAdmin) AssignUserRoles(ctx context.Context, req *v1.AdminUserRoleAssig
 	if err := assertSuperAdmin(ctx); err != nil {
 		return nil, err
 	}
-	user, err := loadAdminUserRole(ctx, req.Id)
+	user, err := loadAdminUserRole(ctx, req.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -428,13 +428,13 @@ func (s *sAdmin) AssignUserRoles(ctx context.Context, req *v1.AdminUserRoleAssig
 	}
 
 	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		return replaceUserRoles(ctx, req.Id, req.RoleIDs)
+		return replaceUserRoles(ctx, req.ID, req.RoleIDs)
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	InvalidateUserPermCache(ctx, req.Id)
+	InvalidateUserPermCache(ctx, req.ID)
 	return &v1.AdminUserRoleAssignRes{}, nil
 }
 
@@ -443,10 +443,10 @@ func (s *sAdmin) GetUserRoles(ctx context.Context, req *v1.AdminUserRoleListReq)
 	if err := assertSuperAdmin(ctx); err != nil {
 		return nil, err
 	}
-	if _, err := loadAdminUserRole(ctx, req.Id); err != nil {
+	if _, err := loadAdminUserRole(ctx, req.ID); err != nil {
 		return nil, err
 	}
-	briefs, err := GetUserRoleBriefs(ctx, req.Id)
+	briefs, err := GetUserRoleBriefs(ctx, req.ID)
 	if err != nil {
 		return nil, err
 	}

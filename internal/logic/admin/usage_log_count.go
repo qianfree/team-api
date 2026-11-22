@@ -47,7 +47,7 @@ type usageLogCountPlan struct {
 // usageLogCountDailyServable 判断筛选条件能否映射到 bil_usage_daily 的聚合维度
 // （租户/渠道/模型/状态）。日汇总以天为粒度，ID/用户/Key/请求类型/上游请求ID无法还原。
 func usageLogCountDailyServable(f v1.AdminUsageLogFilter) bool {
-	return f.ID == 0 && f.UserID == 0 && f.ApiKeyID == 0 && f.RequestType == 0 && f.UpstreamRequestId == ""
+	return f.ID == 0 && f.UserID == 0 && f.ApiKeyID == 0 && f.RequestType == 0 && f.UpstreamRequestID == ""
 }
 
 // parseUsageLogRange 解析筛选时间边界（与 buildUsageLogFilter 同口径：

@@ -144,7 +144,7 @@ func TestBuildPricingBlob_ZeroPricesOmitted(t *testing.T) {
 }
 
 // TestBuildPricingBlob_TieredPerTierCachePrices 阶梯逐档缓存价：档内键随行落库，
-// 顶层锚点缓存价照旧写入（计费引擎的缓存 token 计费读顶层，不读档内字段）。
+// 顶层锚点缓存价照旧写入（缓存读取/5m 缓存创建计费读顶层，不读档内字段；1h 价例外，按命中档读）。
 // JSONB 往返后两处都完整保留；旧格式（档内无缓存键）unmarshal 为 nil 不报错。
 func TestBuildPricingBlob_TieredPerTierCachePrices(t *testing.T) {
 	max := int64(100000)
@@ -229,5 +229,42 @@ func TestBuildPricingBlob_CacheCreation1h(t *testing.T) {
 	raw, _ := json.Marshal(blob)
 	if strings.Contains(string(raw), "cache_creation_1h_price") {
 		t.Fatalf("unconfigured 1h price should be omitted, got %s", raw)
+	}
+}
+
+// TestBuildPricingBlob_TieredPerTierCacheCreation1h 阶梯 1h 价逐档落库：
+// 档内键随行写入（计费按命中档读取），顶层锚点保留首档值供缺省回退；
+// JSONB 往返后逐档值完整保留，旧格式（档内无键）unmarshal 为 nil 不报错
+func TestBuildPricingBlob_TieredPerTierCacheCreation1h(t *testing.T) {
+	max := int64(100000)
+	blob, err := BuildPricingBlob([]PricingItemInput{
+		{BillingMode: "tiered", MinTokens: 0, MaxTokens: &max, InputPrice: 15, OutputPrice: 75, CacheCreationPrice: 18.75, CacheCreation1hPrice: 30},
+		{BillingMode: "tiered", MinTokens: 100000, InputPrice: 12, OutputPrice: 60, CacheCreationPrice: 15, CacheCreation1hPrice: 24},
+	})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	// 顶层锚点 = 首档值（缺省回退口径）
+	if blob.CacheCreation1hPrice == nil || *blob.CacheCreation1hPrice != 30 {
+		t.Fatalf("anchor 1h price = %v, want 30 (first tier)", blob.CacheCreation1hPrice)
+	}
+	// 逐档 1h 价落行
+	if blob.Tiers[1].CacheCreation1hPrice == nil || *blob.Tiers[1].CacheCreation1hPrice != 24 {
+		t.Fatalf("tier1 1h price lost: %+v", blob.Tiers[1])
+	}
+
+	raw, err := json.Marshal(blob)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	parsed := ParsePricingBlob(string(raw))
+	if parsed == nil || len(parsed.Tiers) != 2 {
+		t.Fatalf("roundtrip parse failed: %s", raw)
+	}
+	if parsed.Tiers[1].CacheCreation1hPrice == nil || *parsed.Tiers[1].CacheCreation1hPrice != 24 {
+		t.Fatalf("roundtrip tier1 1h price lost: %+v", parsed.Tiers[1])
+	}
+	if parsed.CacheCreation1hPrice == nil || *parsed.CacheCreation1hPrice != 30 {
+		t.Fatalf("roundtrip anchor 1h price lost: %+v", parsed)
 	}
 }

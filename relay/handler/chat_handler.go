@@ -173,9 +173,10 @@ func WriteRelayError(w http.ResponseWriter, err error) {
 		statusCode = relayErr.StatusCode
 		// 上游错误的 Message 是上游响应体原文，解包出可读消息再暴露给客户端
 		errMsg = helper.UnwrapUpstreamErrorMessage(relayErr.Message)
-		if relayErr.Cause != nil {
+		if relayErr.Cause != nil && relayErr.Type != "internal_error" {
 			// 传输层错误（client.Do 的 *url.Error）的 Cause 含上游域名，必须脱敏后再暴露给用户；
 			// 日志侧仍用 originalError=%v 打印完整错误供运维定位。
+			// internal_error（如计费内部故障）的 Cause 含 SQL/Redis 细节，只进日志不外露。
 			errMsg = errMsg + ": " + helper.SafeUpstreamErrorMessage(relayErr.Cause)
 		}
 		errType = relayErr.Type

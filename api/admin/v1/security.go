@@ -54,7 +54,7 @@ type Admin2FAVerifyReq struct {
 	g.Meta      `path:"/auth/2fa/verify" method:"post" mime:"json" tags:"管理后台-认证" summary:"2FA登录验证" group:"public" middleware:"-"`
 	Provisional string `json:"provisional_token" v:"required#缺少临时令牌" dc:"登录时返回的临时令牌"`
 	Code        string `json:"code" v:"required#请输入验证码" dc:"TOTP 验证码或恢复码"`
-	DeviceId    string `json:"device_id" dc:"设备ID（前端 localStorage 持久化，用于新设备识别）"`
+	DeviceID    string `json:"device_id" dc:"设备ID（前端 localStorage 持久化，用于新设备识别）"`
 }
 
 type Admin2FAVerifyRes struct {
@@ -93,7 +93,7 @@ type Admin2FAConfirmRes struct {
 
 // AdminLoginHistoryReq 登录历史列表（查看所有管理员）
 type AdminLoginHistoryReq struct {
-	g.Meta      `path:"/security/login-history" method:"get" tags:"管理后台-安全" summary:"登录历史"`
+	g.Meta      `path:"/security/login-history" method:"get" mime:"json" tags:"管理后台-安全" summary:"登录历史"`
 	Page        int    `json:"page" in:"query" d:"1" dc:"页码"`
 	PageSize    int    `json:"page_size" in:"query" d:"20" dc:"每页数量"`
 	Username    string `json:"username" in:"query" dc:"用户名（模糊搜索）"`
@@ -113,7 +113,7 @@ type AdminLoginHistoryRes struct {
 
 type LoginHistoryItem struct {
 	ID          int64  `json:"id"`
-	UserId      int64  `json:"user_id"`
+	UserID      int64  `json:"user_id"`
 	Username    string `json:"username"`
 	DisplayName string `json:"display_name"`
 	LoginMethod string `json:"login_method"`
@@ -132,7 +132,7 @@ type LoginHistoryItem struct {
 
 // AdminTenantLoginHistoryReq 租户用户登录历史（管理后台查看）
 type AdminTenantLoginHistoryReq struct {
-	g.Meta      `path:"/security/tenant-login-history" method:"get" tags:"管理后台-安全" summary:"租户用户登录历史"`
+	g.Meta      `path:"/security/tenant-login-history" method:"get" mime:"json" tags:"管理后台-安全" summary:"租户用户登录历史"`
 	Page        int    `json:"page" in:"query" d:"1" dc:"页码"`
 	PageSize    int    `json:"page_size" in:"query" d:"20" dc:"每页数量"`
 	TenantID    int64  `json:"tenant_id" in:"query" dc:"租户ID筛选"`
@@ -153,8 +153,8 @@ type AdminTenantLoginHistoryRes struct {
 
 type AdminTenantLoginHistoryItem struct {
 	ID          int64  `json:"id"`
-	UserId      int64  `json:"user_id"`
-	TenantId    int64  `json:"tenant_id"`
+	UserID      int64  `json:"user_id"`
+	TenantID    int64  `json:"tenant_id"`
 	Username    string `json:"username"`
 	DisplayName string `json:"display_name"`
 	LoginMethod string `json:"login_method"`

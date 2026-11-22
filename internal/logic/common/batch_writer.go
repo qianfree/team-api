@@ -8,6 +8,8 @@ import (
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gctx"
+
+	"github.com/qianfree/team-api/internal/utility/safego"
 )
 
 // BatchWriter provides buffered batch writing for high-throughput log tables.
@@ -85,7 +87,7 @@ func (bw *BatchWriter) Write(ctx context.Context, record any) {
 
 	// Trigger async flush if threshold reached
 	if len(bw.buffer) >= bw.flushSize {
-		go bw.flush(gctx.New())
+		safego.Run(gctx.New(), "common:batch_writer_flush", bw.flush)
 	}
 }
 

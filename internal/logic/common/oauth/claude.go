@@ -95,7 +95,7 @@ func ClaudeGenerateAuthURL(scope string) (authURL string, sessionID string, err 
 }
 
 // ClaudeExchangeCode 用授权码换取 Claude OAuth 令牌
-func ClaudeExchangeCode(sessionID, code string) (*OAuthKeyData, error) {
+func ClaudeExchangeCode(ctx context.Context, sessionID, code string) (*OAuthKeyData, error) {
 	session, ok := GlobalSessionStore.Get(sessionID)
 	if !ok {
 		return nil, fmt.Errorf("oauth session not found or expired")
@@ -129,7 +129,7 @@ func ClaudeExchangeCode(sessionID, code string) (*OAuthKeyData, error) {
 		return nil, fmt.Errorf("marshal request body: %w", err)
 	}
 
-	respData, err := doPost(ClaudeTokenURL, bodyBytes)
+	respData, err := doPost(ctx, ClaudeTokenURL, bodyBytes)
 	if err != nil {
 		return nil, fmt.Errorf("exchange code: %w", err)
 	}
@@ -144,12 +144,11 @@ func ClaudeExchangeCode(sessionID, code string) (*OAuthKeyData, error) {
 }
 
 // ClaudeCookieAuth 使用 Cookie 方式自动完成 Claude OAuth 认证（4 步流程）
-func ClaudeCookieAuth(sessionKey, scope string) (*OAuthKeyData, error) {
-	client := GetHTTPClient()
-	ctx := context.Background()
+func ClaudeCookieAuth(ctx context.Context, sessionKey, scope string) (*OAuthKeyData, error) {
+	client := GetHTTPClient(ctx)
 
 	// Step 1: 获取组织列表，选择 team 类型组织
-	orgUUID, err := claudeSelectOrg(client, sessionKey)
+	orgUUID, err := claudeSelectOrg(ctx, client, sessionKey)
 	if err != nil {
 		return nil, fmt.Errorf("select organization: %w", err)
 	}
@@ -168,7 +167,7 @@ func ClaudeCookieAuth(sessionKey, scope string) (*OAuthKeyData, error) {
 	codeChallenge := GenerateCodeChallenge(codeVerifier)
 
 	// Step 3: 向组织发起 OAuth 授权请求，获取 code
-	code, err := claudeAuthorizeOrg(client, sessionKey, orgUUID, scope, state, codeChallenge)
+	code, err := claudeAuthorizeOrg(ctx, client, sessionKey, orgUUID, scope, state, codeChallenge)
 	if err != nil {
 		return nil, fmt.Errorf("authorize with org: %w", err)
 	}
@@ -192,7 +191,7 @@ func ClaudeCookieAuth(sessionKey, scope string) (*OAuthKeyData, error) {
 		return nil, fmt.Errorf("marshal request body: %w", err)
 	}
 
-	respData, err := doPost(ClaudeTokenURL, bodyBytes)
+	respData, err := doPost(ctx, ClaudeTokenURL, bodyBytes)
 	if err != nil {
 		return nil, fmt.Errorf("exchange code: %w", err)
 	}
@@ -209,7 +208,7 @@ func ClaudeCookieAuth(sessionKey, scope string) (*OAuthKeyData, error) {
 }
 
 // ClaudeRefreshToken 使用 refresh_token 刷新 Claude OAuth 令牌
-func ClaudeRefreshToken(refreshToken string) (*OAuthKeyData, error) {
+func ClaudeRefreshToken(ctx context.Context, refreshToken string) (*OAuthKeyData, error) {
 	reqBody := map[string]interface{}{
 		"grant_type":    "refresh_token",
 		"refresh_token": refreshToken,
@@ -221,7 +220,7 @@ func ClaudeRefreshToken(refreshToken string) (*OAuthKeyData, error) {
 		return nil, fmt.Errorf("marshal request body: %w", err)
 	}
 
-	respData, err := doPost(ClaudeTokenURL, bodyBytes)
+	respData, err := doPost(ctx, ClaudeTokenURL, bodyBytes)
 	if err != nil {
 		return nil, fmt.Errorf("refresh token: %w", err)
 	}
@@ -236,8 +235,8 @@ func ClaudeRefreshToken(refreshToken string) (*OAuthKeyData, error) {
 }
 
 // claudeSelectOrg 通过 Cookie 获取组织列表并选择合适的组织（优先 team）
-func claudeSelectOrg(client *http.Client, sessionKey string) (string, error) {
-	req, err := http.NewRequest("GET", "https://claude.ai/api/organizations", nil)
+func claudeSelectOrg(ctx context.Context, client *http.Client, sessionKey string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", "https://claude.ai/api/organizations", nil)
 	if err != nil {
 		return "", fmt.Errorf("create request: %w", err)
 	}
@@ -282,7 +281,7 @@ func claudeSelectOrg(client *http.Client, sessionKey string) (string, error) {
 }
 
 // claudeAuthorizeOrg 向指定组织发起 OAuth 授权请求，从 redirect_uri 中提取 code
-func claudeAuthorizeOrg(client *http.Client, sessionKey, orgUUID, scope, state, codeChallenge string) (string, error) {
+func claudeAuthorizeOrg(ctx context.Context, client *http.Client, sessionKey, orgUUID, scope, state, codeChallenge string) (string, error) {
 	reqBody := map[string]interface{}{
 		"response_type":         "code",
 		"client_id":             ClaudeClientID,
@@ -299,7 +298,7 @@ func claudeAuthorizeOrg(client *http.Client, sessionKey, orgUUID, scope, state, 
 		return "", fmt.Errorf("marshal request body: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", "https://claude.ai/v1/oauth/"+orgUUID+"/authorize", strings.NewReader(string(bodyBytes)))
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://claude.ai/v1/oauth/"+orgUUID+"/authorize", strings.NewReader(string(bodyBytes)))
 	if err != nil {
 		return "", fmt.Errorf("create request: %w", err)
 	}
@@ -349,8 +348,8 @@ func claudeAuthorizeOrg(client *http.Client, sessionKey, orgUUID, scope, state, 
 }
 
 // doPost 发送 JSON POST 请求并返回响应体
-func doPost(endpoint string, body []byte) ([]byte, error) {
-	req, err := http.NewRequest("POST", endpoint, strings.NewReader(string(body)))
+func doPost(ctx context.Context, endpoint string, body []byte) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, strings.NewReader(string(body)))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -359,7 +358,7 @@ func doPost(endpoint string, body []byte) ([]byte, error) {
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "axios/1.13.6")
 
-	resp, err := GetHTTPClient().Do(req)
+	resp, err := GetHTTPClient(ctx).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("http request: %w", err)
 	}

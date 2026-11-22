@@ -88,7 +88,7 @@ function removeRow(index: number) {
 			<AInputNumber
 				v-model="row.price"
 				:min="0"
-				:precision="6"
+				:precision="4"
 				placeholder="0"
 				class="per-second-price"
 			>

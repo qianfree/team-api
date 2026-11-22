@@ -20,18 +20,27 @@ type UsageWithDetails struct {
 
 // TokenDetails Token 类型细分
 type TokenDetails struct {
-	CachedTokens             int                 `json:"cached_tokens,omitempty"`
-	CachedTokensDetails      *CachedTokenDetails `json:"cached_tokens_details,omitempty"`     // cached_tokens 的模态细分（OpenAI 新结构，观测字段）
-	CachedCreationTokens     int                 `json:"cached_creation_tokens,omitempty"`    // Claude cache_creation_input_tokens
-	CachedCreation5mTokens   int                 `json:"cached_creation_5m_tokens,omitempty"` // Claude 5分钟缓存创建
-	CachedCreation1hTokens   int                 `json:"cached_creation_1h_tokens,omitempty"` // Claude 1小时缓存创建
-	CacheWriteTokens         int                 `json:"cache_write_tokens,omitempty"`        // OpenAI cache_write_tokens（与 Claude 写入同一物理事件，计费并入 CachedCreation 桶按创建价计）
-	AudioTokens              int                 `json:"audio_tokens,omitempty"`
-	TextTokens               int                 `json:"text_tokens,omitempty"`
-	ImageTokens              int                 `json:"image_tokens,omitempty"`
-	ReasoningTokens          int                 `json:"reasoning_tokens,omitempty"`
-	AcceptedPredictionTokens int                 `json:"accepted_prediction_tokens,omitempty"`
-	RejectedPredictionTokens int                 `json:"rejected_prediction_tokens,omitempty"`
+	CachedTokens             int                     `json:"cached_tokens,omitempty"`
+	CachedTokensDetails      *CachedTokenDetails     `json:"cached_tokens_details,omitempty"`      // cached_tokens 的模态细分（OpenAI 新结构，观测字段）
+	CachedCreationTokens     int                     `json:"cached_creation_tokens,omitempty"`     // Claude cache_creation_input_tokens
+	CachedCreation5mTokens   int                     `json:"cached_creation_5m_tokens,omitempty"`  // 短 TTL 写入桶（Claude 5m；GPT 30m 经归一填入，见 common.NormalizeCacheWriteTTL）
+	CachedCreation1hTokens   int                     `json:"cached_creation_1h_tokens,omitempty"`  // 长 TTL 写入桶（Claude 1h；GPT 12h 经归一填入）
+	CacheWriteTokens         int                     `json:"cache_write_tokens,omitempty"`         // OpenAI cache_write_tokens（与 Claude 写入同一物理事件，计费并入 CachedCreation 桶按创建价计）
+	CacheWriteTokensDetails  *CacheWriteTokensDetail `json:"cache_write_tokens_details,omitempty"` // OpenAI TTL 细分（ttl_30m/ttl_12h），宿主归一到 5m/1h 双桶计价
+	AudioTokens              int                     `json:"audio_tokens,omitempty"`
+	TextTokens               int                     `json:"text_tokens,omitempty"`
+	ImageTokens              int                     `json:"image_tokens,omitempty"`
+	ReasoningTokens          int                     `json:"reasoning_tokens,omitempty"`
+	AcceptedPredictionTokens int                     `json:"accepted_prediction_tokens,omitempty"`
+	RejectedPredictionTokens int                     `json:"rejected_prediction_tokens,omitempty"`
+}
+
+// CacheWriteTokensDetail OpenAI cache_write_tokens 的 TTL 细分（官方结构）。
+// 官方语义：ttl_30m_tokens + ttl_12h_tokens = cache_write_tokens（不重叠，含 0 键恒返回）。
+// 归一映射：30m → 短桶（与 Claude 5m 同计价档）、12h → 长桶（与 Claude 1h 同档）
+type CacheWriteTokensDetail struct {
+	TTL30mTokens int `json:"ttl_30m_tokens"`
+	TTL12hTokens int `json:"ttl_12h_tokens"`
 }
 
 // CachedTokenDetails cached_tokens 的模态细分（OpenAI 新 usage 结构，

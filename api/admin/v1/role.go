@@ -142,7 +142,7 @@ type AdminRoleResetRes struct {
 // AdminUserRoleListReq 查询管理员已分配角色
 type AdminUserRoleListReq struct {
 	g.Meta `path:"/users/{id}/roles" method:"get" mime:"json" tags:"管理后台-角色" summary:"查询用户角色"`
-	Id     int64 `json:"id" in:"path" v:"required" dc:"管理员用户ID"`
+	ID     int64 `json:"id" in:"path" v:"required" dc:"管理员用户ID"`
 }
 
 // AdminUserRoleListRes 用户角色列表响应
@@ -153,7 +153,7 @@ type AdminUserRoleListRes struct {
 // AdminUserRoleAssignReq 分配管理员角色请求（全量覆盖）
 type AdminUserRoleAssignReq struct {
 	g.Meta  `path:"/users/{id}/roles" method:"put" mime:"json" tags:"管理后台-角色" summary:"分配用户角色"`
-	Id      int64   `json:"id" in:"path" v:"required" dc:"管理员用户ID"`
+	ID      int64   `json:"id" in:"path" v:"required" dc:"管理员用户ID"`
 	RoleIDs []int64 `json:"role_ids" dc:"角色ID列表（全量覆盖；传空数组表示不分配任何角色，该账号将只剩自助接口权限）"`
 }
 

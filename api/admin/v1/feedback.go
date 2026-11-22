@@ -18,10 +18,10 @@ type FeedbackListAllReq struct {
 }
 
 type FeedbackAdminItem struct {
-	Id              int64       `json:"id"`
-	TenantId        int64       `json:"tenant_id"`
+	ID              int64       `json:"id"`
+	TenantID        int64       `json:"tenant_id"`
 	TenantName      string      `json:"tenant_name"`
-	UserId          int64       `json:"user_id"`
+	UserID          int64       `json:"user_id"`
 	UserDisplayName string      `json:"user_display_name"`
 	Category        string      `json:"category"`
 	Title           string      `json:"title"`
@@ -43,7 +43,7 @@ type FeedbackListAllRes struct {
 
 type FeedbackReplyReq struct {
 	g.Meta     `path:"/feedbacks/{id}/reply" method:"post" mime:"json" tags:"管理后台-反馈" summary:"回复反馈"`
-	Id         int64  `json:"id" in:"path" v:"required|min:1"`
+	ID         int64  `json:"id" in:"path" v:"required|min:1"`
 	Reply      string `json:"reply" v:"required|length:1,5000" dc:"回复内容"`
 	Status     string `json:"status" v:"in:acknowledged,in_progress,resolved,closed" dc:"更新状态"`
 	Resolution string `json:"resolution" dc:"解决方案摘要"`
@@ -53,7 +53,7 @@ type FeedbackReplyRes struct{}
 
 type FeedbackUpdateStatusReq struct {
 	g.Meta   `path:"/feedbacks/{id}/status" method:"put" mime:"json" tags:"管理后台-反馈" summary:"更新反馈状态"`
-	Id       int64  `json:"id" in:"path" v:"required|min:1"`
+	ID       int64  `json:"id" in:"path" v:"required|min:1"`
 	Status   string `json:"status" v:"required|in:pending,acknowledged,in_progress,resolved,closed" dc:"状态"`
 	Priority string `json:"priority" v:"in:low,normal,high,critical" dc:"优先级"`
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	rcommon "github.com/qianfree/team-api/relay/common"
+	rdto "github.com/qianfree/team-api/relay/dto"
 )
 
 const eps = 1e-10
@@ -65,19 +66,21 @@ func TestAvailableBalance_NilPanic(t *testing.T) {
 
 func ptrInt64(v int64) *int64 { return &v }
 
+func ptrFloat64(v float64) *float64 { return &v }
+
 func TestCalculateTieredCostFromTiers_EmptyTiers(t *testing.T) {
 	got := calculateTieredCostFromTiers(nil, 1000, true)
 	if got != 0 {
 		t.Errorf("expected 0 for nil tiers, got %f", got)
 	}
-	got = calculateTieredCostFromTiers([]pricingTierRow{}, 1000, true)
+	got = calculateTieredCostFromTiers([]PricingTierRow{}, 1000, true)
 	if got != 0 {
 		t.Errorf("expected 0 for empty tiers, got %f", got)
 	}
 }
 
 func TestCalculateTieredCostFromTiers_ZeroOrNegativeTokens(t *testing.T) {
-	tiers := []pricingTierRow{
+	tiers := []PricingTierRow{
 		{MinTokens: 0, MaxTokens: ptrInt64(100_000), InputPrice: 5.0, OutputPrice: 15.0},
 	}
 	for _, tokens := range []int{0, -1, -1000} {
@@ -89,7 +92,7 @@ func TestCalculateTieredCostFromTiers_ZeroOrNegativeTokens(t *testing.T) {
 }
 
 func TestCalculateTieredCostFromTiers_SingleTier_WithMax(t *testing.T) {
-	tiers := []pricingTierRow{
+	tiers := []PricingTierRow{
 		{MinTokens: 0, MaxTokens: ptrInt64(100_000), InputPrice: 5.0, OutputPrice: 15.0},
 	}
 
@@ -113,7 +116,7 @@ func TestCalculateTieredCostFromTiers_SingleTier_WithMax(t *testing.T) {
 }
 
 func TestCalculateTieredCostFromTiers_SingleTier_NilMax(t *testing.T) {
-	tiers := []pricingTierRow{
+	tiers := []PricingTierRow{
 		{MinTokens: 0, MaxTokens: nil, InputPrice: 10.0, OutputPrice: 30.0},
 	}
 
@@ -125,7 +128,7 @@ func TestCalculateTieredCostFromTiers_SingleTier_NilMax(t *testing.T) {
 }
 
 func TestCalculateTieredCostFromTiers_TwoTiers(t *testing.T) {
-	tiers := []pricingTierRow{
+	tiers := []PricingTierRow{
 		{MinTokens: 0, MaxTokens: ptrInt64(100_000), InputPrice: 5.0, OutputPrice: 15.0},
 		{MinTokens: 100_000, MaxTokens: ptrInt64(500_000), InputPrice: 3.0, OutputPrice: 10.0},
 	}
@@ -146,7 +149,7 @@ func TestCalculateTieredCostFromTiers_TwoTiers(t *testing.T) {
 func TestCalculateTieredCostFromTiers_ThreeTiers_WithOpenEnd(t *testing.T) {
 	max128 := int64(128_000)
 	max1M := int64(1_000_000)
-	tiers := []pricingTierRow{
+	tiers := []PricingTierRow{
 		{MinTokens: 0, MaxTokens: &max128, InputPrice: 3.0, OutputPrice: 15.0},
 		{MinTokens: max128, MaxTokens: &max1M, InputPrice: 2.0, OutputPrice: 10.0},
 		{MinTokens: max1M, MaxTokens: nil, InputPrice: 1.0, OutputPrice: 5.0},
@@ -166,7 +169,7 @@ func TestCalculateTieredCostFromTiers_ThreeTiers_WithOpenEnd(t *testing.T) {
 }
 
 func TestCalculateTieredCostFromTiers_ExactBoundary(t *testing.T) {
-	tiers := []pricingTierRow{
+	tiers := []PricingTierRow{
 		{MinTokens: 0, MaxTokens: ptrInt64(1000), InputPrice: 5.0, OutputPrice: 15.0},
 		{MinTokens: 1000, MaxTokens: ptrInt64(5000), InputPrice: 3.0, OutputPrice: 10.0},
 	}
@@ -181,7 +184,7 @@ func TestCalculateTieredCostFromTiers_ExactBoundary(t *testing.T) {
 }
 
 func TestCalculateTieredCostFromTiers_InputVsOutput(t *testing.T) {
-	tiers := []pricingTierRow{
+	tiers := []PricingTierRow{
 		{MinTokens: 0, MaxTokens: ptrInt64(100_000), InputPrice: 5.0, OutputPrice: 15.0},
 	}
 
@@ -196,7 +199,7 @@ func TestCalculateTieredCostFromTiers_InputVsOutput(t *testing.T) {
 }
 
 func TestCalculateTieredCostFromTiers_SkipDegenerateTier(t *testing.T) {
-	tiers := []pricingTierRow{
+	tiers := []PricingTierRow{
 		{MinTokens: 0, MaxTokens: ptrInt64(1000), InputPrice: 5.0, OutputPrice: 15.0},
 		{MinTokens: 1000, MaxTokens: ptrInt64(1000), InputPrice: 99.0, OutputPrice: 99.0},
 		{MinTokens: 1000, MaxTokens: ptrInt64(5000), InputPrice: 3.0, OutputPrice: 10.0},
@@ -208,7 +211,7 @@ func TestCalculateTieredCostFromTiers_SkipDegenerateTier(t *testing.T) {
 }
 
 func TestCalculateTieredCostFromTiers_TokensExceedAllTiers(t *testing.T) {
-	tiers := []pricingTierRow{
+	tiers := []PricingTierRow{
 		{MinTokens: 0, MaxTokens: ptrInt64(1000), InputPrice: 5.0, OutputPrice: 15.0},
 		{MinTokens: 1000, MaxTokens: ptrInt64(5000), InputPrice: 3.0, OutputPrice: 10.0},
 	}
@@ -219,7 +222,7 @@ func TestCalculateTieredCostFromTiers_TokensExceedAllTiers(t *testing.T) {
 }
 
 func TestCalculateTieredCostFromTiers_SingleToken(t *testing.T) {
-	tiers := []pricingTierRow{
+	tiers := []PricingTierRow{
 		{MinTokens: 0, MaxTokens: ptrInt64(100_000), InputPrice: 30.0, OutputPrice: 60.0},
 	}
 	got := calculateTieredCostFromTiers(tiers, 1, true)
@@ -227,7 +230,7 @@ func TestCalculateTieredCostFromTiers_SingleToken(t *testing.T) {
 }
 
 func TestCalculateTieredCostFromTiers_ZeroPrice(t *testing.T) {
-	tiers := []pricingTierRow{
+	tiers := []PricingTierRow{
 		{MinTokens: 0, MaxTokens: ptrInt64(100_000), InputPrice: 0.0, OutputPrice: 0.0},
 	}
 	got := calculateTieredCostFromTiers(tiers, 50_000, true)
@@ -238,7 +241,7 @@ func TestCalculateTieredCostFromTiers_ZeroPrice(t *testing.T) {
 
 func TestCalculateTieredCostFromTiers_MixedZeroAndNonZeroTiers(t *testing.T) {
 	// First tier free, second tier paid
-	tiers := []pricingTierRow{
+	tiers := []PricingTierRow{
 		{MinTokens: 0, MaxTokens: ptrInt64(10_000), InputPrice: 0.0, OutputPrice: 0.0},
 		{MinTokens: 10_000, MaxTokens: ptrInt64(100_000), InputPrice: 5.0, OutputPrice: 15.0},
 	}
@@ -255,7 +258,7 @@ func TestCalculateTieredCostFromTiers_MixedZeroAndNonZeroTiers(t *testing.T) {
 func TestCalculateTieredCostFromTiers_TableDriven(t *testing.T) {
 	max1K := int64(1000)
 	max5K := int64(5000)
-	tiers := []pricingTierRow{
+	tiers := []PricingTierRow{
 		{MinTokens: 0, MaxTokens: &max1K, InputPrice: 10.0, OutputPrice: 30.0},
 		{MinTokens: max1K, MaxTokens: &max5K, InputPrice: 5.0, OutputPrice: 15.0},
 		{MinTokens: max5K, MaxTokens: nil, InputPrice: 2.0, OutputPrice: 8.0},
@@ -286,10 +289,134 @@ func TestCalculateTieredCostFromTiers_TableDriven(t *testing.T) {
 	}
 }
 
+// TestEffectiveCachePrices_Tiered 档内缓存价三元组的回退与推导：
+// 档内重定 5m 基准价时 1h 未显式配置须按本档 5m ×1.6 推导（锚点 1h 价相对
+// 新档基准无意义），锚点兜底仅在档内未配置时生效
+func TestEffectiveCachePrices_Tiered(t *testing.T) {
+	anchorRead, anchor5m, anchor1h := 0.1, 3.75, 6.0 // 锚点：显式 1h 价 6（≠ 3.75×1.6）
+
+	tests := []struct {
+		name     string
+		tiers    []PricingTierRow
+		wantRead float64
+		want5m   float64
+		want1h   float64
+	}{
+		{
+			name: "档内配 5m 未配 1h，按本档 5m×1.6 推导而非锚点",
+			tiers: []PricingTierRow{{
+				MinTokens:          0,
+				CacheCreationPrice: ptrFloat64(7.5),
+			}},
+			wantRead: anchorRead, want5m: 7.5, want1h: 12.0, // 7.5×1.6=12，不是锚点 6
+		},
+		{
+			name: "档内显式 1h 价胜出",
+			tiers: []PricingTierRow{{
+				MinTokens:            0,
+				CacheCreationPrice:   ptrFloat64(7.5),
+				CacheCreation1hPrice: ptrFloat64(9.0),
+			}},
+			wantRead: anchorRead, want5m: 7.5, want1h: 9.0,
+		},
+		{
+			name: "档内未配置回退锚点（存量阶梯数据口径不变）",
+			tiers: []PricingTierRow{{
+				MinTokens:   0,
+				InputPrice:  5.0,
+				OutputPrice: 15.0,
+			}},
+			wantRead: anchorRead, want5m: anchor5m, want1h: anchor1h,
+		},
+		{
+			name:     "档内缓存读价覆盖",
+			tiers:    []PricingTierRow{{MinTokens: 0, CacheReadPrice: ptrFloat64(0.05)}},
+			wantRead: 0.05, want5m: anchor5m, want1h: anchor1h,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &PricingResult{
+				BillingMode:          "tiered",
+				CacheReadPrice:       anchorRead,
+				CacheCreation5mPrice: anchor5m,
+				CacheCreation1hPrice: anchor1h,
+				CustomTiers:          tt.tiers,
+			}
+			read, c5m, c1h := effectiveCachePrices(p, 1_000_000)
+			assertFloat(t, read, tt.wantRead, "read")
+			assertFloat(t, c5m, tt.want5m, "creation5m")
+			assertFloat(t, c1h, tt.want1h, "creation1h")
+		})
+	}
+
+	// 非 tiered 模式恒用锚点价（档内字段不参与）
+	p := &PricingResult{
+		BillingMode:          "token",
+		CacheReadPrice:       anchorRead,
+		CacheCreation5mPrice: anchor5m,
+		CacheCreation1hPrice: anchor1h,
+		CustomTiers:          []PricingTierRow{{MinTokens: 0, CacheReadPrice: ptrFloat64(0.05), CacheCreationPrice: ptrFloat64(7.5)}},
+	}
+	read, c5m, c1h := effectiveCachePrices(p, 1_000_000)
+	assertFloat(t, read, anchorRead, "token read")
+	assertFloat(t, c5m, anchor5m, "token creation5m")
+	assertFloat(t, c1h, anchor1h, "token creation1h")
+}
+
+// TestStripTierCacheAnchors 租户重定缓存价锚点时的平台档内缓存价剥离：
+// 读/写体系独立剥离，创建体系任一键覆盖即整体系（5m+1h）剥离；
+// 返回新切片不改入参（缓存共享安全）；无覆盖时原样返回
+func TestStripTierCacheAnchors(t *testing.T) {
+	read := 0.1
+	c5m := 3.75
+	c1h := 6.0
+	tiers := []PricingTierRow{
+		{MinTokens: 0, CacheReadPrice: &read, CacheCreationPrice: &c5m},
+		{MinTokens: 100_000, CacheReadPrice: &read, CacheCreationPrice: &c5m, CacheCreation1hPrice: &c1h},
+	}
+
+	got := stripTierCacheAnchors(tiers, true, false)
+	for i, tier := range got {
+		if tier.CacheReadPrice != nil {
+			t.Errorf("tier[%d] 读价未剥离: %+v", i, tier.CacheReadPrice)
+		}
+		if tier.CacheCreationPrice != &c5m {
+			t.Errorf("tier[%d] 创建价不应剥离（仅读锚点）", i)
+		}
+	}
+	if got[1].CacheCreation1hPrice != &c1h {
+		t.Error("tier[1] 1h 价不应剥离（仅读锚点）")
+	}
+
+	got = stripTierCacheAnchors(tiers, false, true)
+	for i, tier := range got {
+		if tier.CacheReadPrice == nil {
+			t.Errorf("tier[%d] 读价不应剥离（仅写锚点）", i)
+		}
+		if tier.CacheCreationPrice != nil || tier.CacheCreation1hPrice != nil {
+			t.Errorf("tier[%d] 创建价未整体系剥离: %+v", i, tier)
+		}
+	}
+
+	// 入参不被修改（剥离返回新切片）
+	if tiers[0].CacheReadPrice == nil || tiers[1].CacheCreation1hPrice == nil {
+		t.Error("入参 tiers 被就地修改")
+	}
+	// 无覆盖原样返回（同一切片，避免无谓分配）
+	if same := stripTierCacheAnchors(tiers, false, false); &same[0] != &tiers[0] {
+		t.Error("无覆盖时应原样返回入参切片")
+	}
+	if got := stripTierCacheAnchors(nil, true, true); got != nil {
+		t.Error("nil tiers 应返回 nil")
+	}
+}
+
 // TestCalculateTieredCostFromTiersByInput 选档依据与计费数量分离语义：
 // 档位由完整输入长度（tierInputTokens）决定，计费按实际 token 数（tokens）。
 func TestCalculateTieredCostFromTiersByInput(t *testing.T) {
-	tiers := []pricingTierRow{
+	tiers := []PricingTierRow{
 		{MinTokens: 0, MaxTokens: ptrInt64(100_000), InputPrice: 5.0, OutputPrice: 15.0},
 		{MinTokens: 100_000, MaxTokens: nil, InputPrice: 3.0, OutputPrice: 10.0},
 	}
@@ -351,18 +478,18 @@ func TestValidatePricingConfigured(t *testing.T) {
 		},
 		{
 			name:    "tiered 双零但有自定义阶梯放行",
-			pricing: &PricingResult{BillingMode: "tiered", CustomTiers: []pricingTierRow{{MinTokens: 0, InputPrice: 1.0}}},
+			pricing: &PricingResult{BillingMode: "tiered", CustomTiers: []PricingTierRow{{MinTokens: 0, InputPrice: 1.0}}},
 			wantErr: false,
 		},
 		{
 			// 平台阶梯兜底使 CustomTiers 恒非空，全 0 价阶梯不得视为「已配置」放行（免费使用）
 			name:    "tiered 双零且阶梯全 0 价拒绝",
-			pricing: &PricingResult{BillingMode: "tiered", CustomTiers: []pricingTierRow{{MinTokens: 0, InputPrice: 0, OutputPrice: 0}, {MinTokens: 100, InputPrice: 0, OutputPrice: 0}}},
+			pricing: &PricingResult{BillingMode: "tiered", CustomTiers: []PricingTierRow{{MinTokens: 0, InputPrice: 0, OutputPrice: 0}, {MinTokens: 100, InputPrice: 0, OutputPrice: 0}}},
 			wantErr: true,
 		},
 		{
 			name:    "tiered 双零但阶梯任一档有正价放行",
-			pricing: &PricingResult{BillingMode: "tiered", CustomTiers: []pricingTierRow{{MinTokens: 0, InputPrice: 0, OutputPrice: 0}, {MinTokens: 100, OutputPrice: 10.0}}},
+			pricing: &PricingResult{BillingMode: "tiered", CustomTiers: []PricingTierRow{{MinTokens: 0, InputPrice: 0, OutputPrice: 0}, {MinTokens: 100, OutputPrice: 10.0}}},
 			wantErr: false,
 		},
 		{
@@ -628,7 +755,7 @@ func TestComputeCost_WithTimeMultiplier(t *testing.T) {
 		TenantMultiplier: 1.0,
 		TimeMultiplier:   0.5,
 		Currency:         "USD",
-		CustomTiers: []pricingTierRow{
+		CustomTiers: []PricingTierRow{
 			{MinTokens: 0, MaxTokens: ptrInt64(100_000), InputPrice: 5.0, OutputPrice: 15.0},
 			{MinTokens: 100_000, MaxTokens: nil, InputPrice: 3.0, OutputPrice: 10.0},
 		},
@@ -644,7 +771,7 @@ func TestComputeCost_TieredMode_WithCustomTiers(t *testing.T) {
 		BillingMode:      "tiered",
 		TenantMultiplier: 1.0,
 		Currency:         "USD",
-		CustomTiers: []pricingTierRow{
+		CustomTiers: []PricingTierRow{
 			{MinTokens: 0, MaxTokens: ptrInt64(100_000), InputPrice: 5.0, OutputPrice: 15.0},
 			{MinTokens: 100_000, MaxTokens: nil, InputPrice: 3.0, OutputPrice: 10.0},
 		},
@@ -670,7 +797,7 @@ func TestComputeCost_TieredMode_CacheTokensCountTowardTier(t *testing.T) {
 			TenantMultiplier: 1.0,
 			Currency:         "USD",
 			CacheReadPrice:   1.0,
-			CustomTiers: []pricingTierRow{
+			CustomTiers: []PricingTierRow{
 				{MinTokens: 0, MaxTokens: ptrInt64(100_000), InputPrice: 5.0, OutputPrice: 15.0},
 				{MinTokens: 100_000, MaxTokens: nil, InputPrice: 3.0, OutputPrice: 10.0},
 			},
@@ -1058,37 +1185,37 @@ func TestResolveTokenCounts_CacheWriteMergedBucket(t *testing.T) {
 // 判定按计费模式收窄——惰性字段（如 token 模式下遗留的按次单价）不构成跳过条件；
 // per_second/special 下仅覆盖按秒矩阵（补丁 prices）才构成一口价，未覆盖时倍率仍是折扣唯一手段
 func TestHasTenantCustomPrice(t *testing.T) {
-	f := func(v float64) *float64 { return &v }
 	tests := []struct {
-		name  string
-		tm    *tenantModelRow
-		mode  string
-		patch *TenantPricingPatch
-		want  bool
+		name string
+		tm   *tenantModelRow
+		mode string
+		want bool
 	}{
-		{"nil 行", nil, "token", nil, false},
-		{"空行", &tenantModelRow{}, "token", nil, false},
-		{"自定义输入价", &tenantModelRow{CustomInputPrice: f(1.8)}, "token", nil, true},
-		{"自定义输出价", &tenantModelRow{CustomOutputPrice: f(1.8)}, "token", nil, true},
-		{"自定义缓存读价", &tenantModelRow{CustomCacheReadPrice: f(0.1)}, "token", nil, true},
-		{"自定义缓存写价", &tenantModelRow{CustomCacheCreationPrice: f(0.3)}, "token", nil, true},
-		{"零值自定义价不算", &tenantModelRow{CustomInputPrice: f(0)}, "token", nil, false},
-		{"tiered 自定义阶梯", &tenantModelRow{CustomPricingTiers: `[{"min_tokens":0}]`}, "tiered", nil, true},
-		{"tiered 空阶梯", &tenantModelRow{CustomPricingTiers: "[]"}, "tiered", nil, false},
-		{"tiered null 阶梯", &tenantModelRow{CustomPricingTiers: "null"}, "tiered", nil, false},
-		{"tiered 自定义缓存价仍算", &tenantModelRow{CustomCacheReadPrice: f(0.1)}, "tiered", nil, true},
-		{"per_request 自定义按次价", &tenantModelRow{PerRequestPrice: f(0.5)}, "per_request", nil, true},
-		{"per_request 遗留 token 价忽略", &tenantModelRow{CustomInputPrice: f(2)}, "per_request", nil, false},
-		{"token 遗留按次价忽略", &tenantModelRow{PerRequestPrice: f(0.5)}, "token", nil, false},
-		{"per_second 全部忽略", &tenantModelRow{CustomInputPrice: f(2), CustomOutputPrice: f(3), CustomCacheReadPrice: f(0.1), PerRequestPrice: f(0.5)}, "per_second", nil, false},
-		{"special 全部忽略", &tenantModelRow{CustomInputPrice: f(2)}, BillingModeSpecial, nil, false},
-		{"per_second 矩阵覆盖一口价", &tenantModelRow{}, "per_second", &TenantPricingPatch{Prices: map[string]float64{"720p": 0.1, "*": 0.2}}, true},
-		{"special 矩阵覆盖一口价", &tenantModelRow{}, BillingModeSpecial, &TenantPricingPatch{Prices: map[string]float64{"*": 0.2}}, true},
-		{"per_second 仅时段覆盖不算一口价", &tenantModelRow{}, "per_second", &TenantPricingPatch{TimeSegments: &[]TimeSegment{{Name: "夜间"}}}, false},
+		{"nil 行", nil, "token", false},
+		{"空行", &tenantModelRow{}, "token", false},
+		{"自定义输入价", &tenantModelRow{CustomPricing: `{"input_price":1.8}`}, "token", true},
+		{"自定义输出价", &tenantModelRow{CustomPricing: `{"output_price":1.8}`}, "token", true},
+		{"自定义缓存读价", &tenantModelRow{CustomPricing: `{"cache_read_price":0.1}`}, "token", true},
+		{"自定义缓存写价", &tenantModelRow{CustomPricing: `{"cache_creation_price":0.3}`}, "token", true},
+		{"自定义长时缓存创建价", &tenantModelRow{CustomPricing: `{"cache_creation_1h_price":0.4}`}, "token", true},
+		{"零值自定义价不算", &tenantModelRow{}, "token", false},
+		{"tiered 自定义阶梯", &tenantModelRow{CustomPricing: `{"tiers":[{"min_tokens":0}]}`}, "tiered", true},
+		{"tiered 空阶梯", &tenantModelRow{}, "tiered", false},
+		{"tiered null 阶梯", &tenantModelRow{}, "tiered", false},
+		{"tiered 自定义缓存价仍算", &tenantModelRow{CustomPricing: `{"cache_read_price":0.1}`}, "tiered", true},
+		{"per_request 自定义按次价", &tenantModelRow{CustomPricing: `{"price":0.5}`}, "per_request", true},
+		{"per_request 遗留 token 价忽略", &tenantModelRow{CustomPricing: `{"input_price":2}`}, "per_request", false},
+		{"token 遗留按次价忽略", &tenantModelRow{CustomPricing: `{"price":0.5}`}, "token", false},
+		{"per_second 全部忽略", &tenantModelRow{CustomPricing: `{"input_price":2,"output_price":3,"cache_read_price":0.1,"price":0.5}`}, "per_second", false},
+		{"special 全部忽略", &tenantModelRow{CustomPricing: `{"input_price":2}`}, BillingModeSpecial, false},
+		{"per_second 矩阵覆盖一口价", &tenantModelRow{CustomPricing: `{"prices":{"720p":0.1,"*":0.2}}`}, "per_second", true},
+		{"special 矩阵覆盖一口价", &tenantModelRow{CustomPricing: `{"prices":{"*":0.2}}`}, BillingModeSpecial, true},
+		{"per_second 仅时段覆盖不算一口价", &tenantModelRow{CustomPricing: `{"time_segments":[{"name":"夜间"}]}`}, "per_second", false},
+		{"blob 输入价（新存储形态）", &tenantModelRow{CustomPricing: `{"input_price":1.8}`}, "token", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := hasTenantCustomPrice(tt.tm, tt.mode, tt.patch); got != tt.want {
+			if got := hasTenantCustomPrice(buildTenantOverrideView(tt.tm), tt.mode); got != tt.want {
 				t.Errorf("hasTenantCustomPrice(%s) = %v, want %v", tt.mode, got, tt.want)
 			}
 		})
@@ -1102,25 +1229,25 @@ func TestApplyTenantModelDiscount(t *testing.T) {
 		name                          string
 		tm                            *tenantModelRow
 		mode                          string
-		patch                         *TenantPricingPatch
 		wantMul, wantRatio            float64
 		wantCustomPriced, wantRatioEx bool
 	}{
-		{"nil 行", nil, "token", nil, 1, 1, false, false},
-		{"未启用行", &tenantModelRow{DiscountRatio: f(0.9)}, "token", nil, 1, 1, false, false},
-		{"全空行", &tenantModelRow{Enabled: true}, "token", nil, 1, 1, false, false},
-		{"discount_ratio 0.9", &tenantModelRow{Enabled: true, DiscountRatio: f(0.9)}, "token", nil, 0.9, 0.9, false, true},
-		{"显式 discount_ratio=1.0（不打折）", &tenantModelRow{Enabled: true, DiscountRatio: f(1.0)}, "token", nil, 1, 1, false, true},
-		{"multiplier 1.2（加价）", &tenantModelRow{Enabled: true, Multiplier: f(1.2)}, "token", nil, 1.2, 1.2, false, false},
-		{"discount_ratio 优先于 multiplier", &tenantModelRow{Enabled: true, DiscountRatio: f(0.9), Multiplier: f(1.2)}, "token", nil, 0.9, 0.9, false, true},
-		{"一口价行跳过折扣", &tenantModelRow{Enabled: true, CustomInputPrice: f(1.8), DiscountRatio: f(0.9)}, "token", nil, 1, 1, true, false},
-		{"per_second 保留 multiplier（无逐格价）", &tenantModelRow{Enabled: true, CustomInputPrice: f(2), Multiplier: f(0.8)}, "per_second", nil, 0.8, 0.8, false, false},
-		{"per_second 矩阵覆盖跳过折扣（一口价）", &tenantModelRow{Enabled: true, Multiplier: f(0.8)}, "per_second", &TenantPricingPatch{Prices: map[string]float64{"*": 0.2}}, 1, 1, true, false},
-		{"per_request 一口价（自定义按次价）", &tenantModelRow{Enabled: true, PerRequestPrice: f(0.5), DiscountRatio: f(0.9)}, "per_request", nil, 1, 1, true, false},
+		{"nil 行", nil, "token", 1, 1, false, false},
+		{"未启用行", &tenantModelRow{DiscountRatio: f(0.9)}, "token", 1, 1, false, false},
+		{"全空行", &tenantModelRow{Enabled: true}, "token", 1, 1, false, false},
+		{"discount_ratio 0.9", &tenantModelRow{Enabled: true, DiscountRatio: f(0.9)}, "token", 0.9, 0.9, false, true},
+		{"显式 discount_ratio=1.0（不打折）", &tenantModelRow{Enabled: true, DiscountRatio: f(1.0)}, "token", 1, 1, false, true},
+		{"multiplier 1.2（加价）", &tenantModelRow{Enabled: true, Multiplier: f(1.2)}, "token", 1.2, 1.2, false, false},
+		{"discount_ratio 优先于 multiplier", &tenantModelRow{Enabled: true, DiscountRatio: f(0.9), Multiplier: f(1.2)}, "token", 0.9, 0.9, false, true},
+		{"一口价行跳过折扣", &tenantModelRow{Enabled: true, CustomPricing: `{"input_price":1.8}`, DiscountRatio: f(0.9)}, "token", 1, 1, true, false},
+		{"blob 一口价行跳过折扣", &tenantModelRow{Enabled: true, CustomPricing: `{"input_price":1.8}`, DiscountRatio: f(0.9)}, "token", 1, 1, true, false},
+		{"per_second 保留 multiplier（无逐格价）", &tenantModelRow{Enabled: true, CustomPricing: `{"input_price":2}`, Multiplier: f(0.8)}, "per_second", 0.8, 0.8, false, false},
+		{"per_second 矩阵覆盖跳过折扣（一口价）", &tenantModelRow{Enabled: true, Multiplier: f(0.8), CustomPricing: `{"prices":{"*":0.2}}`}, "per_second", 1, 1, true, false},
+		{"per_request 一口价（自定义按次价）", &tenantModelRow{Enabled: true, CustomPricing: `{"price":0.5}`, DiscountRatio: f(0.9)}, "per_request", 1, 1, true, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mul, ratio, customPriced, ratioEx := applyTenantModelDiscount(tt.tm, tt.mode, tt.patch)
+			mul, ratio, customPriced, ratioEx := applyTenantModelDiscount(tt.tm, tt.mode, buildTenantOverrideView(tt.tm))
 			if mul != tt.wantMul || ratio != tt.wantRatio || customPriced != tt.wantCustomPriced || ratioEx != tt.wantRatioEx {
 				t.Errorf("applyTenantModelDiscount() = (mul=%v ratio=%v customPriced=%v ratioExplicit=%v), want (%v %v %v %v)",
 					mul, ratio, customPriced, ratioEx, tt.wantMul, tt.wantRatio, tt.wantCustomPriced, tt.wantRatioEx)
@@ -1261,5 +1388,189 @@ func TestComputeCost_CacheTTLBuckets(t *testing.T) {
 	assertFloat(t, cb2.CacheCreation1hCost, 0, "fallback 1h bucket cost")
 	if cb2.CacheCreation5mTokens != 80_000 || cb2.CacheCreation1hTokens != 0 {
 		t.Errorf("fallback TTL tokens = 5m:%d 1h:%d, want 80000/0", cb2.CacheCreation5mTokens, cb2.CacheCreation1hTokens)
+	}
+}
+
+// TestComputeCost_TieredMode_CacheCreation1hPerTier 1h 缓存创建价阶梯逐档生效：
+// 命中档的档内价取代锚点价；档内未配置（nil）时回退锚点，保证存量阶梯数据价格口径不变
+func TestComputeCost_TieredMode_CacheCreation1hPerTier(t *testing.T) {
+	p20, p144 := 20.0, 14.4
+	pricing := &PricingResult{
+		BillingMode:          "tiered",
+		TenantMultiplier:     1.0,
+		Currency:             "USD",
+		CacheCreationPrice:   18.75,
+		CacheCreation5mPrice: 18.75,
+		CacheCreation1hPrice: 6.0, // 锚点价：仅作档内缺省时的回退
+		CustomTiers: []PricingTierRow{
+			{MinTokens: 0, MaxTokens: ptrInt64(100_000), InputPrice: 5, OutputPrice: 15, CacheCreation1hPrice: &p20},
+			{MinTokens: 100_000, MaxTokens: nil, InputPrice: 3, OutputPrice: 10, CacheCreation1hPrice: &p144},
+		},
+	}
+	newUsage := func(prompt int) *rcommon.Usage {
+		return &rcommon.Usage{
+			PromptTokens:     prompt,
+			CompletionTokens: 10,
+			PromptTokensDetails: &rcommon.TokenDetails{
+				CachedCreation1hTokens: 10_000,
+			},
+			CacheIncludedInPrompt: true,
+		}
+	}
+
+	// 完整输入 200K 命中第二档 → 10K × 14.4/1M = 0.144
+	cb := computeCost(pricing, 200_000, 10, newUsage(200_000), 1)
+	assertFloat(t, cb.CacheCreation1hCost, 0.144, "1h cost (tier2 in-tier price)")
+
+	// 低用量命中首档 → 10K × 20/1M = 0.2
+	cbLow := computeCost(pricing, 1_000, 10, newUsage(1_000), 1)
+	assertFloat(t, cbLow.CacheCreation1hCost, 0.2, "1h cost (tier1 in-tier price)")
+
+	// 档内未配置 → 回退锚点 6.0：10K × 6/1M = 0.06
+	pricing.CustomTiers[1].CacheCreation1hPrice = nil
+	cbFallback := computeCost(pricing, 200_000, 10, newUsage(200_000), 1)
+	assertFloat(t, cbFallback.CacheCreation1hCost, 0.06, "1h cost (anchor fallback)")
+}
+
+// TestComputeCost_TieredMode_CacheReadAnd5mPerTier 缓存读取价与 5m 缓存创建价阶梯逐档生效：
+// 命中档的档内价取代锚点价（OpenAI cache_write 并入 5m 桶同样随档计价）；
+// 档内未配置（nil）时回退锚点，保证存量阶梯数据（档内无缓存键）价格口径不变
+func TestComputeCost_TieredMode_CacheReadAnd5mPerTier(t *testing.T) {
+	read2, create2 := 0.4, 9.0
+	pricing := &PricingResult{
+		BillingMode:          "tiered",
+		TenantMultiplier:     1.0,
+		Currency:             "USD",
+		CacheReadPrice:       0.1, // 锚点价：仅作档内缺省时的回退
+		CacheCreationPrice:   3.75,
+		CacheCreation5mPrice: 3.75,
+		CustomTiers: []PricingTierRow{
+			{MinTokens: 0, MaxTokens: ptrInt64(100_000), InputPrice: 5, OutputPrice: 15},
+			{MinTokens: 100_000, MaxTokens: nil, InputPrice: 3, OutputPrice: 10, CacheReadPrice: &read2, CacheCreationPrice: &create2},
+		},
+	}
+	newUsage := func(prompt int) *rcommon.Usage {
+		return &rcommon.Usage{
+			PromptTokens:     prompt,
+			CompletionTokens: 10,
+			PromptTokensDetails: &rcommon.TokenDetails{
+				CachedTokens:     50_000,
+				CacheWriteTokens: 20_000,
+			},
+			CacheIncludedInPrompt: true,
+		}
+	}
+
+	// 完整输入 200K 命中第二档 → 读 50K×0.4/1M=0.02；写(5m) 20K×9/1M=0.18
+	cb := computeCost(pricing, 200_000, 10, newUsage(200_000), 1)
+	assertFloat(t, cb.CacheReadCost, 0.02, "cache read cost (tier2 in-tier price)")
+	assertFloat(t, cb.CacheCreation5mCost, 0.18, "5m creation cost (tier2 in-tier price)")
+
+	// 完整输入 80K 命中首档（档内未配置缓存价）→ 回退锚点：读 50K×0.1/1M=0.005；写 20K×3.75/1M=0.075
+	cbLow := computeCost(pricing, 80_000, 10, newUsage(80_000), 1)
+	assertFloat(t, cbLow.CacheReadCost, 0.005, "cache read cost (anchor fallback)")
+	assertFloat(t, cbLow.CacheCreation5mCost, 0.075, "5m creation cost (anchor fallback)")
+
+	// 非阶梯模式不受档内字段影响（token 模式恒用锚点价）
+	pricing.BillingMode = "token"
+	cbToken := computeCost(pricing, 200_000, 10, newUsage(200_000), 1)
+	assertFloat(t, cbToken.CacheReadCost, 0.005, "cache read cost (token mode uses anchor)")
+	assertFloat(t, cbToken.CacheCreation5mCost, 0.075, "5m creation cost (token mode uses anchor)")
+}
+
+// TestComputeCost_OpenAITTLDetailsNormalized GPT ttl_30m/ttl_12h 写入经归一双桶分档计价的
+// 端到端验证（dto → common 归一 → resolveTokenCounts → 费用）。数值锚点取自 OpenAI 官方
+// 文档示例：输入 $1/M、缓存读 $0.10/M、30m 写入 1.25×、12h 写入 2.5×，usage
+// input=12000 / cached=4000 / cache_write=7000(30m:3000+12h:4000) → 输入费用 $0.01515
+func TestComputeCost_OpenAITTLDetailsNormalized(t *testing.T) {
+	// 上游报文经 dto 解析后进入 common（DtoTokenDetailsToCommon 为归一咽喉点）
+	td := rcommon.DtoTokenDetailsToCommon(&rdto.TokenDetails{
+		CachedTokens:     4000,
+		CacheWriteTokens: 7000,
+		CacheWriteTokensDetails: &rdto.CacheWriteTokensDetail{
+			TTL30mTokens: 3000,
+			TTL12hTokens: 4000,
+		},
+	})
+	if td.CachedCreation5mTokens != 3000 || td.CachedCreation1hTokens != 4000 {
+		t.Fatalf("归一双桶 = 5m:%d 1h:%d, want 3000/4000", td.CachedCreation5mTokens, td.CachedCreation1hTokens)
+	}
+
+	pricing := &PricingResult{
+		InputPrice:         1.0, // $1/M（官方示例锚点）
+		OutputPrice:        0.0,
+		CacheReadPrice:     0.1,  // $0.10/M
+		CacheCreationPrice: 1.25, // 短桶 = GPT 30m 官方 1.25× 输入价
+		BillingMode:        "token",
+		TenantMultiplier:   1.0,
+		Currency:           "USD",
+	}
+	pricing.CacheCreation5mPrice = pricing.CacheCreationPrice
+	pricing.CacheCreation1hPrice = 2.5 // 长桶 = GPT 12h 官方 2.5×（显式配置）
+
+	usage := &rcommon.Usage{
+		PromptTokens:          12000,
+		CompletionTokens:      0,
+		PromptTokensDetails:   td,
+		CacheIncludedInPrompt: true, // OpenAI 口径：input_tokens 含 cache 子集
+	}
+	cb := computeCost(pricing, 12000, 0, usage, 1)
+
+	// 未缓存输入 = 12000 − 4000 − 7000 = 1000 → 1000/1M×1.0 = 0.001
+	assertFloat(t, cb.InputCost, 0.001, "InputCost (未缓存输入)")
+	// 读 4000×0.1/1M = 0.0004；短桶(30m) 3000×1.25/1M = 0.00375；长桶(12h) 4000×2.5/1M = 0.01
+	assertFloat(t, cb.CacheReadCost, 0.0004, "CacheReadCost")
+	assertFloat(t, cb.CacheCreation5mCost, 0.00375, "CacheCreation5mCost (ttl_30m)")
+	assertFloat(t, cb.CacheCreation1hCost, 0.01, "CacheCreation1hCost (ttl_12h)")
+	// 官方示例总额：$0.01515
+	assertFloat(t, cb.TotalCost, 0.01515, "TotalCost (OpenAI 官方文档示例锚点)")
+	if cb.InputTokens != 1000 {
+		t.Errorf("InputTokens = %d, want 1000", cb.InputTokens)
+	}
+}
+
+// TestBuildTenantOverrideView 覆盖归一视图构造（blob-only：000030 已删扁平列）：
+// 价格键解析、旧 TenantPricingPatch 三键同形兼容、显式关闭三态、空/nil 安全
+func TestBuildTenantOverrideView(t *testing.T) {
+	// 价格键 + 显式关闭时段
+	tm := &tenantModelRow{
+		CustomPricing: `{"input_price":1.5,"time_segments":[]}`,
+	}
+	v := buildTenantOverrideView(tm)
+	if v.InputPrice == nil || *v.InputPrice != 1.5 {
+		t.Errorf("InputPrice = %v, want 1.5（blob 键）", v.InputPrice)
+	}
+	if v.OutputPrice != nil {
+		t.Errorf("OutputPrice = %v, want nil（未覆盖键）", v.OutputPrice)
+	}
+	if v.TimeSegments == nil || len(*v.TimeSegments) != 0 {
+		t.Errorf("TimeSegments 应为非-nil 空切片（显式关闭）, got %v", v.TimeSegments)
+	}
+
+	// 旧 TenantPricingPatch 三键（prices/time_segments/param_multipliers）与 blob 键同形：
+	// 直接消费（显式关闭空数组保留三态）
+	tmPatch := &tenantModelRow{
+		CustomPricing: `{"prices":{"*":0.2},"time_segments":[],"param_multipliers":[{"path":"x","multiplier":1.5}],"billing_mode":"tiered"}`,
+	}
+	v3 := buildTenantOverrideView(tmPatch)
+	if len(v3.PerSecondPrices) != 1 || v3.PerSecondPrices["*"] != 0.2 {
+		t.Errorf("PerSecondPrices = %v, want {*:0.2}", v3.PerSecondPrices)
+	}
+	if v3.TimeSegments == nil || len(*v3.TimeSegments) != 0 {
+		t.Errorf("time_segments:[] 应保持显式关闭语义, got %v", v3.TimeSegments)
+	}
+	if v3.ParamMultipliers == nil || len(*v3.ParamMultipliers) != 1 {
+		t.Errorf("ParamMultipliers 应解析 1 条, got %v", v3.ParamMultipliers)
+	}
+	if v3.BillingMode == nil || *v3.BillingMode != "tiered" {
+		t.Errorf("billing_mode 键 = %v, want tiered", v3.BillingMode)
+	}
+
+	// 空行 / nil：无覆盖视图（零值）
+	if v4 := buildTenantOverrideView(&tenantModelRow{}); v4 == nil || v4.InputPrice != nil {
+		t.Errorf("空行视图应为零值, got %+v", v4)
+	}
+	if v5 := buildTenantOverrideView(nil); v5 != nil {
+		t.Errorf("nil 行视图应为 nil, got %+v", v5)
 	}
 }

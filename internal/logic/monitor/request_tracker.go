@@ -1,12 +1,15 @@
 package monitor
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gctx"
+
+	"github.com/qianfree/team-api/internal/utility/safego"
 )
 
 const (
@@ -174,9 +177,13 @@ func InitRequestTracker() {
 	// 带宽基线置为启动时刻，避免首个样本把「进程启动至今累计字节」算成瞬时速率
 	t.lastBwTime = time.Now()
 
+	// stop 捕获为局部变量：StopRequestTracker() 会把全局 trackerStop 置 nil，
+	// 而 RunLoop 在 fn panic 后重新执行的是同一个循环体——若循环体读全局，
+	// 重启时拿到 nil channel，runSampler 的退出分支永不就绪，采样 goroutine 永久泄漏。
+	stop := make(chan struct{})
 	tracker = t
-	trackerStop = make(chan struct{})
-	go t.runSampler(trackerStop)
+	trackerStop = stop
+	safego.RunLoop(context.Background(), "monitor:request_sampler", t.samplerLoop(stop))
 }
 
 // StopRequestTracker stops the background sampler (idempotent).
@@ -184,6 +191,14 @@ func StopRequestTracker() {
 	if trackerStop != nil {
 		close(trackerStop)
 		trackerStop = nil
+	}
+}
+
+// samplerLoop 构造供 safego.RunLoop 使用的循环体，stop 通过参数捕获。
+// 见 InitRequestTracker 的说明：绝不能在循环体内部读全局 trackerStop。
+func (t *requestTracker) samplerLoop(stop chan struct{}) func(context.Context) {
+	return func(context.Context) {
+		t.runSampler(stop)
 	}
 }
 

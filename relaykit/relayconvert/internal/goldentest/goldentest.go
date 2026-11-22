@@ -22,17 +22,17 @@ var Update = flag.Bool("update-golden", false, "Regenerate golden test expected 
 
 // TestCase 描述一条完整的转换 Golden 用例（输入 + 期望输出）。
 type TestCase struct {
-	Name      string            `json:"name"`
-	From      types.RelayFormat `json:"from"`
-	To        types.RelayFormat `json:"to"`
-	Request   any               `json:"request,omitempty"`
-	Response  any               `json:"response,omitempty"`
-	StreamData string           `json:"stream_data,omitempty"`
+	Name       string            `json:"name"`
+	From       types.RelayFormat `json:"from"`
+	To         types.RelayFormat `json:"to"`
+	Request    any               `json:"request,omitempty"`
+	Response   any               `json:"response,omitempty"`
+	StreamData string            `json:"stream_data,omitempty"`
 
 	// 期望输出
-	ExpectedRequest       any `json:"expected_request,omitempty"`
-	ExpectedResponse      any `json:"expected_response,omitempty"`
-	ExpectedStreamChunks  []any `json:"expected_stream_chunks,omitempty"`
+	ExpectedRequest      any   `json:"expected_request,omitempty"`
+	ExpectedResponse     any   `json:"expected_response,omitempty"`
+	ExpectedStreamChunks []any `json:"expected_stream_chunks,omitempty"`
 
 	ConverterID string `json:"converter_id,omitempty"`
 }

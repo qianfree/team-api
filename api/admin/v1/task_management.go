@@ -61,8 +61,9 @@ type TaskDetailReq struct {
 	ID     int64 `json:"id" in:"path" v:"required" dc:"任务ID"`
 }
 
+// TaskDetailRes 任务详情响应（嵌入 ModelTaskItem 直接平铺，与 OrderDetailRes 等详情接口一致）
 type TaskDetailRes struct {
-	Task ModelTaskItem `json:"task"`
+	ModelTaskItem
 }
 
 type TaskCancelReq struct {

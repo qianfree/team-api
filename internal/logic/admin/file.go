@@ -39,11 +39,11 @@ func (s *sAdmin) FileList(ctx context.Context, req *v1.FileListReq) (*v1.FileLis
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
 	query := dao.FilFiles.Ctx(ctx)
-	if req.TenantId > 0 {
-		query = query.Where("tenant_id", req.TenantId)
+	if req.TenantID > 0 {
+		query = query.Where("tenant_id", req.TenantID)
 	}
-	if req.UserId > 0 {
-		query = query.Where("user_id", req.UserId)
+	if req.UserID > 0 {
+		query = query.Where("user_id", req.UserID)
 	}
 	if req.Provider != "" {
 		query = query.Where("storage_provider", req.Provider)
@@ -160,7 +160,7 @@ func (s *sAdmin) fileCategoryStat(ctx context.Context, category string) (int64, 
 
 // FileDownload 生成临时预览下载链接。
 func (s *sAdmin) FileDownload(ctx context.Context, req *v1.FileDownloadReq) (*v1.FileDownloadRes, error) {
-	count, err := dao.FilFiles.Ctx(ctx).Where("id", req.Id).Count()
+	count, err := dao.FilFiles.Ctx(ctx).Where("id", req.ID).Count()
 	if err != nil {
 		return nil, err
 	}
@@ -174,9 +174,9 @@ func (s *sAdmin) FileDownload(ctx context.Context, req *v1.FileDownloadReq) (*v1
 	}
 	var url string
 	if req.Variant == "thumb" {
-		url, err = svc.GetThumbnailURL(ctx, req.Id, req.Width, 0)
+		url, err = svc.GetThumbnailURL(ctx, req.ID, req.Width, 0)
 	} else {
-		url, err = svc.GetDownloadURL(ctx, req.Id, 0)
+		url, err = svc.GetDownloadURL(ctx, req.ID, 0)
 	}
 	if err != nil {
 		return nil, err
@@ -186,7 +186,7 @@ func (s *sAdmin) FileDownload(ctx context.Context, req *v1.FileDownloadReq) (*v1
 
 // FileDelete 删除单个文件（存储对象 + 记录）。
 func (s *sAdmin) FileDelete(ctx context.Context, req *v1.FileDeleteReq) (*v1.FileDeleteRes, error) {
-	count, err := dao.FilFiles.Ctx(ctx).Where("id", req.Id).Count()
+	count, err := dao.FilFiles.Ctx(ctx).Where("id", req.ID).Count()
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +198,7 @@ func (s *sAdmin) FileDelete(ctx context.Context, req *v1.FileDeleteReq) (*v1.Fil
 	if err != nil {
 		return nil, err
 	}
-	if err := svc.Delete(ctx, req.Id, 0); err != nil {
+	if err := svc.Delete(ctx, req.ID, 0); err != nil {
 		return nil, err
 	}
 	return &v1.FileDeleteRes{}, nil

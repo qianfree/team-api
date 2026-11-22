@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/qianfree/team-api/internal/jsplugin"
@@ -334,8 +335,15 @@ func HandleTaskSubmit(
 
 	preDeductAmount, err := billingProvider.PreDeductTask(ctx, rc.TenantID, rc.RequestID, estimatedCost, modelName)
 	if err != nil {
-		g.Log().Warningf(ctx, "HandleTaskSubmit: pre-deduct failed, model=%s, err=%v", modelName, err)
-		writeTaskError(rc.Writer, http.StatusPaymentRequired, "insufficient balance", "")
+		// 钱包余额不足 → 402；其余（DB/Redis 故障）为内部错误 → 500，
+		// 冒充 402 会误导排障方向（与 RelayHandler 预扣段同口径）
+		if errors.Is(err, common.ErrInsufficientBalance) {
+			g.Log().Warningf(ctx, "HandleTaskSubmit: pre-deduct rejected, model=%s, err=%v", modelName, err)
+			writeTaskError(rc.Writer, http.StatusPaymentRequired, "insufficient balance", "")
+			return
+		}
+		g.Log().Errorf(ctx, "HandleTaskSubmit: pre-deduct internal error, model=%s, err=%v", modelName, err)
+		writeTaskError(rc.Writer, http.StatusInternalServerError, "billing temporarily unavailable", "")
 		return
 	}
 
@@ -386,7 +394,13 @@ func HandleTaskSubmit(
 		if err := billingProvider.SettleTaskFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount); err != nil {
 			g.Log().Errorf(ctx, "HandleTaskSubmit: SettleTaskFailed error, requestID=%s, amount=%.6f, err=%v", rc.RequestID, preDeductAmount.InexactFloat64(), err)
 		}
-		g.Log().Warningf(ctx, "HandleTaskSubmit: upstream response error, model=%s, status=%d, message=%q, body=%s", modelName, taskErr.StatusCode, taskErr.Message, string(taskData))
+		// 上游 body 原文可能携带上游域名/IP（RedactMessage 脱敏）且体积不可控（截断 2KB），
+		// 完整原文已在渠道调试日志（dbgAttempt）按需留存
+		leakedBody := helper.RedactMessage(string(taskData))
+		if len(leakedBody) > 2048 {
+			leakedBody = truncateUTF8Safe(leakedBody, 2048) + "...(truncated)"
+		}
+		g.Log().Warningf(ctx, "HandleTaskSubmit: upstream response error, model=%s, status=%d, message=%q, body=%s", modelName, taskErr.StatusCode, taskErr.Message, leakedBody)
 		dbgAttempt.MarkFinal(taskErr)
 		writeTaskError(rc.Writer, taskErr.StatusCode, taskErr.Message, taskErr.ErrCode)
 		return
@@ -712,7 +726,7 @@ func HandleMjImageProxy(
 	}
 
 	// 代理获取图片
-	resp, err := midjourney.FetchImage(channel.BaseURL, channel.ApiKey, private.UpstreamTaskID)
+	resp, err := midjourney.FetchImage(ctx, channel.BaseURL, channel.ApiKey, private.UpstreamTaskID)
 	if err != nil {
 		writeTaskError(writer, http.StatusBadGateway, "fetch image failed: "+err.Error(), "")
 		return
@@ -730,4 +744,38 @@ func HandleMjImageProxy(
 	}
 	writer.WriteHeader(http.StatusOK)
 	io.Copy(writer, resp.Body)
+}
+
+// truncateUTF8Safe 按字节上限截断并回退到完整 rune 边界，避免切断多字节字符产生乱码。
+// 仅用于日志截断等非资金路径场景。
+func truncateUTF8Safe(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	cut := s[:max]
+	// 逐字节回退直到剩余字节序列合法：截断点可能切在多字节字符中间（末尾是
+	// continuation byte），也可能恰好是某个字符的最后一个字节（此时 cut 本身
+	// 已合法、无需回退）。不能用 !utf8.RuneStart(末字节) 判断——完整字符的最后
+	// 一个字节同样是 continuation byte，会把它误判成"被切断"而多删一截。
+	//
+	// 回退上限 utf8.UTFMax-1 字节：合法 UTF-8 字符至多 4 字节，对**合法输入**，
+	// 切在字符中间至多回退 3 字节必达边界。回退满 3 字节仍非法，只可能是
+	// 区间内含非法 UTF-8（上游 GBK/二进制错误页）——不得继续回退（会一路退到
+	// 空串，把排障线索全丢掉），退化为原始字节截断，保留乱码但可辨认的内容。
+	for i := 0; i < utf8.UTFMax-1 && len(cut) > 0 && !utf8.ValidString(cut); i++ {
+		cut = cut[:len(cut)-1]
+	}
+	if !utf8.ValidString(cut) {
+		return s[:max]
+	}
+	if len(cut) == 0 && max > 0 {
+		// 回退到空：max 区间内没有任何完整合法字符。两种情况——
+		//   - 原串开头是合法多字节字符而 max 小于其宽度：返回空串，不输出半个字符；
+		//   - 原串开头本身就是非法序列（GBK/二进制）：退化为原始字节截断保留线索。
+		if r, size := utf8.DecodeRuneInString(s); !(r == utf8.RuneError && size == 1) && max < size {
+			return ""
+		}
+		return s[:max]
+	}
+	return cut
 }
