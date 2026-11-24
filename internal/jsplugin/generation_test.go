@@ -97,44 +97,15 @@ func TestGenerationRouteNamespaceIsolation(t *testing.T) {
 		t.Fatal("未知插件 key 不应命中其他插件的路由")
 	}
 
-	// 激活预检：同形状路由不构成冲突；模型同名仍拒绝
-	a := &contract.Manifest{
-		Key: "a", Version: "1.0.0", Models: []string{"model-a"},
-		Routes: []contract.Route{{Method: "GET", Path: "/videos/:task_id", Type: contract.RouteTypeQuery}},
-	}
-	bSameShape := &contract.Manifest{
-		Key: "b", Version: "1.0.0", Models: []string{"model-b"},
-		Routes: []contract.Route{{Method: "GET", Path: "/videos/:request_id", Type: contract.RouteTypeQuery}},
-	}
-	if err := checkManifestConflict("a", a, "b", bSameShape); err != nil {
-		t.Fatalf("跨插件同形状路由不应冲突: %v", err)
-	}
-
-	bModelDup := &contract.Manifest{
-		Key: "b", Version: "1.0.0", Models: []string{"model-a"},
-		Routes: []contract.Route{{Method: "GET", Path: "/videos/:request_id", Type: contract.RouteTypeQuery}},
-	}
-	if err := checkManifestConflict("a", a, "b", bModelDup); err == nil {
-		t.Fatal("模型同名应当报冲突")
-	}
-
-	bModelCase := &contract.Manifest{
-		Key: "b", Version: "1.0.0", Models: []string{"Model-A"},
-		Routes: []contract.Route{{Method: "GET", Path: "/videos/:request_id", Type: contract.RouteTypeQuery}},
-	}
-	if err := checkManifestConflict("a", a, "b", bModelCase); err == nil {
-		t.Fatal("模型名仅大小写差异应当报冲突")
-	}
-}
-
-func TestGenerationFindPluginByModel(t *testing.T) {
-	gen := buildGeneration([]*ActivePlugin{
-		testPlugin("alpha", []string{"golden_music"}),
+	// 跨插件同名上游模型为合法形态：同时进入 generation，各插件独立可取
+	shared := buildGeneration([]*ActivePlugin{
+		testPlugin("alpha", []string{"minimax-h3"}),
+		testPlugin("beta", []string{"MiniMax-H3", "wan-3.0"}),
 	})
-	if key, ok := gen.FindPluginByModel("GOLDEN_MUSIC"); !ok || key != "alpha" {
-		t.Fatalf("大小写不敏感模型查找失败: %v %v", key, ok)
-	}
-	if _, ok := gen.FindPluginByModel("unknown"); ok {
-		t.Fatal("未知模型不应命中")
+	for _, key := range []string{"alpha", "beta"} {
+		p, ok := shared.Plugin(key)
+		if !ok || !p.Manifest.SupportsUpstreamModel("minimax-h3") {
+			t.Fatalf("同名上游模型插件 %s 应在 generation 内且支持该模型", key)
+		}
 	}
 }

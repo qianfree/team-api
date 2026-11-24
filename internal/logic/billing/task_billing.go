@@ -27,7 +27,8 @@ func NewTaskBillingProvider() common.TaskBillingProvider {
 	return &TaskBillingProviderImpl{}
 }
 
-// EstimateTaskCost 估算任务费用
+// EstimateTaskCost 估算任务费用。定价取不到或未配置时返回错误（fail-closed），
+// 调用方须拒绝提交——预扣尚未发生，无资金副作用。
 // ratios 包含计费上下文（float64 乘数如 video_input 折扣 + spec.* 规格事实值，见 TaskAdaptor.EstimateBilling）；
 // ratioKeyFormulaRequest ratios 中冻结的公式请求探测值键（formula 模式任务路径）：
 // 提交时把 header()/param() 探测值与时间基准解析为小 map 注入 ratios，随任务
@@ -40,7 +41,14 @@ const ratioKeyFormulaRequest = "formula_request"
 func (b *TaskBillingProviderImpl) EstimateTaskCost(ctx context.Context, tenantID int64, modelName string, ratios map[string]any, taskBody []byte, headers http.Header) (decimal.Decimal, error) {
 	pricing, err := GetModelPrice(ctx, tenantID, modelName)
 	if err != nil {
-		return NewFromFloat(0.01), nil
+		// fail-closed：取价失败（模型未注册/未激活、定价查询故障）不得放行——此前按 0.01
+		// 占位预扣并继续提交，结算期同样取不到价而按预扣额成交，任务近乎免费
+		return Zero, gerror.Wrapf(err, "estimate task cost: get model price (model=%s)", modelName)
+	}
+	// fail-closed：未配置定价的模型不得放行，与同步路径 EstimatePreDeductAmount 同口径。
+	// 此前落到通用引擎的 0.1 占位预扣，结算期素材/token 重算均不适用，占位价即终价
+	if err := validatePricingConfigured(pricing, modelName); err != nil {
+		return Zero, err
 	}
 	// 特殊计费方案 fail-closed：定价引用了未注册的方案（方案代码缺失/被回滚）时
 	// 引擎无从得知正确价格，静默回落 generic 会错价，拒绝任务提交与「未配价模型

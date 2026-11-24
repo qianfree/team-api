@@ -13,6 +13,7 @@ import (
 
 	"github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/jsplugin"
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/relay"
 	"github.com/qianfree/team-api/relay/constant"
@@ -50,6 +51,13 @@ func (s *sAdmin) FetchChannelUpstreamModels(ctx context.Context, req *v1.Channel
 	}
 
 	providerType := constant.ProviderType(ch.Type)
+	// JS 任务插件渠道：上游模型清单 = 所绑插件的有效 models（插件声明它支持的上游
+	// 模型名），直接返回供配置模型映射；插件未在服务时回落拉取上游 /v1/models
+	if providerType == constant.ProviderJSTask {
+		if res := jsPluginUpstreamModels(ch.Settings); res != nil {
+			return res, nil
+		}
+	}
 	if !supportsUpstreamModelList(providerType) {
 		return nil, common.NewBadRequestError(fmt.Sprintf(
 			"「%s」类型渠道没有标准模型列表接口，请手动填写模型名", providerType.String()))
@@ -106,6 +114,26 @@ func (s *sAdmin) FetchChannelUpstreamModels(ctx context.Context, req *v1.Channel
 		Protocol:  protocol,
 		ElapsedMs: elapsed,
 	}, nil
+}
+
+// jsPluginUpstreamModels 按渠道 settings.plugin_key 取在服务插件的有效上游模型清单
+// （meta.models ∪ 配置扩展）；未绑定或插件不在服务返回 nil。
+func jsPluginUpstreamModels(settingsJSON string) *v1.ChannelUpstreamModelsRes {
+	var settings struct {
+		PluginKey string `json:"plugin_key"`
+	}
+	if settingsJSON == "" || json.Unmarshal([]byte(settingsJSON), &settings) != nil || settings.PluginKey == "" {
+		return nil
+	}
+	plugin, ok := jsplugin.CurrentGeneration().Plugin(settings.PluginKey)
+	if !ok || len(plugin.Manifest.Models) == 0 {
+		return nil
+	}
+	list := make([]v1.UpstreamModelItem, 0, len(plugin.Manifest.Models))
+	for _, m := range plugin.Manifest.Models {
+		list = append(list, v1.UpstreamModelItem{ID: m, OwnedBy: "js:" + settings.PluginKey})
+	}
+	return &v1.ChannelUpstreamModelsRes{List: list, Total: len(list), Protocol: "js_plugin"}
 }
 
 // supportsUpstreamModelList 判断该类型渠道是否具备标准模型列表接口。

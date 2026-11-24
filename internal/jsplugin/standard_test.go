@@ -142,9 +142,9 @@ export function parseQueryResponse(ctx) {
   return { items: [{ taskId: (ctx.tasks || [])[0].taskId, done: false }] };
 }`
 
-// TestSynthesizeStandardPlan_AliasModel 渠道显式绑定插件 + 模型映射：请求模型是平台
-// 侧别名（不在 meta.models），钩子回显 ctx.model 应放行；回显别的未声明模型仍拒绝，
-// 且放行不改写插件 manifest。
+// TestSynthesizeStandardPlan_AliasModel 平台模型名是渠道映射别名（不在 meta.models——
+// 它是上游模型清单）：解码钩子回显的任意平台名都放行，且不改写插件 manifest。
+// 上游模型支持性在渠道选定后由 jsbridge 校验，不在解码阶段。
 func TestSynthesizeStandardPlan_AliasModel(t *testing.T) {
 	cleanup, err := PublishForTest(stdEchoModelSource)
 	if err != nil {
@@ -161,15 +161,16 @@ func TestSynthesizeStandardPlan_AliasModel(t *testing.T) {
 	if plan == nil || plan.Decoded == nil || plan.Decoded.Model != "alias_model" {
 		t.Fatalf("解码结果异常: %+v", plan)
 	}
-	if plan.Plugin.Manifest.HasModel("alias_model") {
+	if plan.Plugin.Manifest.SupportsUpstreamModel("alias_model") {
 		t.Fatalf("放行不应改写插件 manifest 的模型清单")
 	}
 
+	// 钩子返回空模型名：契约拒绝
 	_, err = SynthesizeStandardPlan(context.Background(), "stdecho",
 		contract.SurfaceOpenAIVideos, "/v1/videos",
-		[]byte(`{"model":"alias_model","prompt":"a cat","force_model":"other_model"}`), "alias_model")
-	if err == nil || !strings.Contains(err.Error(), "other_model") {
-		t.Fatalf("回显请求外的未声明模型应被拒绝，得到 %v", err)
+		[]byte(`{"model":"alias_model","prompt":"a cat","force_model":" "}`), "alias_model")
+	if err == nil || !strings.Contains(err.Error(), "model") {
+		t.Fatalf("空模型名应被拒绝，得到 %v", err)
 	}
 }
 

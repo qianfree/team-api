@@ -35,9 +35,11 @@ func (JSPluginSkill) Reference() string {
 - key：小写字母开头，仅小写字母/数字/连字符，2-30 字符
 - name / description / author / website（website 需 https）
 - version：semver（如 1.0.0）
-- models：接管的模型名数组（非空；模型跨插件独占，除非双方都声明 sharedModels）
-- modelsFromConfig（可选）：扩展模型承载配置键名（该键须在 config 中声明，type 为 text/string/json，
-  不可 encrypted）；其配置值（换行/逗号分隔或 JSON 数组）运行时并入模型清单，上游新增模型改配置即可
+- models：插件支持的【上游模型名】数组（非空）。平台模型名由渠道模型路由/映射决定，与插件无关；
+  跨插件同名上游模型合法（同一模型由多家供应商提供，归属由渠道 plugin_key 决定），不做冲突预检。
+  禁止声明 sharedModels / usageSchema（契约已移除，出现即编译失败）
+- modelsFromConfig（可选）：扩展上游模型承载配置键名（该键须在 config 中声明，type 为 text/string/json，
+  不可 encrypted）；其配置值（换行/逗号分隔或 JSON 数组）运行时并入支持清单，上游新增模型改配置即可
 - fetchMode：batch | per_task（缺省 per_task）
 - routes：[{method, path, type}]，method 大写，path 支持 :param 段，type ∈ submit | query | dynamic
   （dynamic 一型两用：解码结果定查询或提交）；可选 decode/render 字段声明钩子别名
@@ -48,28 +50,33 @@ func (JSPluginSkill) Reference() string {
   "reference_video","reference_audio","file","link"]（可选；缺省仅 first_frame，网关拦截未声明角色；
   file=文档文件参考、link=网页链接参考，仅上游支持时声明）。声明了多种角色的插件，decodeVideos 必须读取
   references[] 并按顺序映射
-- usageSchema：计费用量声明 [{key, type: number|enum|boolean, unit: second|count|空, description}]，
-  number 型键自动注册进计费公式 u() 注册表
 - config：插件配置项 [{key, label, type: string|int|bool|select|json|text, default, options, required, encrypted, group}]
 - allowedHosts：utils.fetch 额外允许的 host[:port] 白名单
 - icon："text" / "text:<≤4字符>" / 图标名
 
 三、钩子（按需导出，golden 模板有完整示范）：
 - decodeRequest(ctx)：把客户端请求解码为 {kind: "submit"|"query", model, requestBody | taskIds}；入参 ctx={method, path, params, body, headers?, files?}；
-  kind:"query" 仅 dynamic 路由可用；submit 的 model 必须 ∈ meta.models（或 modelsFromConfig 扩展清单）
+  kind:"query" 仅 dynamic 路由可用；submit 的 model 是【平台模型名】（可能是渠道映射别名），
+  原样回显、非空即可——不要校验 meta.models（那是上游模型清单）。解码阶段不知道上游型号
+  （渠道尚未选定），按型号的参数约束放 validateRequest
 - decodeVideos(ctx)（视频插件必须导出，名与 meta.standardVideos 一致）：标准视频端点解码。
   /v1/videos 与 /v1/video/generations 的请求体入钩子前均已被网关归一为通用任务体
   {model, prompt, seconds?, references?: [{role, url}], images?, metadata: {duration, size,
   resolution, aspect_ratio, sound, image, last_frame, ...}, extra?}——把它映射为插件原生
   requestBody，返回与 decodeRequest 同形态 {kind:"submit", model, requestBody}；references[]
   是参考素材唯一权威来源（存在时不再读 images/metadata.image 等兼容字段），时长读顶层
-  seconds 或 metadata.duration。下游 estimateUsage/buildSubmitRequest/轮询链与原生路由入口完全复用。
+  seconds 或 metadata.duration。下游 validateRequest/estimateUsage/buildSubmitRequest/轮询链与原生路由入口完全复用。
   ⚠️ 模型名分工：ctx.model 是客户端请求的【平台模型名】，原样回显到返回值 model 即可，
-  禁止对它做任何白名单/校验——它通常是 meta.models 里的名字，但渠道显式绑定本插件并配了
-  模型映射时是平台侧别名（不在 meta.models，网关放行回显）；也禁止用上游模型名做校验
-  （上游名只在 buildSubmitRequest 阶段经 ctx.upstreamModel 出现）。需要按型号分支参数时
-  必须有默认分支兜住别名；同一插件兼有非视频模型（如音乐）时用排除法拒绝这些已知模型名，不要用白名单；提交形态（如视频/音乐）的判定写进 requestBody 的字段，不依赖模型名
-- estimateUsage(ctx)：预扣口径的用量估算，返回 usageSchema 声明的键值对象
+  禁止对它做任何白名单/校验（平台名由渠道模型映射决定，可为任意别名）；也禁止用上游模型名
+  做校验。上游型号在 validateRequest 阶段经 ctx.upstreamModel 出现；同一插件兼有非视频模型
+  （如音乐）时，用排除法在 validateRequest 里按上游名拒绝，decode 只做与型号无关的体形归一
+- validateRequest(ctx)（建议导出）：渠道选定后、预扣前调用，入参 ctx={body, params?, model,
+  upstreamModel, channelBaseUrl?}——upstreamModel 是渠道映射后的上游模型名（网关已校验它 ∈
+  meta.models ∪ modelsFromConfig 扩展）。按上游型号的参数约束（时长/分辨率档位/素材数量/
+  模型与端点匹配）在此校验并抛错（= 请求不可接受 400，未预扣）；需要时可返回
+  {requestBody} 替换归一请求体（decode 出的型号中立中间体在此按上游型号定稿，
+  参考 alibaba/hailuo 插件）。不导出则跳过
+- estimateUsage(ctx)：预扣口径的用量估算，返回宿主固定用量词汇的键值对象（见下方 usage 条目）
 - buildSubmitRequest(ctx)：构造上游请求 {url, method, headers, body}；入参 ctx={body, params?, model,
   upstreamModel?, channelBaseUrl, apiKey?}；url 相对路径会拼接到渠道 baseUrl；
   上游模型名用 ctx.upstreamModel || ctx.model（渠道模型映射后的上游名，网关注入——
@@ -90,7 +97,13 @@ func (JSPluginSkill) Reference() string {
   ctx.status 恒为 200（网关不透传轮询的 HTTP 状态码），不要按 404/5xx 写分支——终态一律按
   ctx.responseBody 的内容判定，无法识别的响应返回 done:false（网关的任务超时兜底）。
   终态 usage 优先读上游响应里的实际计量；上游不返回时才读 state 里保存的请求值
-- usage（estimateUsage 返回值与终态 items[].usage）：键必须全部 ∈ meta.usageSchema，出现未声明键整体被拒；number 型取非负数值
+- usage（estimateUsage 返回值与终态 items[].usage/immediate.usage）：只报【宿主固定用量词汇】，
+  出现词汇外的键整体被拒：output_seconds（生成秒数）/ resolution（输出分辨率，如 "720p"/"1280x720"）/
+  output_count（产出数量）/ input_image_count（输入图片数含首尾帧）/ input_video_seconds（参考视频秒数）/
+  input_audio_seconds（参考音频秒数）/ input_tokens / output_tokens / generate_audio（布尔）。
+  这些键自动注册进计费公式 u() 通道；计价口径（per_second 矩阵/公式/素材方案）由宿主模型定价决定，
+  插件对价格世界一无所知。上游消费/积分等成本信息不上报。number 型取非负数值；提交时未知的量
+  （如参考视频实际秒数）按上限估算，终态按官方 usage 覆盖（多退少补）
 - artifacts 产物声明：[{key, mimeType?, source: {type: "url"|"inline", path, auth?}}]，path 是 taskData 内的取值路径
   （如 "data.video_url"）；type="inline"（base64 字段）时 mimeType 必填；需渠道密钥下载的上游内容端点声明
   auth: "channel-bearer"。插件只指路不碰字节，由平台下载转存对象存储
@@ -127,6 +140,9 @@ func (JSPluginSkill) Reference() string {
 - 视频生成类插件必须声明 meta.standardVideos 并导出对应解码钩子（golden 的 golden_video
   模型 + decodeVideos 是完整示范），保证模型可同时经 /v1/videos 与 /v1/video/generations 提交；
   仅音乐/图片等无视频语义的插件不声明
+- 按上游型号的参数校验（时长/分辨率档位/素材数量/型号与端点匹配）一律放 validateRequest
+  （ctx.upstreamModel），decode 钩子只做与型号无关的体形归一——平台模型名可能是渠道映射别名，
+  在 decode 里按模型名分支会漏掉别名
 - 上游协议细节（端点路径、请求/响应字段）以用户提供的文档/示例为准，不要臆造；缺信息时先在围栏外列出问题清单再给代码
 - 不要实现与任务无关的能力
 - 文案语言：代码注释、utils.log 日志、meta.config 的 label/description 用中文；钩子抛出的错误消息会原样透出给

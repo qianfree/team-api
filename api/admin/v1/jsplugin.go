@@ -38,20 +38,11 @@ type JSPluginItem struct {
 	ActiveVersion string                `json:"active_version"`
 	Enabled       bool                  `json:"enabled"`
 	InService     bool                  `json:"in_service"`
-	Models        []string              `json:"models"`
+	Models        []string              `json:"models"` // 插件支持的上游模型（meta.models 基线）
 	FetchMode     string                `json:"fetch_mode"`
 	AllowedHosts  []string              `json:"allowed_hosts"`
-	UsageSchema   []JSPluginUsageField  `json:"usage_schema"`
 	Manifest      json.RawMessage       `json:"manifest"`
 	Versions      []JSPluginVersionItem `json:"versions"`
-}
-
-// JSPluginUsageField 计费单位声明（定价公式 u() 速查参考）。
-type JSPluginUsageField struct {
-	Key         string `json:"key"`
-	Type        string `json:"type"` // number（可计费）| enum
-	Unit        string `json:"unit,omitempty"`
-	Description string `json:"description,omitempty"`
 }
 
 type JSPluginListRes struct {

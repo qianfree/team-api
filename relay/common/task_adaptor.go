@@ -65,6 +65,15 @@ type UpstreamRequestIDExtractor interface {
 	ExtractUpstreamRequestID(body []byte) string
 }
 
+// StrictBillingEstimator 严格计费估算能力（可选）：估算无法完成时返回错误，而非静默回落
+// 默认价。提交管线优先于 EstimateBilling 调用——返回 TaskError 即拒绝提交（预扣尚未发生，
+// 无资金副作用）。估算静默失败会让公式计费的 u() 全取 0、预扣落到下限，真实费用到结算
+// 才补扣；未实现本接口的适配器沿用 EstimateBilling 的宽松语义。
+type StrictBillingEstimator interface {
+	// EstimateBillingStrict 估算计费上下文，返回值语义同 EstimateBilling；估算失败返回 TaskError
+	EstimateBillingStrict(ctx context.Context, info *RelayInfo, body []byte) (map[string]any, *TaskError)
+}
+
 // BatchTaskPoller 批量轮询能力（fetchMode=batch 的适配器可选实现，如 JS 任务插件）：
 // 一次上游往返携带同渠道同插件下全部未终态任务，避免逐任务打满上游配额。
 // 结算/落库与逐任务路径共用 applyTaskPollResult，口径不因轮询模式分叉。
@@ -198,8 +207,8 @@ type TaskMaterialUsage struct {
 	Resolution        string  // 实际输出分辨率规格（如 "720P"，对齐 per_second 矩阵键）；空 = 上游未返回
 
 	// Facts 计费用量事实（JS 任务插件经 parseQueryResponse 的 items[].usage 上报，
-	// 键 ∈ usageSchema 的 number 型声明）：结算重算时并入公式 u() 通道。unit=second
-	// 的事实应同时映射到 OutputSeconds（它是结算期公式重跑的触发信号）。
+	// 键 ∈ 宿主固定用量词汇的 number 型）：结算重算时并入公式 u() 通道。
+	// output_seconds 应同时映射到 OutputSeconds（它是结算期公式重跑的触发信号）。
 	Facts map[string]float64
 }
 

@@ -174,11 +174,11 @@ func UpdateConfig(ctx context.Context, pluginKey string, m *contract.Manifest, v
 	return nil
 }
 
-// precheckModelsConfig modelsFromConfig 保存预检：合成保存后的有效模型集，与其他
-// 激活且启用插件的有效集做独占比对（精确 + 大小写折叠），冲突拒绝保存——比让
-// generation 重建时静默遮蔽（回落解析按后者）更早更明确。竞态窗口（两个管理员
-// 并发保存）由 buildGeneration 的兜底告警暴露，属管理端低频操作可接受。
+// precheckModelsConfig modelsFromConfig 保存预检：合成保存后的配置值并解析扩展
+// 模型清单，非法值（非字符串元素、超上限）拒绝保存。上游模型清单跨插件可重名，
+// 不做独占比对。
 func precheckModelsConfig(ctx context.Context, pluginKey string, m *contract.Manifest, submitted map[string]any) error {
+	_ = pluginKey
 	if m.ModelsFromConfig == "" {
 		return nil
 	}
@@ -197,40 +197,11 @@ func precheckModelsConfig(ctx context.Context, pluginKey string, m *contract.Man
 			merged[k] = v
 		}
 	}
-	setA, err := effectiveModelSet(m, merged)
-	if err != nil {
+	if _, err := effectiveModelSet(m, merged); err != nil {
 		// 扩展模型值解析失败（填坏值）是提交值问题，带码透出文案
 		return gerror.WrapCode(pluginOpCode(), err, "扩展模型配置 "+strconv.Quote(m.ModelsFromConfig))
 	}
-
-	// 其他激活且启用插件的有效集（与 generation 实际装载口径一致；未启用插件
-	// 不在运行时清单内，不构成冲突）。其他插件的配置扩展解析失败时按静态集
-	// 参与（其装载侧同样会降级，口径一致）
-	rows, err := DefaultRegistry().loadActiveRows(ctx)
-	if err != nil {
-		return gerror.Wrap(err, "读取激活插件失败")
-	}
-	others := make([]modelSetParty, 0, len(rows))
-	for i := range rows {
-		row := rows[i]
-		if row.PluginKey == pluginKey || !row.Enabled {
-			continue
-		}
-		var otherM contract.Manifest
-		if json.Unmarshal(row.Manifest, &otherM) != nil {
-			continue // 坏行不参与预检（装载侧自会跳过并告警）
-		}
-		otherSet := otherM.Models
-		if otherM.ModelsFromConfig != "" {
-			if cfg, cfgErr := loadPluginConfig(ctx, &otherM); cfgErr == nil {
-				if eff, effErr := effectiveModelSet(&otherM, cfg); effErr == nil {
-					otherSet = eff
-				}
-			}
-		}
-		others = append(others, modelSetParty{key: row.PluginKey, models: otherSet, shared: otherM.SharedModels})
-	}
-	return checkModelSetConflict(modelSetParty{key: pluginKey, models: setA, shared: m.SharedModels}, others)
+	return nil
 }
 
 // ArtifactStorageEnabled 插件产物是否转存到平台对象存储（宿主内置配置项，缺省开启）。

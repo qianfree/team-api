@@ -10,7 +10,7 @@ import (
 
 // BillingFormulaSkill 计费表达式生成技能。
 // 变量表与 u() key 注册表均运行时从 formula 包生成（KnownVarDocs / KnownFactKeys），
-// 含 JS 插件 usageSchema 动态注册的计费键——新增变量/事实键不需要改这里。
+// 含 JS 任务插件宿主固定用量词汇静态注册的计费键——新增变量/事实键不需要改这里。
 type BillingFormulaSkill struct{}
 
 // Key 技能标识。

@@ -231,6 +231,15 @@ function fmtAmount(v: number): string {
 const localFactKeys: Record<string, string> = {
 	'audio_seconds': '音频时长秒数（STT/翻译 verbose_json.duration，OpenAI 渠道填充）',
 	'audio_bytes': '音频响应字节数（TTS 二进制响应实测大小，OpenAI 渠道填充）',
+	// JS 任务插件宿主固定用量词汇（插件不再自定义用量键；与后端 contract.HostUsageFactDocs 同源）
+	'output_seconds': '生成时长（秒）（JS 任务插件）',
+	'output_count': '产出数量（图片张数/歌曲段数等）（JS 任务插件）',
+	'input_image_count': '输入图片数（含首尾帧）（JS 任务插件）',
+	'input_video_seconds': '输入参考视频时长（秒）（JS 任务插件）',
+	'input_audio_seconds': '输入参考音频时长（秒）（JS 任务插件）',
+	'input_tokens': '输入 token 数（JS 任务插件）',
+	'output_tokens': '输出 token 数（JS 任务插件）',
+	'generate_audio': '是否生成音频（公式中 u() 取 1/0）（JS 任务插件）',
 }
 const factKeyEntries = computed<Array<[string, string]>>(() => {
 	const src = Object.keys(knownFactKeys.value).length > 0 ? knownFactKeys.value : localFactKeys

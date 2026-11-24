@@ -19,8 +19,8 @@ func TestMigratedDoubaoManifest(t *testing.T) {
 	if m.Key != "doubao" || len(m.Models) != 11 || len(m.Routes) != 3 {
 		t.Fatalf("manifest 异常: models=%d routes=%d", len(m.Models), len(m.Routes))
 	}
-	if m.UsageFieldByKey("tokens") == nil || m.UsageFieldByKey("video_input_ratio") == nil {
-		t.Fatalf("usageSchema 异常: %+v", m.UsageSchema)
+	if !m.SupportsUpstreamModel("doubao-seedance-2-0-260128") || !m.SupportsUpstreamModel("doubao-seedream-5-0-pro-260628") {
+		t.Fatalf("上游模型清单异常: %v", m.Models)
 	}
 }
 
@@ -32,37 +32,39 @@ func TestMigratedDoubaoVideoFlow(t *testing.T) {
 	t.Cleanup(cleanup)
 	plugin, _ := CurrentGeneration().Plugin("doubao")
 
-	call := func(hook string, arg any) map[string]json.RawMessage {
-		t.Helper()
-		args, _ := json.Marshal(arg)
-		out, err := plugin.Pool.Call(context.Background(), hook, args)
-		if err != nil {
-			t.Fatalf("钩子 %s 失败: %v", hook, err)
-		}
-		raw, err := contract.ParseJSONObject(out)
-		if err != nil {
-			t.Fatalf("钩子 %s 返回非对象: %v", hook, err)
-		}
-		return raw
-	}
+	call := hookCaller(t, plugin)
 
 	decoded, err := contract.ValidateDecoded(call("createTask", contract.DecodeContext{
 		Path: "/api/v3/contents/generations/tasks", Method: "POST",
 		Body: json.RawMessage(`{"model":"doubao-seedance-2-5-260628","content":[{"type":"text","text":"ocean waves"}],"duration":10,"resolution":"720p"}`),
-	}), plugin.Manifest, false)
+	}), false)
 	if err != nil || decoded.Model != "doubao-seedance-2-5-260628" {
 		t.Fatalf("视频解码失败: %+v err=%v", decoded, err)
 	}
 
-	// tokens = 10 × 1280×720×24/1024 = 216000；video_input=none（无视频输入）
-	facts, err := contract.ValidateUsageFacts(
-		call("estimateUsage", contract.EstimateUsageContext{Body: decoded.RequestBody, Model: decoded.Model}),
-		plugin.Manifest)
-	if err != nil || facts["tokens"] != 216000 {
-		t.Fatalf("tokens 估算异常: %v err=%v", facts, err)
+	// 上游型号 1.0 lite 不支持 4k：validateRequest 按上游名拒绝
+	if err := hookCallErr(plugin, "validateRequest", contract.ValidateRequestContext{
+		Body: json.RawMessage(`{"vendorBody":{"resolution":"4k"}}`), Model: decoded.Model, UpstreamModel: "doubao-seedance-1-0-lite-t2v",
+	}); err == nil {
+		t.Fatal("越档分辨率应按上游型号拒绝")
 	}
-	if _, ok := facts["video_input"]; ok {
-		t.Fatal("enum 事实应过滤不计费")
+	if err := hookCallErr(plugin, "validateRequest", contract.ValidateRequestContext{
+		Body: decoded.RequestBody, Model: decoded.Model, UpstreamModel: "doubao-seedream-5-0-pro-260628",
+	}); err == nil {
+		t.Fatal("视频请求映射到图像上游应拒绝")
+	}
+	call("validateRequest", contract.ValidateRequestContext{Body: decoded.RequestBody, Model: decoded.Model, UpstreamModel: "doubao-seedance-2-5-260628"})
+
+	// output_tokens = 10 × 1280×720×24/1024 = 216000；无视频输入 → input_video_seconds=0
+	est := mustHostUsageObj(t, call("estimateUsage", contract.EstimateUsageContext{Body: decoded.RequestBody, Model: decoded.Model, UpstreamModel: "doubao-seedance-2-5-260628"}))
+	if v, _ := est.Number(contract.UsageOutputTokens); v != 216000 {
+		t.Fatalf("tokens 估算异常: %+v", est)
+	}
+	if v, ok := est.Number(contract.UsageInputVideoSeconds); !ok || v != 0 {
+		t.Fatalf("无视频输入应报 input_video_seconds=0: %+v", est)
+	}
+	if v, _ := est.Number(contract.UsageOutputSeconds); v != 10 || est.Resolution != "720P" {
+		t.Fatalf("时长/分辨率估算异常: %+v", est)
 	}
 
 	built, err := contract.ValidateBuiltRequest(call("buildSubmitRequest", contract.BuildSubmitContext{
@@ -99,9 +101,8 @@ func TestMigratedDoubaoVideoFlow(t *testing.T) {
 	if !item.Done || len(item.Artifacts) != 2 {
 		t.Fatalf("终态 item 异常: %+v", item)
 	}
-	termFacts, err := contract.ValidateUsageFacts(mustRawMap(t, item.Usage), plugin.Manifest)
-	if err != nil || termFacts["tokens"] != 200000 {
-		t.Fatalf("终态 tokens 异常: %v err=%v", termFacts, err)
+	if v, _ := mustHostUsage(t, item.Usage).Number(contract.UsageOutputTokens); v != 200000 {
+		t.Fatalf("终态 tokens 异常: %s", item.Usage)
 	}
 }
 
@@ -122,7 +123,7 @@ func TestMigratedDoubaoImageImmediate(t *testing.T) {
 		t.Fatalf("createImage 失败: %v", err)
 	}
 	raw, _ := contract.ParseJSONObject(out)
-	decoded, err := contract.ValidateDecoded(raw, plugin.Manifest, false)
+	decoded, err := contract.ValidateDecoded(raw, false)
 	if err != nil || decoded.Model != "doubao-seedream-5-0-flash-260915" {
 		t.Fatalf("图片解码失败: %+v err=%v", decoded, err)
 	}
@@ -153,9 +154,14 @@ func TestMigratedDoubaoImageImmediate(t *testing.T) {
 	if sub.Im == nil || sub.Im.Status != "SUCCESS" || len(sub.Im.Artifacts) != 1 {
 		t.Fatalf("immediate 异常: %+v", sub.Im)
 	}
-	imFacts, err := contract.ValidateUsageFacts(mustRawMap(t, sub.Im.Usage), plugin.Manifest)
-	if err != nil || imFacts["image_count"] != 1 {
-		t.Fatalf("immediate 用量异常: %v err=%v", imFacts, err)
+	if v, _ := mustHostUsage(t, sub.Im.Usage).Number(contract.UsageOutputCount); v != 1 {
+		t.Fatalf("immediate 用量异常: %s", sub.Im.Usage)
+	}
+	// 图像路由映射到视频上游：validateRequest 拒绝
+	if err := hookCallErr(plugin, "validateRequest", contract.ValidateRequestContext{
+		Body: decoded.RequestBody, Model: decoded.Model, UpstreamModel: "doubao-seedance-2-0-260128",
+	}); err == nil {
+		t.Fatal("图像路由映射到视频上游应拒绝")
 	}
 }
 
@@ -169,24 +175,12 @@ func TestMigratedDoubaoStandardVideos(t *testing.T) {
 	t.Cleanup(cleanup)
 	plugin, _ := CurrentGeneration().Plugin("doubao")
 
-	call := func(hook string, arg any) map[string]json.RawMessage {
-		t.Helper()
-		args, _ := json.Marshal(arg)
-		out, err := plugin.Pool.Call(context.Background(), hook, args)
-		if err != nil {
-			t.Fatalf("钩子 %s 失败: %v", hook, err)
-		}
-		raw, err := contract.ParseJSONObject(out)
-		if err != nil {
-			t.Fatalf("钩子 %s 返回非对象: %v", hook, err)
-		}
-		return raw
-	}
+	call := hookCaller(t, plugin)
 
 	decoded, err := contract.ValidateDecoded(call("decodeVideos", contract.StandardEntryContext{
 		Surface: contract.SurfaceOpenAIVideos, Path: "/v1/videos", Model: "doubao-seedance-2-5-260628",
 		Body: json.RawMessage(`{"model":"doubao-seedance-2-5-260628","prompt":"city","seconds":10,"metadata":{"duration":10,"resolution":"1080p","image":"https://img.example.com/a.png"}}`),
-	}), plugin.Manifest, false)
+	}), false)
 	if err != nil {
 		t.Fatalf("标准解码失败: %v", err)
 	}
@@ -208,11 +202,10 @@ func TestMigratedDoubaoStandardVideos(t *testing.T) {
 		t.Fatalf("vendorBody 映射异常: %s", decoded.RequestBody)
 	}
 
-	if _, err := plugin.Pool.Call(context.Background(), "decodeVideos", mustJSON(t, contract.StandardEntryContext{
-		Surface: contract.SurfaceOpenAIVideos, Path: "/v1/videos", Model: "doubao-seedream-5-0-pro-260628",
-		Body: json.RawMessage(`{"model":"doubao-seedream-5-0-pro-260628","prompt":"x"}`),
-	})); err == nil {
-		t.Fatal("图像模型应拒绝视频端点")
+	if err := hookCallErr(plugin, "validateRequest", contract.ValidateRequestContext{
+		Body: decoded.RequestBody, Model: decoded.Model, UpstreamModel: "doubao-seedream-5-0-pro-260628",
+	}); err == nil {
+		t.Fatal("上游为图像模型时应拒绝视频端点")
 	}
 }
 
@@ -239,8 +232,14 @@ func TestMigratedDoubaoStandardVideosReferences(t *testing.T) {
 		if err != nil {
 			return nil, err
 		}
-		decoded, err := contract.ValidateDecoded(raw, plugin.Manifest, false)
+		decoded, err := contract.ValidateDecoded(raw, false)
 		if err != nil {
+			return nil, err
+		}
+		// 型号层约束在 validateRequest 按上游型号校验（未映射渠道：上游名 = 请求名）
+		if _, err := plugin.Pool.Call(context.Background(), "validateRequest", mustJSON(t, contract.ValidateRequestContext{
+			Body: decoded.RequestBody, Model: decoded.Model, UpstreamModel: model,
+		})); err != nil {
 			return nil, err
 		}
 		return decoded.RequestBody, nil

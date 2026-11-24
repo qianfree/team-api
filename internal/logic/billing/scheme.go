@@ -8,6 +8,7 @@ import (
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/shopspring/decimal"
 
+	"github.com/qianfree/team-api/internal/jsplugin/contract"
 	"github.com/qianfree/team-api/internal/logic/billing/formula"
 	rcommon "github.com/qianfree/team-api/relay/common"
 )
@@ -138,7 +139,7 @@ func resolvePerSecondFacts(ratios map[string]any, usage *rcommon.TaskMaterialUsa
 }
 
 // ratioKeyFormulaFacts ratios 中携带计费用量事实的键（adaptor 经 EstimateBilling
-// 注入 map[string]float64，随 billing_context 冻结；结算期被 usage.Facts 覆盖）。
+// 注入，随 billing_context 冻结；结算期被 usage.Facts 覆盖）。
 // 非 float 值，不会被 applyRatioMultipliers 当乘数连乘。
 const ratioKeyFormulaFacts = "formula_facts"
 
@@ -147,11 +148,24 @@ const ratioKeyFormulaFacts = "formula_facts"
 func mergeTaskFacts(ratios map[string]any, usage *rcommon.TaskMaterialUsage) map[string]float64 {
 	var frozen map[string]float64
 	if ratios != nil {
-		if m, ok := ratios[ratioKeyFormulaFacts].(map[string]any); ok && len(m) > 0 {
-			frozen = make(map[string]float64, len(m))
-			for k, v := range m {
-				if f, ok := v.(float64); ok {
-					frozen[k] = f
+		// 两种形态都要接受：提交期内存形态可能是 map[string]float64（adaptor 直写），
+		// 结算期为 billing_context JSONB 回读的 map[string]any。此前只认后者，
+		// 预扣期 u() 恒取 0，预扣与结算口径不一致
+		switch m := ratios[ratioKeyFormulaFacts].(type) {
+		case map[string]any:
+			if len(m) > 0 {
+				frozen = make(map[string]float64, len(m))
+				for k, v := range m {
+					if f, ok := v.(float64); ok {
+						frozen[k] = f
+					}
+				}
+			}
+		case map[string]float64:
+			if len(m) > 0 {
+				frozen = make(map[string]float64, len(m))
+				for k, v := range m {
+					frozen[k] = v
 				}
 			}
 		}
@@ -173,7 +187,8 @@ func mergeTaskFacts(ratios map[string]any, usage *rcommon.TaskMaterialUsage) map
 //   - seconds：时长信号（素材计量 OutputSeconds 优先 → spec.duration → 默认 5s，均钳制 120s），
 //     与 resolvePerSecondFacts 同口径（含 usage 非空时的实际输出秒数）
 //   - image_count：图片张数（任务 ratios 的 count 信号；公式按张计费时消费，
-//     wrapSchemeCost 对 formula 模式同步 skip count 防双重放大）
+//     wrapSchemeCost 对 formula 模式同步 skip count 防双重放大）。结算期上游回报了
+//     官方张数（usage.Facts 的 output_count）时以官方值为准，与 u("output_count") 同源
 //   - Facts：计费用量事实（u() 通道）——提交期估算（ratios 冻结）与结算期官方计量
 //     （usage.Facts）经 mergeTaskFacts 合并，结算值优先
 //   - p/c 等同步 token 变量恒 0（任务无 token usage 传入；token 重算路径不适用 formula）
@@ -182,6 +197,14 @@ func taskFormulaInput(ratios map[string]any, usage *rcommon.TaskMaterialUsage) f
 	count := 1
 	if c, ok := ratioFloat(ratios, "count"); ok && c > 0 {
 		count = int(c)
+	}
+	// 结算期官方张数优先：请求张数 ≠ 实际产出张数时 image_count 须随官方值多退少补，
+	// 否则按张计费的公式写成 image_count 就退补不了（seconds 同理已随官方秒数更新）。
+	// 官方值为 0 时由公式环境按「张数 ≤1 归一为 1」处理
+	if usage != nil {
+		if official, ok := usage.Facts[contract.UsageOutputCount]; ok {
+			count = int(official)
+		}
 	}
 	return formula.FormulaInput{Seconds: seconds, ImageCount: count, Facts: mergeTaskFacts(ratios, usage), Eval: taskFormulaEvalContext(ratios)}
 }

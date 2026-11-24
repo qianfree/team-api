@@ -21,7 +21,6 @@ import (
 
 	"github.com/qianfree/team-api/internal/consts"
 	"github.com/qianfree/team-api/internal/jsplugin/contract"
-	"github.com/qianfree/team-api/internal/logic/billing/formula"
 )
 
 // 说明：按生成式 dao 惯例应由 `make dao` 生成访问层；该命令需可达数据库，
@@ -110,7 +109,32 @@ func (r *Registry) Bootstrap(ctx context.Context) error {
 	}
 	publishGeneration(buildGeneration(plugins))
 	glog.Infof(ctx, "jsplugin bootstrap: %d active plugin(s) in generation", len(plugins))
+	warnUnboundJSChannels(ctx)
 	return nil
+}
+
+// jsTaskChannelType JS 任务插件渠道类型（relay/constant.ProviderJSTask）。
+const jsTaskChannelType = 43
+
+// warnUnboundJSChannels 启动核查：JS 任务渠道必须绑定插件（settings.plugin_key）。
+// 早期版本允许缺省按模型回落解析，该路径已移除——未绑定的存量渠道此后提交即 400，
+// 启动时列出渠道 ID 提示管理员补配。仅告警，不阻断启动。
+func warnUnboundJSChannels(ctx context.Context) {
+	var ids []int64
+	rows, err := g.DB().Ctx(ctx).Raw(`
+SELECT id FROM chn_channels
+WHERE type = ? AND COALESCE(NULLIF(settings::jsonb ->> 'plugin_key', ''), '') = ''
+ORDER BY id`, jsTaskChannelType).All()
+	if err != nil {
+		glog.Warningf(ctx, "jsplugin: 核查未绑定插件的 JS 渠道失败: %v", err)
+		return
+	}
+	for _, row := range rows {
+		ids = append(ids, row["id"].Int64())
+	}
+	if len(ids) > 0 {
+		glog.Warningf(ctx, "jsplugin: %d 个 JS 任务渠道未绑定插件（settings.plugin_key），提交将被拒绝，请在渠道管理补配：%v", len(ids), ids)
+	}
 }
 
 // seedBuiltins 幂等装载内置插件（origin=builtin）：
@@ -259,23 +283,22 @@ func (r *Registry) Upload(ctx context.Context, source string, iconDataURI string
 
 // PluginSummary 列表视图：按 key 归组的版本信息。
 type PluginSummary struct {
-	Key          string                `json:"key"`
-	Name         string                `json:"name"`
-	Description  string                `json:"description"`
-	Author       string                `json:"author"`
-	Website      string                `json:"website"`
-	Origin       string                `json:"origin"` // 激活版本来源：builtin | upload
-	ActiveVer    string                `json:"active_version"`
-	Enabled      bool                  `json:"enabled"`
-	InService    bool                  `json:"in_service"` // 当前 generation 内
-	Models       []string              `json:"models"`
-	FetchMode    string                `json:"fetch_mode"`
-	AllowedHosts []string              `json:"allowed_hosts"`
-	UsageSchema  []contract.UsageField `json:"usage_schema"` // 计费单位（定价页参考）
-	Icon         string                `json:"icon"`         // manifest 声明：text/text:label/图标名
-	HasImage     bool                  `json:"has_image"`    // 激活版本是否带品牌图片（GET icon 端点）
-	Manifest     json.RawMessage       `json:"manifest"`     // 激活版本 manifest 全量
-	Versions     []PluginVersionRow    `json:"versions"`
+	Key          string             `json:"key"`
+	Name         string             `json:"name"`
+	Description  string             `json:"description"`
+	Author       string             `json:"author"`
+	Website      string             `json:"website"`
+	Origin       string             `json:"origin"` // 激活版本来源：builtin | upload
+	ActiveVer    string             `json:"active_version"`
+	Enabled      bool               `json:"enabled"`
+	InService    bool               `json:"in_service"` // 当前 generation 内
+	Models       []string           `json:"models"`     // 支持的上游模型（meta.models 基线）
+	FetchMode    string             `json:"fetch_mode"`
+	AllowedHosts []string           `json:"allowed_hosts"`
+	Icon         string             `json:"icon"`      // manifest 声明：text/text:label/图标名
+	HasImage     bool               `json:"has_image"` // 激活版本是否带品牌图片（GET icon 端点）
+	Manifest     json.RawMessage    `json:"manifest"`  // 激活版本 manifest 全量
+	Versions     []PluginVersionRow `json:"versions"`
 }
 
 // List 全量插件列表（按 key 归组，active 优先）。
@@ -311,7 +334,6 @@ func (r *Registry) List(ctx context.Context) ([]PluginSummary, error) {
 				s.Models = m.Models
 				s.FetchMode = m.EffectiveFetchMode()
 				s.AllowedHosts = m.AllowedHosts
-				s.UsageSchema = m.UsageSchema
 				s.Icon = m.Icon
 				s.HasImage = row.Icon != ""
 				s.Manifest = row.Manifest
@@ -329,13 +351,12 @@ func (r *Registry) List(ctx context.Context) ([]PluginSummary, error) {
 	return out, nil
 }
 
-// Activate 激活指定版本：冲突预检 → 事务翻 active（继承旧激活版本 enabled）→ 重建 generation。
+// Activate 激活指定版本：事务翻 active（继承旧激活版本 enabled）→ 重建 generation。
 // enabled 继承：同 key 热切换时新版本沿用旧版本的启用态，插件在 generation 中连续存在、
 // 执行中的任务不掉线；旧版本处于禁用态则新版本保持禁用（激活不悄悄复活禁用插件）；
 // 该 key 无旧 active 行（首次上线）保持目标行原值，仍需显式 Enable。
-// 预检在事务内持 advisory lock 进行——事务外预检存在 TOCTOU：两个管理员并发激活
-// 路由/模型冲突的插件，互相看不到对方未提交的激活而双双通过，generation 内
-// 模型映射静默后者覆盖前者、路由二义命中。
+// 事务内持 advisory lock 串行化并发激活。跨插件模型同名（上游模型清单）与同形状
+// 路由（/pjs/{key} 命名空间隔离）均为合法形态，不做跨插件冲突预检。
 func (r *Registry) Activate(ctx context.Context, key, version string) error {
 	target, err := r.loadRow(ctx, key, version)
 	if err != nil || target == nil {
@@ -346,28 +367,15 @@ func (r *Registry) Activate(ctx context.Context, key, version string) error {
 		return gerror.Wrap(err, "manifest 反序列化失败")
 	}
 
-	// 事务：advisory lock 串行化激活 → 锁内冲突预检 → 清旧 active → 置新 active
+	// 事务：advisory lock 串行化激活 → 清旧 active → 置新 active
 	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		if _, lockErr := tx.Exec("SELECT pg_advisory_xact_lock(?)", registryAdvisoryLockKey); lockErr != nil {
 			return gerror.Wrap(lockErr, "激活锁获取失败")
 		}
-		// 冲突预检（锁内读 active 行）：与「其他 key 的 active 版本」比路由与模型
+		// 锁内读 active 行：enabled 继承依据（同 key 旧激活版本的启用态）
 		others, err := r.loadActiveRowsTx(ctx, tx)
 		if err != nil {
 			return err
-		}
-		for i := range others {
-			other := others[i]
-			if other.PluginKey == key {
-				continue
-			}
-			var otherManifest contract.Manifest
-			if err := json.Unmarshal(other.Manifest, &otherManifest); err != nil {
-				continue
-			}
-			if conflictErr := checkManifestConflict(key, &targetManifest, other.PluginKey, &otherManifest); conflictErr != nil {
-				return conflictErr
-			}
 		}
 		if _, err := tx.Model(tableName).Ctx(ctx).
 			Where("plugin_key", key).Data(g.Map{"active": false, "updated_at": time.Now()}).Update(); err != nil {
@@ -650,9 +658,6 @@ func (r *Registry) materialize(ctx context.Context, row *PluginVersionRow) (*Act
 	if err != nil {
 		return nil, err
 	}
-	// usageSchema number 型键注册进公式 facts 注册表（保存期校验 + u() 速查）。
-	// 摘除策略见 formula.RegisterFactKeys 注释：禁用不摘除，保留无害。
-	registerUsageFactKeys(compiled.Manifest)
 	// 配置值装载（含加密字段解密），随实例注入 utils.config.get
 	configValues, err := loadPluginConfig(ctx, compiled.Manifest)
 	if err != nil {
@@ -683,22 +688,6 @@ func (r *Registry) materialize(ctx context.Context, row *PluginVersionRow) (*Act
 		Pool:      pool,
 		hookCache: buildHookCache(r.engine, compiled, opts),
 	}, nil
-}
-
-// registerUsageFactKeys 把 usageSchema 的 number 型键注册进公式 u() 通道。
-func registerUsageFactKeys(m *contract.Manifest) {
-	keys := make(map[string]string, len(m.UsageSchema))
-	for _, f := range m.UsageSchema {
-		if f.Type != "number" {
-			continue
-		}
-		desc := f.Description
-		if desc == "" {
-			desc = "用量事实"
-		}
-		keys[f.Key] = desc + "（JS 插件 " + m.Key + "）"
-	}
-	formula.RegisterFactKeys(keys)
 }
 
 // rebuildGeneration 从 DB 重建：active 且 enabled 的版本全部装载后原子发布。
@@ -902,36 +891,6 @@ func (r *Registry) hasActiveRow(ctx context.Context, key string) (bool, error) {
 		return false, gerror.Wrap(err, "读取插件激活状态失败")
 	}
 	return count > 0, nil
-}
-
-// checkManifestConflict 两插件 manifest 冲突预检：模型名冲突。
-// 模型同名在【双方都声明 sharedModels】时放行（同名多插件的合法形态：路由归属由
-// 渠道 plugin_key 决定），任一方未声明仍拒绝——防拼写意外撞名产生归属歧义。
-// 路由不做跨插件预检：/pjs/{key}/... 入口按 key 命名空间隔离（分发器先按 URL key
-// 定位插件、再在插件内匹配路由），各厂商兼容的同名路由形态（如 GET /videos/:task_id）
-// 可在不同插件中并存、互不遮蔽。插件内的路由形状唯一性由 Manifest.Validate 保证。
-func checkManifestConflict(keyA string, a *contract.Manifest, keyB string, b *contract.Manifest) error {
-	sharedOK := a.SharedModels && b.SharedModels
-	for _, ma := range a.Models {
-		for _, mb := range b.Models {
-			if ma == mb {
-				if !sharedOK {
-					return pluginOpError("模型 %s 已被插件 %s 声明（如需同名多插件经不同渠道服务，双方 manifest 均声明 sharedModels: true）", ma, keyB)
-				}
-				glog.Warningf(context.Background(),
-					"jsplugin: 模型 %s 由插件 %s 与 %s 共享声明（双方已声明 sharedModels；路由归属由渠道 plugin_key 决定）", ma, keyA, keyB)
-				continue
-			}
-			if strings.EqualFold(ma, mb) {
-				if !sharedOK {
-					return pluginOpError("模型 %s 与插件 %s 的 %s 仅大小写不同", ma, keyB, mb)
-				}
-				glog.Warningf(context.Background(),
-					"jsplugin: 模型 %s(%s) 与插件 %s 的 %s 仅大小写不同（双方已声明 sharedModels）", keyA, ma, keyB, mb)
-			}
-		}
-	}
-	return nil
 }
 
 func sourceHash(source string) string {

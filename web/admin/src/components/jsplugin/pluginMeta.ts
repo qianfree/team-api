@@ -16,13 +16,6 @@ export interface JSPluginVersion {
   created_at: string
 }
 
-export interface JSPluginUsageField {
-  key: string
-  type: string // number（可计费）| enum
-  unit?: string
-  description?: string
-}
-
 export interface JSPlugin {
   key: string
   name: string
@@ -35,10 +28,9 @@ export interface JSPlugin {
   active_version: string
   enabled: boolean
   in_service: boolean
-  models: string[]
+  models: string[] // 插件支持的上游模型（平台模型名由渠道模型映射决定，跨插件可重名）
   fetch_mode: string
   allowed_hosts: string[]
-  usage_schema: JSPluginUsageField[]
   versions: JSPluginVersion[]
 }
 

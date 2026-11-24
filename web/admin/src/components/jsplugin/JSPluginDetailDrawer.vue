@@ -357,11 +357,14 @@ const versionColumns: TableColumnData[] = [
       </section>
 
       <section class="jd-section">
-        <h4 class="jd-title">适用模型</h4>
+        <h4 class="jd-title">
+          支持的上游模型
+          <span class="jd-title__hint">渠道模型映射的上游名须在此清单内；同一上游模型可由多个插件提供</span>
+        </h4>
         <div v-if="(plugin.models || []).length" class="jd-chips">
           <Tag v-for="m in plugin.models" :key="m" size="small" color="arcoblue">{{ m }}</Tag>
         </div>
-        <p v-else class="jd-empty">未声明适用模型，任何模型都可触发该插件。</p>
+        <p v-else class="jd-empty">未声明上游模型。</p>
       </section>
 
       <section v-if="(plugin.allowed_hosts || []).length" class="jd-section">
@@ -369,25 +372,6 @@ const versionColumns: TableColumnData[] = [
         <div class="jd-chips">
           <code v-for="host in plugin.allowed_hosts" :key="host" class="jd-host">{{ host }}</code>
         </div>
-      </section>
-
-      <section v-if="(plugin.usage_schema || []).length" class="jd-section">
-        <h4 class="jd-title">
-          计费单位
-          <span class="jd-title__hint">定价公式中以 u("key") 引用</span>
-        </h4>
-        <Table
-          :columns="[
-            { title: 'key', dataIndex: 'key', width: 140 },
-            { title: '类型', dataIndex: 'type', width: 90 },
-            { title: '单位', dataIndex: 'unit', width: 100 },
-            { title: '说明', dataIndex: 'description', ellipsis: true, tooltip: true },
-          ]"
-          :data="plugin.usage_schema"
-          :pagination="false"
-          size="small"
-          row-key="key"
-        />
       </section>
 
       <section class="jd-section">

@@ -22,7 +22,6 @@ export const meta = {
   version: "1.0.0",
   models: ["batch_music"],
   fetchMode: "batch",
-  usageSchema: [{ key: "clips", type: "number", unit: "count" }],
   routes: [{ method: "POST", path: "/submit", type: "submit" }],
 };
 
@@ -46,7 +45,7 @@ export function parseQueryResponse(ctx) {
     if (it.status === "success") {
       items.push({
         taskId: t.taskId, done: true, taskData: it,
-        usage: { clips: Number(it.clips || 1) },
+        usage: { output_count: Number(it.clips || 1) },
         artifacts: [{ key: "audio", source: { type: "url", path: "url" } }],
       });
     } else if (it.status === "failed") {
@@ -132,7 +131,7 @@ func TestBatchRoundTrip(t *testing.T) {
 
 	// 按任务 ID 的映射与终态
 	if info := infos["t1"]; info == nil || info.Status != common.TaskStatusSuccess ||
-		info.MaterialUsage == nil || info.MaterialUsage.Facts["clips"] != 2 ||
+		info.MaterialUsage == nil || info.MaterialUsage.Facts["output_count"] != 2 ||
 		len(info.Artifacts) != 1 || info.Artifacts[0].SourcePath != "url" {
 		t.Fatalf("t1 映射异常: %+v", info)
 	}

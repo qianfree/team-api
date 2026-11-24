@@ -46,20 +46,8 @@ func checkReferenceRoles(m *contract.Manifest, pluginKey string, body []byte) er
 	return nil
 }
 
-// manifestWithModel 返回把 model 并入模型清单的 manifest 视图（浅拷贝，原 manifest
-// 不被改写）；已声明或 model 为空时原样返回原指针。
-func manifestWithModel(m *contract.Manifest, model string) *contract.Manifest {
-	if model == "" || m.HasModel(model) {
-		return m
-	}
-	view := *m
-	view.Models = append(append(make([]string, 0, len(m.Models)+1), m.Models...), model)
-	return &view
-}
-
 // SynthesizeStandardPlan 调用插件 standardVideos 声明的解码钩子，合成标准端点的
-// 解码计划。pluginKey 由调用方解析（渠道显式配置优先，缺省按模型解析——与
-// HandleTaskSubmit 的平台判定同源，避免二次解析产生口径分歧）。
+// 解码计划。pluginKey 由调用方取渠道 settings.plugin_key（渠道必须绑定插件）。
 //   - (nil, nil)：插件未声明 standardVideos，不支持标准端点（调用方按不支持处理）；
 //   - 错误：插件未激活/钩子执行失败/返回不合规（调用方 400 透出——预扣尚未发生，无资金副作用）。
 //
@@ -96,11 +84,9 @@ func SynthesizeStandardPlan(ctx context.Context, pluginKey, surface, path string
 	if err != nil {
 		return nil, gerror.Wrapf(err, "%s: ", hook)
 	}
-	// 与分发器解码同校验：kind=submit（标准端点无查询语义）、模型须在有效清单内。
-	// 有效清单额外放行请求模型名：插件归属已由调用方按渠道定出，渠道显式绑定插件
-	// 并做模型映射时（平台别名 → 上游模型），请求模型是平台侧别名、不在 meta.models，
-	// 钩子原样回显 ctx.model 属合法形态——上游名由 buildSubmitRequest 的 upstreamModel 承接。
-	decoded, err := contract.ValidateDecoded(raw, manifestWithModel(plugin.Manifest, model), false)
+	// 与分发器解码同校验：kind=submit（标准端点无查询语义）。模型名是平台名（原样
+	// 回显），不对 meta.models 校验——上游模型支持性在渠道选定后由 jsbridge 校验
+	decoded, err := contract.ValidateDecoded(raw, false)
 	if err != nil {
 		return nil, gerror.Wrapf(err, "%s: ", hook)
 	}

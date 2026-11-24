@@ -18,35 +18,26 @@ func validManifest() *Manifest {
 	}
 }
 
-func TestUsageSchemaValidation(t *testing.T) {
+func TestRemovedManifestFields(t *testing.T) {
+	for _, field := range []string{"sharedModels", "usageSchema"} {
+		meta := []byte(`{"apiVersion":1,"key":"x","` + field + `":true}`)
+		if err := CheckRemovedFields(meta); err == nil {
+			t.Fatalf("meta.%s 已移除，应当报错", field)
+		}
+	}
+	if err := CheckRemovedFields([]byte(`{"apiVersion":1,"key":"x","models":["a"]}`)); err != nil {
+		t.Fatalf("合法 manifest 不应报错: %v", err)
+	}
+}
+
+func TestSupportsUpstreamModel(t *testing.T) {
 	m := validManifest()
-	m.UsageSchema = []UsageField{
-		{Key: "clips", Type: "number", Unit: "count"},
-		{Key: "duration", Type: "number", Unit: "second"},
-		{Key: "tier", Type: "enum"},
+	m.Models = []string{"minimax-h3", "wan-3.0"}
+	if !m.SupportsUpstreamModel("MiniMax-H3") || !m.SupportsUpstreamModel(" wan-3.0 ") {
+		t.Fatal("上游模型匹配应大小写不敏感并去空白")
 	}
-	if err := m.Validate(); err != nil {
-		t.Fatalf("合法 usageSchema 不应报错: %v", err)
-	}
-
-	m.UsageSchema = append(m.UsageSchema, UsageField{Key: "clips", Type: "number"})
-	if err := m.Validate(); err == nil {
-		t.Fatal("重复 key 应当报错")
-	}
-
-	m.UsageSchema = []UsageField{{Key: "clips", Type: "number", Unit: "kg"}}
-	if err := m.Validate(); err == nil {
-		t.Fatal("非法 unit 应当报错")
-	}
-
-	m.UsageSchema = []UsageField{{Key: "tier", Type: "enum", Unit: "second"}}
-	if err := m.Validate(); err == nil {
-		t.Fatal("enum 带 unit 应当报错")
-	}
-
-	m.UsageSchema = []UsageField{{Key: "bad key", Type: "number"}}
-	if err := m.Validate(); err == nil {
-		t.Fatal("非法 key 应当报错")
+	if m.SupportsUpstreamModel("") || m.SupportsUpstreamModel("sora-2") {
+		t.Fatal("空名/未声明模型不应匹配")
 	}
 }
 
@@ -77,38 +68,64 @@ func TestConfigValidation(t *testing.T) {
 	}
 }
 
-func TestValidateUsageFacts(t *testing.T) {
-	m := validManifest()
-	m.UsageSchema = []UsageField{
-		{Key: "clips", Type: "number", Unit: "count"},
-		{Key: "tier", Type: "enum"},
-	}
-
+func TestValidateHostUsage(t *testing.T) {
 	raw := map[string]json.RawMessage{
-		"clips": json.RawMessage(`4`),
-		"tier":  json.RawMessage(`"pro"`), // enum 合法但不计费
+		"output_seconds":      json.RawMessage(`10`),
+		"input_image_count":   json.RawMessage(`"2"`), // 数字字符串兼容
+		"input_video_seconds": json.RawMessage(`0`),
+		"resolution":          json.RawMessage(`"1280x720"`),
+		"generate_audio":      json.RawMessage(`true`),
+		"output_tokens":       json.RawMessage(`null`), // null = 未上报
 	}
-	facts, err := ValidateUsageFacts(raw, m)
+	u, err := ValidateHostUsage(raw)
 	if err != nil {
-		t.Fatalf("合法事实不应报错: %v", err)
+		t.Fatalf("合法用量不应报错: %v", err)
 	}
-	if len(facts) != 1 || facts["clips"] != 4 {
-		t.Fatalf("数值过滤异常: %v", facts)
+	if v, _ := u.Number(UsageOutputSeconds); v != 10 {
+		t.Fatalf("output_seconds 异常: %v", u.Numbers)
+	}
+	if v, ok := u.Number(UsageInputVideoSeconds); !ok || v != 0 {
+		t.Fatal("显式 0 应保留为已上报")
+	}
+	if _, ok := u.Number(UsageOutputTokens); ok {
+		t.Fatal("null 应视为未上报")
+	}
+	if u.Resolution != "720P" {
+		t.Fatalf("分辨率应按短边归一为 720P，得到 %q", u.Resolution)
+	}
+	facts := u.Facts()
+	if facts[UsageGenerateAudio] != 1 || facts[UsageInputImageCount] != 2 {
+		t.Fatalf("事实集异常: %v", facts)
+	}
+	if _, ok := facts[UsageResolution]; ok {
+		t.Fatal("resolution 为字符串，不进 u() 通道")
 	}
 
-	bad := map[string]json.RawMessage{"unknown": json.RawMessage(`1`)}
-	if _, err := ValidateUsageFacts(bad, m); err == nil {
-		t.Fatal("未声明键应当报错")
+	cases := map[string]string{
+		"未知键":      `{"credits":1}`,
+		"负数":       `{"output_seconds":-1}`,
+		"非数值":      `{"output_count":"abc"}`,
+		"分辨率非字符串":  `{"resolution":720}`,
+		"布尔非 bool": `{"generate_audio":"yes"}`,
 	}
-
-	neg := map[string]json.RawMessage{"clips": json.RawMessage(`-1`)}
-	if _, err := ValidateUsageFacts(neg, m); err == nil {
-		t.Fatal("负数应当报错")
+	for name, body := range cases {
+		var obj map[string]json.RawMessage
+		_ = json.Unmarshal([]byte(body), &obj)
+		if _, err := ValidateHostUsage(obj); err == nil {
+			t.Fatalf("%s 应当报错: %s", name, body)
+		}
 	}
+}
 
-	str := map[string]json.RawMessage{"clips": json.RawMessage(`"abc"`)}
-	if _, err := ValidateUsageFacts(str, m); err == nil {
-		t.Fatal("number 型非数值字符串应当报错")
+func TestNormalizeResolution(t *testing.T) {
+	cases := map[string]string{
+		"720p": "720P", "1080P": "1080P", "768": "768P", "2k": "2K", "4K": "4K",
+		"720*1280": "720P", "3840x2160": "4K", "2560x1440": "2K", "": "", "hd": "HD",
+	}
+	for in, want := range cases {
+		if got := NormalizeResolution(in); got != want {
+			t.Errorf("NormalizeResolution(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 
@@ -179,16 +196,16 @@ func TestDynamicQueryIntent(t *testing.T) {
 		"kind":    json.RawMessage(`"query"`),
 		"taskIds": json.RawMessage(`["task_1","task_2"]`),
 	}
-	dec, err := ValidateDecoded(queryRaw, m, true)
+	dec, err := ValidateDecoded(queryRaw, true)
 	if err != nil || len(dec.TaskIDs) != 2 {
 		t.Fatalf("dynamic 查询意图应通过: %+v err=%v", dec, err)
 	}
-	if _, err := ValidateDecoded(queryRaw, m, false); err == nil {
+	if _, err := ValidateDecoded(queryRaw, false); err == nil {
 		t.Fatal("非 dynamic 路由应拒绝 kind=query")
 	}
 
 	empty := map[string]json.RawMessage{"kind": json.RawMessage(`"query"`), "taskIds": json.RawMessage(`[]`)}
-	if _, err := ValidateDecoded(empty, m, true); err == nil {
+	if _, err := ValidateDecoded(empty, true); err == nil {
 		t.Fatal("空 taskIds 应拒绝")
 	}
 }

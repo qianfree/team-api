@@ -94,79 +94,146 @@ func (a *Adaptor) planDecodedBody() json.RawMessage {
 
 func (a *Adaptor) Init(info *common.RelayInfo) {
 	a.info = info
+	// 渠道必须绑定插件（settings.plugin_key）：模型跨插件可重名，不存在按模型的回落解析
 	a.pluginKey = info.ChannelMeta.Settings.PluginKey
-	// 渠道未显式配置 plugin_key 时按模型解析（v1 模型对插件独占）
-	if a.pluginKey == "" && info.OriginModelName != "" {
-		if resolved, ok := jsplugin.ResolvePluginKeyForModel(info.OriginModelName); ok {
-			a.pluginKey = resolved
-		}
-	}
 }
 
-// ValidateRequest 从 ctx 取分发器的解码计划；缺失说明请求不经 /pjs 分发器进入
-// （如直连内部重放），v1 拒绝。
+// upstreamModel 渠道映射后的上游模型名（未映射时等于平台模型名）。
+func (a *Adaptor) upstreamModel() string {
+	if a.info == nil {
+		return ""
+	}
+	if m := strings.TrimSpace(a.info.ChannelMeta.UpstreamModelName); m != "" {
+		return m
+	}
+	return a.info.OriginModelName
+}
+
+// ValidateRequest 从 ctx 取解码计划（/pjs 分发器或标准端点合成），并在渠道选定后、
+// 预扣前完成上游模型级校验——两个入口都经此处：
+//  1. 渠道上游模型（模型映射后）须 ∈ 插件有效 models（meta.models ∪ 配置扩展）；
+//  2. 插件导出 validateRequest 时调用：抛错 = 请求不可接受（400，未预扣），
+//     返回 requestBody 时替换归一请求体（下游钩子看到修正值）。
 func (a *Adaptor) ValidateRequest(ctx context.Context, info *common.RelayInfo, _ []byte) *common.TaskError {
 	plan := jsplugin.SubmitPlanFromContext(ctx)
 	if plan == nil {
 		return &common.TaskError{StatusCode: http.StatusBadRequest, Message: "js task submit requires /pjs dispatcher"}
 	}
+	if a.pluginKey == "" {
+		return &common.TaskError{StatusCode: http.StatusBadRequest, Message: "js task channel is not bound to a plugin (settings.plugin_key)"}
+	}
 	if plan.Plugin.Key != a.pluginKey {
 		return &common.TaskError{StatusCode: http.StatusBadRequest,
 			Message: fmt.Sprintf("channel bound to plugin %q but request decoded for %q", a.pluginKey, plan.Plugin.Key)}
+	}
+	upstream := a.upstreamModel()
+	if !plan.Plugin.Manifest.SupportsUpstreamModel(upstream) {
+		return &common.TaskError{StatusCode: http.StatusBadRequest,
+			Message: fmt.Sprintf("upstream model %q is not supported by js plugin %q", upstream, plan.Plugin.Key)}
+	}
+	if plan.Plugin.HasHook(contract.HookNameValidateRequest) {
+		fixed, taskErr := a.callValidateRequest(ctx, plan, upstream)
+		if taskErr != nil {
+			return taskErr
+		}
+		if fixed != nil {
+			// 计划是请求级对象（分发器/合成各自新建），复制 Decoded 后替换请求体
+			decoded := *plan.Decoded
+			decoded.RequestBody = fixed
+			cp := *plan
+			cp.Decoded = &decoded
+			plan = &cp
+		}
 	}
 	a.plan = plan
 	return nil
 }
 
-// EstimateBilling 计费上下文（ratios）：
-//   - 插件声明 usageSchema 且导出 estimateUsage 时：数值事实进 "formula_facts"
-//     （formula 模式经 u() 消费；随 billing_context 冻结供结算期合并）；
-//     unit=second → spec.duration（时长信号）、unit=count → count（张数信号）
-//   - 其余情况：乘数 1.0（模型级默认价）
-func (a *Adaptor) EstimateBilling(ctx context.Context, _ *common.RelayInfo, _ []byte) map[string]any {
-	ratios := map[string]any{"base": 1.0}
-	if a.plan == nil || !a.plan.Plugin.HasHook("estimateUsage") {
-		return ratios
-	}
-	args, err := json.Marshal(contract.EstimateUsageContext{
-		Body:   a.plan.Decoded.RequestBody,
-		Model:  a.plan.Decoded.Model,
-		Params: a.plan.Params,
+// callValidateRequest 调用插件 validateRequest 钩子（渠道上下文：fetch 白名单与相对路径基准）。
+func (a *Adaptor) callValidateRequest(ctx context.Context, plan *jsplugin.SubmitPlan, upstream string) (json.RawMessage, *common.TaskError) {
+	args, err := json.Marshal(contract.ValidateRequestContext{
+		Body:           plan.Decoded.RequestBody,
+		Params:         plan.Params,
+		Model:          plan.Decoded.Model,
+		UpstreamModel:  upstream,
+		ChannelBaseURL: a.info.ChannelMeta.BaseURL,
 	})
 	if err != nil {
-		return ratios
+		return nil, &common.TaskError{StatusCode: http.StatusInternalServerError, Message: "js adaptor: marshal validateRequest args failed"}
 	}
-	out, err := a.plan.Plugin.Pool.Call(channelHookCtx(ctx, a.info.ChannelMeta.BaseURL, a.submitAllowedHosts()), "estimateUsage", args)
+	allowed := append([]string{hostOf(a.info.ChannelMeta.BaseURL)}, plan.Plugin.Manifest.AllowedHosts...)
+	out, err := plan.Plugin.Pool.Call(channelHookCtx(ctx, a.info.ChannelMeta.BaseURL, allowed), contract.HookNameValidateRequest, args)
 	if err != nil {
-		return ratios // 估算失败不阻断提交（fail-safe 默认价，结算期多退少补）
+		// 插件拒绝请求 = 客户端请求不可接受（400）；消息净化防密钥片段外泄
+		return nil, &common.TaskError{StatusCode: http.StatusBadRequest, Message: jsplugin.SanitizeHookMessage(err.Error())}
 	}
 	raw, err := contract.ParseJSONObject(out)
 	if err != nil {
-		return ratios
+		// undefined/null 返回 = 原样放行
+		if t := strings.TrimSpace(string(out)); t == "" || t == "null" || t == "undefined" {
+			return nil, nil
+		}
+		return nil, jsHookTaskError(err)
 	}
-	applyUsageFacts(ratios, raw, a.plan.Plugin.Manifest)
+	res, err := contract.ValidateValidatedRequest(raw)
+	if err != nil {
+		return nil, jsHookTaskError(err)
+	}
+	return res.RequestBody, nil
+}
+
+// EstimateBilling 计费上下文（ratios）——宽松语义，供只认 TaskAdaptor 的调用方：
+// 估算失败回落默认乘数并留日志。提交管线经 EstimateBillingStrict 走严格路径。
+func (a *Adaptor) EstimateBilling(ctx context.Context, info *common.RelayInfo, body []byte) map[string]any {
+	ratios, taskErr := a.EstimateBillingStrict(ctx, info, body)
+	if taskErr != nil {
+		g.Log().Warningf(ctx, "jsbridge: estimateUsage failed, plugin=%s, fallback to default ratios: %s",
+			a.pluginKey, taskErr.Message)
+		return map[string]any{"base": 1.0}
+	}
 	return ratios
 }
 
-// applyUsageFacts 把数值事实映射进 ratios：formula_facts（u() 通道）+ unit 信号。
-func applyUsageFacts(ratios map[string]any, raw map[string]json.RawMessage, manifest *contract.Manifest) {
-	facts, err := contract.ValidateUsageFacts(raw, manifest)
-	if err != nil || len(facts) == 0 {
-		return
+// EstimateBillingStrict 计费上下文（ratios）：
+//   - 插件导出 estimateUsage 时：用量按宿主固定词汇映射——数值事实进 "formula_facts"
+//     （formula 模式经 u() 消费；随 billing_context 冻结供结算期合并）；
+//     output_seconds → spec.duration、output_count → count、input_image_count →
+//     spec.input_image_count、input_video_seconds → spec.input_video_seconds 等
+//   - 插件未导出 estimateUsage：乘数 1.0（模型级默认价）
+//
+// 估算失败（钩子抛错/超时、返回非对象、用量键或取值非法）返回 TaskError，提交管线据此
+// 拒绝提交：静默回落默认乘数会让公式模式的 u() 全取 0、预扣落到下限 0.01，真实费用
+// 到结算才补扣，提交时的余额与额度校验形同虚设。
+func (a *Adaptor) EstimateBillingStrict(ctx context.Context, _ *common.RelayInfo, _ []byte) (map[string]any, *common.TaskError) {
+	ratios := map[string]any{"base": 1.0}
+	if a.plan == nil || !a.plan.Plugin.HasHook("estimateUsage") {
+		return ratios, nil
 	}
-	ratios["formula_facts"] = facts
-	for _, field := range manifest.UsageSchema {
-		v, ok := facts[field.Key]
-		if !ok {
-			continue
-		}
-		switch field.Unit {
-		case "second":
-			ratios["spec.duration"] = v
-		case "count":
-			ratios["count"] = v
-		}
+	args, err := json.Marshal(contract.EstimateUsageContext{
+		Body:          a.plan.Decoded.RequestBody,
+		Model:         a.plan.Decoded.Model,
+		UpstreamModel: a.upstreamModel(),
+		Params:        a.plan.Params,
+	})
+	if err != nil {
+		return nil, &common.TaskError{StatusCode: http.StatusInternalServerError, Message: "js adaptor: marshal estimateUsage args failed"}
 	}
+	out, err := a.plan.Plugin.Pool.Call(channelHookCtx(ctx, a.info.ChannelMeta.BaseURL, a.submitAllowedHosts()), "estimateUsage", args)
+	if err != nil {
+		// 与 buildSubmitRequest 失败同口径（502，消息净化防密钥片段外泄）
+		return nil, jsHookTaskError(err)
+	}
+	raw, err := contract.ParseJSONObject(out)
+	if err != nil {
+		return nil, &common.TaskError{StatusCode: http.StatusBadGateway, Message: "estimateUsage: " + err.Error()}
+	}
+	// 用量键或取值非法同样拒绝：未知键若静默忽略，公式会按缺省值计价
+	usage, err := contract.ValidateHostUsage(raw)
+	if err != nil {
+		return nil, &common.TaskError{StatusCode: http.StatusBadGateway, Message: "estimateUsage: " + err.Error()}
+	}
+	jsplugin.ApplyEstimateUsage(ratios, usage)
+	return ratios, nil
 }
 
 func (a *Adaptor) AdjustBillingOnSubmit(_ *common.RelayInfo, _ []byte) map[string]any {
@@ -185,7 +252,7 @@ func (a *Adaptor) ensureSubmitDesc(ctx context.Context) (*contract.BuildRequestR
 		Body:           a.plan.Decoded.RequestBody,
 		Params:         a.plan.Params,
 		Model:          a.plan.Decoded.Model,
-		UpstreamModel:  a.info.ChannelMeta.UpstreamModelName,
+		UpstreamModel:  a.upstreamModel(),
 		ChannelBaseURL: a.info.ChannelMeta.BaseURL,
 		ApiKey:         a.info.ChannelMeta.ApiKey,
 	})
@@ -511,7 +578,7 @@ func taskInfoFromQueryItem(plugin *jsplugin.ActivePlugin, item contract.QueryIte
 	// 插件状态：本轮返回即覆盖持久化值，省略 = 保持原值
 	info.PluginState = normalizeRawJSON(item.State)
 
-	// 终态成功：结算用量事实（items[].usage 内联，键 ∈ usageSchema）+ 产物声明
+	// 终态成功：结算用量（items[].usage 内联，键 ∈ 宿主固定用量词汇）+ 产物声明
 	if item.Done && item.Error == nil {
 		attachSettleFacts(info, plugin, &item)
 		for _, decl := range item.Artifacts {
@@ -530,25 +597,15 @@ func taskInfoFromQueryItem(plugin *jsplugin.ActivePlugin, item contract.QueryIte
 	return info
 }
 
-// attachSettleFacts 解析 parseQueryResponse 内联上报的终态用量事实：
-// unit=second 映射 OutputSeconds（触发结算期公式重跑），其余数值事实进 Facts（u() 通道）。
-// 事实非法/缺失不阻断终态判定（回退预扣口径），仅记录错误。
-func attachSettleFacts(info *common.TaskInfo, plugin *jsplugin.ActivePlugin, item *contract.QueryItem) {
-	if len(item.Usage) == 0 {
+// attachSettleFacts 解析 parseQueryResponse 内联上报的终态用量（宿主固定词汇）：
+// 映射为 MaterialUsage（结算重算信号）与 token 计数。非法/缺失不阻断终态判定
+// （回退预扣口径）。
+func attachSettleFacts(info *common.TaskInfo, _ *jsplugin.ActivePlugin, item *contract.QueryItem) {
+	u, err := jsplugin.ParseHostUsage(item.Usage)
+	if err != nil || u == nil {
 		return
 	}
-	usageRaw, err := contract.ParseJSONObject(item.Usage)
-	if err != nil {
-		return
-	}
-	facts, err := contract.ValidateUsageFacts(usageRaw, plugin.Manifest)
-	if err != nil || len(facts) == 0 {
-		return
-	}
-	usage := &common.TaskMaterialUsage{Facts: facts}
-	// 时长信号确定性映射（多个 second 字段时优先 "seconds"，否则声明序首个有值）
-	usage.OutputSeconds = plugin.Manifest.OutputSecondsFact(facts)
-	info.MaterialUsage = usage
+	jsplugin.ApplySettleUsage(info, u)
 }
 
 // ---------------------------------------------------------------------------

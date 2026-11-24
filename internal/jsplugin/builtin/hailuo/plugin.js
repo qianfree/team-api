@@ -22,12 +22,14 @@
 //    estimateUsage 按秒预扣，H3 另计 input_images / input_video_seconds。
 // ⑧ renderSubmit/renderTask：taskCreated/taskStatus 形态的 {status, body} 渲染。
 // ⑨ 产物仅支持直连渠道形态：经网关中转的 v1 产物路径未实现。
+// ⑪ 1.7.0：契约升级——meta.models 为支持的上游模型（平台名由渠道映射决定，跨插件
+//    可重名）；用量改报宿主固定词汇（output_seconds/resolution/input_image_count/
+//    input_video_seconds）；型号分支一律按 ctx.upstreamModel 判定，按型号的强校验
+//    （H3 时长/分辨率档位）移到 validateRequest，decode 只按请求体形态分流。
 // ⑩ 1.6.0：H3 家族（H3 / H3-Max / H3-Lite / H3-Highspeed）按型号识别与透传（此前仅认
 //    MiniMax-H3 且强制改写型号）；分辨率/时长按型号档位校验；结算读官方 usage 字段
 //    input_image_count / input_seconds（此前读错字段名，素材用量恒回退预扣口径）；
 //    标准端点 references[]（role 词汇与 MiniMax content[].role 一致）按原序映射。
-const VIDEO_SECONDS_FIELD = { type: "number", unit: "second", description: { en: "Video generation unit price", zh: "视频生成单价" } };
-const RESOLUTION_DESCRIPTION = { en: "Output video resolution", zh: "输出视频分辨率" };
 
 const H3_MODEL = "MiniMax-H3";
 // H3 家族型号档位（官方 /v2/video_generation）：H3 为 768P/2K，其余 480P/768P；Max 时长 5–15
@@ -56,7 +58,7 @@ export const meta = {
     en: "MiniMax Hailuo video generation (text-to-video, image-to-video, and MiniMax-H3 multimodal reference)",
     zh: "MiniMax 海螺视频生成（文生视频、图生视频、MiniMax-H3 多模态参考生视频）",
   },
-  version: "1.6.0",
+  version: "1.7.0",
   author: "qianfree",
   channelTypes: [35],
   models: H3_MODELS.concat(V1_MODELS),
@@ -64,12 +66,6 @@ export const meta = {
   standardVideos: "decodeVideos",
   // 标准端点 references[] 可承接的角色（按型号的模型层约束在 decodeVideos 校验）
   referenceRoles: ["first_frame", "last_frame", "reference_image", "reference_video", "reference_audio"],
-  usageSchema: {
-    seconds: VIDEO_SECONDS_FIELD,
-    resolution: { enum: ["480P", "512P", "768P", "720P", "1080P", "2K"], description: RESOLUTION_DESCRIPTION },
-    input_images: { type: "number", unit: "count", description: { en: "Input image unit price", zh: "输入图片单价" } },
-    input_video_seconds: { type: "number", unit: "second", description: { en: "Input video unit price", zh: "输入视频单价" } },
-  },
   routes: [
     { method: "POST", path: "/v1/video_generation", type: "submit", decode: "createTask", render: "renderSubmit" },
     { method: "POST", path: "/v2/video_generation", type: "submit", decode: "createH3Task", render: "renderSubmit" },
@@ -132,20 +128,20 @@ function hasHailuoImage(body) {
 
 // ── 解码 ──────────────────────────────────────────────────
 
+// 解码只按请求体形态分流（/v1 → v1 协议、/v2 → H3 协议），不校验型号：body.model
+// 是平台模型名（可能是渠道映射别名），上游型号在 validateRequest（ctx.upstreamModel）校验。
 export function createTask(ctx) {
   const body = ctx.body && typeof ctx.body === "object" && !Array.isArray(ctx.body) ? ctx.body : {};
   const model = trimmed(body.model);
-  if (!V1_MODELS.includes(model)) throw new Error("model must be one of " + V1_MODELS.join(", "));
+  if (!model) throw new Error("model is required");
   if (body.duration !== undefined && body.duration !== null && (!Number.isFinite(Number(body.duration)) || Number(body.duration) <= 0)) throw new Error("duration must be positive");
-  return { kind: "submit", model: model, requestBody: { model: model, vendorBody: body } };
+  return { kind: "submit", model: model, requestBody: { family: "v1", vendorBody: body } };
 }
 
 export function createH3Task(ctx) {
   const body = ctx.body && typeof ctx.body === "object" && !Array.isArray(ctx.body) ? ctx.body : {};
   const model = trimmed(body.model) || H3_MODEL;
-  if (!isH3(model)) throw new Error("/v2 requires one of " + H3_MODELS.join(", "));
-  checkH3Duration(model, body.duration);
-  return { kind: "submit", model: model, requestBody: { model: model, vendorBody: body } };
+  return { kind: "submit", model: model, requestBody: { family: "h3", vendorBody: body } };
 }
 
 // ── 参考素材（标准端点 references[]）────────────────────────
@@ -210,11 +206,11 @@ function v1ReferenceFields(model, refs) {
   return out;
 }
 
-// decodeVideos 标准视频端点解码（meta.standardVideos 指向）：通用任务体 → 各协议
-// vendorBody。分辨率经 resolutionFor 归一（metadata.size 支持 720/768/1080 等数字词），
-// 时长 seconds 优先、回落 metadata.duration；参考图 images[0]/metadata.image →
-// v1 first_frame_image / H3 content[] 首帧项；尾帧 metadata.last_frame 同理。
-// 词汇映射与 Go 版 minimax 适配器同口径（resolveDuration/resolveResolution/buildGenericContent）。
+// decodeVideos 标准视频端点解码（meta.standardVideos 指向）：通用任务体 → 协议中立的
+// std 中间体（时长 seconds 优先、回落 metadata.duration；分辨率 metadata.resolution/size；
+// references[] 为唯一权威来源，缺席时回落 images[0]/metadata.image 首帧与
+// metadata.last_frame 尾帧）。上游型号未知（ctx.model 是平台名），由 validateRequest
+// 按 ctx.upstreamModel 映射为 H3 content[] 或 v1 扁平字段。
 export function decodeVideos(ctx) {
   const raw = ctx.body && typeof ctx.body === "object" && !Array.isArray(ctx.body) ? ctx.body : {};
   const metadata = plainObject(raw.metadata);
@@ -224,70 +220,96 @@ export function decodeVideos(ctx) {
 
   const seconds = raw.seconds != null ? raw.seconds : metadata.duration;
   const n = typeof seconds === "string" && seconds.trim() !== "" ? Number(seconds) : seconds;
-  const duration = Number.isFinite(n) && n > 0 ? Math.round(n) : null;
-  // 分辨率：显式输入（resolution/size）经 resolutionFor 归一；缺省按协议默认——
-  // H3 与 estimateUsage 的 H3 分支同口径（768P），v1 系列走 defaultResolution
-  const rawResolution = trimmed(metadata.resolution) || trimmed(metadata.size);
-  // references 为唯一权威来源（首帧 = role first_frame）；无则回落兼容字段
-  const refs = Array.isArray(raw.references) && raw.references.length ? raw.references : null;
-  const image = Array.isArray(raw.images) && raw.images.length && typeof raw.images[0] === "string" ? raw.images[0].trim() : trimmed(metadata.image);
-  const lastFrame = trimmed(metadata.last_frame);
+  const std = {
+    prompt: String(raw.prompt),
+    duration: Number.isFinite(n) && n > 0 ? Math.round(n) : null,
+    resolution: trimmed(metadata.resolution) || trimmed(metadata.size),
+    ratio: trimmed(raw.ratio) || trimmed(metadata.ratio) || trimmed(metadata.aspect_ratio),
+    references: Array.isArray(raw.references) && raw.references.length ? raw.references : null,
+    image: Array.isArray(raw.images) && raw.images.length && typeof raw.images[0] === "string" ? raw.images[0].trim() : trimmed(metadata.image),
+    lastFrame: trimmed(metadata.last_frame),
+  };
+  return { kind: "submit", model: model, requestBody: { family: "std", std: std } };
+}
 
-  if (isH3(model)) {
-    checkH3Duration(model, duration);
-    // H3 家族独立档位（480P/768P/2K），不走 v1 的 resolutionFor（其不识别 2K/480P）
-    const resolution = h3ResolutionFor(rawResolution, model);
-    const ratio = trimmed(raw.ratio) || trimmed(metadata.ratio) || trimmed(metadata.aspect_ratio);
-    const content = [{ type: "text", text: String(raw.prompt) }];
-    if (refs) {
-      Array.prototype.push.apply(content, h3ReferenceContent(model, refs, ratio));
-    } else {
-      if (image) content.push({ type: "image_url", image_url: { url: image }, role: "first_frame" });
-      if (lastFrame) content.push({ type: "image_url", image_url: { url: lastFrame }, role: "last_frame" });
-    }
-    const vendorBody = { content: content, resolution: resolution };
-    if (duration != null) vendorBody.duration = duration;
-    if (ratio) vendorBody.ratio = ratio;
-    return { kind: "submit", model: model, requestBody: { model: model, vendorBody: vendorBody } };
-  }
-
-  if (!V1_MODELS.includes(model)) throw new Error("model must be one of " + H3_MODELS.concat(V1_MODELS).join(", "));
-  const resolution = rawResolution ? resolutionFor(rawResolution, model) : defaultResolution(model);
-  const vendorBody = { prompt: String(raw.prompt), resolution: resolution };
-  if (duration != null) vendorBody.duration = duration;
-  if (refs) {
-    Object.assign(vendorBody, v1ReferenceFields(model, refs));
+// stdToH3Vendor std 中间体 → H3 /v2 请求体（H3 家族独立档位 480P/768P/2K）。
+function stdToH3Vendor(model, std) {
+  checkH3Duration(model, std.duration);
+  const resolution = h3ResolutionFor(std.resolution, model);
+  const content = [{ type: "text", text: std.prompt }];
+  if (std.references) {
+    Array.prototype.push.apply(content, h3ReferenceContent(model, std.references, std.ratio));
   } else {
-    if (image) vendorBody.first_frame_image = image;
-    if (lastFrame) vendorBody.last_frame_image = lastFrame;
+    if (std.image) content.push({ type: "image_url", image_url: { url: std.image }, role: "first_frame" });
+    if (std.lastFrame) content.push({ type: "image_url", image_url: { url: std.lastFrame }, role: "last_frame" });
   }
-  return { kind: "submit", model: model, requestBody: { model: model, vendorBody: vendorBody } };
+  const vendorBody = { content: content, resolution: resolution };
+  if (std.duration != null) vendorBody.duration = std.duration;
+  if (std.ratio) vendorBody.ratio = std.ratio;
+  return vendorBody;
+}
+
+// stdToV1Vendor std 中间体 → v1 /v1 请求体（分辨率经 resolutionFor 归一）。
+function stdToV1Vendor(model, std) {
+  const resolution = std.resolution ? resolutionFor(std.resolution, model) : defaultResolution(model);
+  const vendorBody = { prompt: std.prompt, resolution: resolution };
+  if (std.duration != null) vendorBody.duration = std.duration;
+  if (std.references) {
+    Object.assign(vendorBody, v1ReferenceFields(model, std.references));
+  } else {
+    if (std.image) vendorBody.first_frame_image = std.image;
+    if (std.lastFrame) vendorBody.last_frame_image = std.lastFrame;
+  }
+  return vendorBody;
+}
+
+// validateRequest 渠道选定后按上游型号校验并定稿请求体：/v2 路由须为 H3 家族、/v1 路由
+// 须为 v1 系列；标准端点的 std 中间体在此映射为对应协议体。
+export function validateRequest(ctx) {
+  const req = plainObject(ctx.body);
+  const upstream = trimmed(ctx.upstreamModel || ctx.model);
+  const h3 = isH3(upstream);
+  if (req.family === "std") {
+    const std = plainObject(req.std);
+    const vendorBody = h3 ? stdToH3Vendor(upstream, std) : stdToV1Vendor(upstream, std);
+    return { requestBody: { family: h3 ? "h3" : "v1", vendorBody: vendorBody } };
+  }
+  if (req.family === "h3" && !h3) throw new Error("/v2/video_generation requires an H3 model (" + H3_MODELS.join(", ") + "), channel upstream model is " + upstream);
+  if (req.family === "v1" && h3) throw new Error("/v1/video_generation does not support " + upstream + "; use /v2/video_generation");
+  if (h3) checkH3Duration(upstream, plainObject(req.vendorBody).duration);
+  return {};
 }
 
 // ── 提交链 ────────────────────────────────────────────────
 
+// isH3Request 提交形态判定：validateRequest 定稿的 family 优先，回落上游型号
+function isH3Request(req, model) {
+  if (req.family === "h3") return true;
+  if (req.family === "v1") return false;
+  return isH3(model);
+}
+
 export function estimateUsage(ctx) {
-  const req = ctx.body || {};
-  const model = ctx.model;
-  if (isH3(model)) {
-    const vendor = plainObject(req.vendorBody);
+  const req = plainObject(ctx.body);
+  const model = trimmed(ctx.upstreamModel || ctx.model);
+  const vendor = plainObject(req.vendorBody);
+  if (isH3Request(req, model)) {
     const content = Array.isArray(vendor.content) ? vendor.content : [];
     const duration = vendor.duration == null ? H3_DEFAULT_DURATION : Number(vendor.duration);
     return {
-      seconds: duration,
+      output_seconds: duration,
       resolution: ["2K", "480P"].includes(trimmed(vendor.resolution).toUpperCase()) ? trimmed(vendor.resolution).toUpperCase() : "768P",
-      input_images: content.filter(function (c) { return c && c.type === "image_url"; }).length,
+      input_image_count: content.filter(function (c) { return c && c.type === "image_url"; }).length,
       input_video_seconds: content.some(function (c) { return c && c.type === "video_url"; }) ? H3_MAX_INPUT_VIDEO_SECONDS : 0,
     };
   }
-  const vendor = plainObject(req.vendorBody);
-  return { seconds: outboundDuration(vendor), resolution: outboundResolution(vendor, model), input_images: 0, input_video_seconds: 0 };
+  return { output_seconds: outboundDuration(vendor), resolution: outboundResolution(vendor, model), input_image_count: 0, input_video_seconds: 0 };
 }
 
 export function buildSubmitRequest(ctx) {
-  const req = ctx.body || {};
+  const req = plainObject(ctx.body);
   const model = ctx.upstreamModel || ctx.model;
-  if (isH3(model)) {
+  if (isH3Request(req, model)) {
     const vendor = plainObject(req.vendorBody);
     const body = Object.assign({}, definedFields(vendor, ["model", "content", "resolution", "duration", "ratio"]), definedFields(vendor.metadata || {}, H3_METADATA_FIELDS), { model: model });
     return { url: "/v2/video_generation", method: "POST", body: body };
@@ -306,16 +328,18 @@ function h3APIError(body) {
 
 export function parseSubmitResponse(ctx) {
   const body = plainObject(ctx.responseBody);
-  const apiError = isH3(ctx.model) ? h3APIError(body) : null;
+  // 形态取归一请求体的 family（ctx.model 是平台名，可能是映射别名）
+  const h3 = isH3Request(plainObject(ctx.body), ctx.model);
+  const apiError = h3 ? h3APIError(body) : null;
   if (apiError) throw new Error(apiError.message);
   const base = body.base_resp;
   if (base) {
     if (base.status_code !== 0) throw new Error(base.status_msg || "hailuo submit failed");
-  } else if (!isH3(ctx.model)) {
+  } else if (!h3) {
     throw new Error("hailuo submit failed");
   }
   if (!body.task_id) throw new Error("missing task_id");
-  const taskData = Object.assign({}, body, { _isH3: isH3(ctx.model) });
+  const taskData = Object.assign({}, body, { _isH3: h3 });
   return { taskId: String(body.task_id), taskData: taskData };
 }
 
@@ -374,8 +398,8 @@ export function parseQueryResponse(ctx) {
       if (resolution === "2K" || resolution === "768P" || resolution === "480P") usage.resolution = resolution;
       // 官方 VideoTaskUsage 字段：input_image_count（首帧+尾帧+参考图）、input_seconds（参考视频秒数）
       const u = plainObject(task.usage);
-      if (Number.isFinite(Number(u.output_seconds)) && Number(u.output_seconds) > 0) usage.seconds = Number(u.output_seconds);
-      if (Number.isFinite(Number(u.input_image_count)) && Number(u.input_image_count) > 0) usage.input_images = Number(u.input_image_count);
+      if (Number.isFinite(Number(u.output_seconds)) && Number(u.output_seconds) > 0) usage.output_seconds = Number(u.output_seconds);
+      if (Number.isFinite(Number(u.input_image_count)) && Number(u.input_image_count) > 0) usage.input_image_count = Number(u.input_image_count);
       if (Number.isFinite(Number(u.input_seconds)) && Number(u.input_seconds) > 0) usage.input_video_seconds = Number(u.input_seconds);
       const done = { taskId: t.taskId, done: true, usage: usage, taskData: body };
       if (url) done.artifacts = [{ key: "video", mimeType: "video/mp4", source: { type: "url", path: "_video_url" } }];

@@ -209,12 +209,19 @@ func handleJSTaskSubmit(r *ghttp.Request, plugin *jsplugin.ActivePlugin, route c
 		KeyUsedQuota:    r.GetCtxVar(middleware.CtxKeyApiKeyUsedQuota).Float64(),
 	}
 
-	// 4) 渠道选择：候选约束为本插件的 JS 渠道——同名多插件（sharedModels）场景下，
-	// 同一模型可能有多家插件的渠道，调度在候选层过滤而非选中后 400（顺带消灭了
-	// 选中他家渠道时报晦涩绑定错误的旧路径）
+	// 4) 渠道选择：候选约束为本插件的 JS 渠道，且渠道上游模型（映射后）在插件有效
+	// models 内——同一平台模型可由多家插件服务（模型名跨插件可重名），调度在候选层
+	// 过滤而非选中后 400。jsbridge ValidateRequest 对两个入口再做权威校验
 	channelMeta, err := selectTaskChannelFor(r, body2, func(meta *relay_common.ChannelMeta) bool {
-		return relay_constant.ProviderType(meta.ChannelType) == relay_constant.ProviderJSTask &&
-			meta.Settings.PluginKey == plugin.Key
+		if relay_constant.ProviderType(meta.ChannelType) != relay_constant.ProviderJSTask ||
+			meta.Settings.PluginKey != plugin.Key {
+			return false
+		}
+		upstream := meta.UpstreamModelName
+		if upstream == "" {
+			upstream = decoded.Model
+		}
+		return plugin.Manifest.SupportsUpstreamModel(upstream)
 	})
 	if err != nil {
 		writeTaskChannelSelectionError(r, err)
@@ -301,15 +308,9 @@ func finalizeImmediateTask(ctx context.Context, plan *jsplugin.SubmitPlan, plugi
 	} else {
 		info.Data = t.Data
 	}
-	// 用量事实——与桥的终态映射同口径（时长信号经 OutputSecondsFact 确定性映射）
-	if len(im.Usage) > 0 {
-		if usageRaw, uErr := contract.ParseJSONObject(im.Usage); uErr == nil {
-			if facts, fErr := contract.ValidateUsageFacts(usageRaw, plugin.Manifest); fErr == nil && len(facts) > 0 {
-				usage := &relay_common.TaskMaterialUsage{Facts: facts}
-				usage.OutputSeconds = plugin.Manifest.OutputSecondsFact(facts)
-				info.MaterialUsage = usage
-			}
-		}
+	// 用量（宿主固定词汇）——与桥的终态映射同口径（jsplugin.ApplySettleUsage）
+	if u, uErr := jsplugin.ParseHostUsage(im.Usage); uErr == nil && u != nil {
+		jsplugin.ApplySettleUsage(info, u)
 	}
 	for _, decl := range im.Artifacts {
 		info.Artifacts = append(info.Artifacts, relay_common.TaskArtifact{
@@ -504,7 +505,7 @@ func callDecodeHook(r *ghttp.Request, plugin *jsplugin.ActivePlugin, route contr
 		writeJSError(r, http.StatusBadGateway, decodeHook+": "+err.Error())
 		return nil, false
 	}
-	decoded, err := contract.ValidateDecoded(raw, plugin.Manifest, route.Type == contract.RouteTypeDynamic)
+	decoded, err := contract.ValidateDecoded(raw, route.Type == contract.RouteTypeDynamic)
 	if err != nil {
 		writeJSError(r, http.StatusBadRequest, decodeHook+": "+err.Error())
 		return nil, false

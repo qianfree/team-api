@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gogf/gf/v2/errors/gerror"
+	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 	"github.com/shopspring/decimal"
 
@@ -96,38 +97,20 @@ func jsPlatformPluginKey(platform string) (string, bool) {
 	return key, true
 }
 
-// buildJsOpsStatsModelMap 纯映射：active manifest 全集（含禁用插件）→ 模型名（小写）→ pluginKey。
-// 键统一小写：generation 的模型索引与冲突预检均按大小写不敏感处理，这里保持同口径，
-// 避免 usage_logs 中模型名大小写漂移导致营收漏计。
-func buildJsOpsStatsModelMap(manifests []*contract.Manifest) map[string]string {
-	out := make(map[string]string)
-	for _, m := range manifests {
-		if m == nil || m.Key == "" {
-			continue
-		}
-		for _, model := range m.Models {
-			if model == "" {
-				continue
-			}
-			out[strings.ToLower(model)] = m.Key
-		}
-	}
-	return out
-}
-
-// jsOpsStatsRevenueRow 营收聚合查询单行（model_name 分组，金额为 decimal 精确值）。
+// jsOpsStatsRevenueRow 营收聚合查询单行（按任务 platform 分组，金额为 decimal 精确值）。
 type jsOpsStatsRevenueRow struct {
-	ModelName string
-	Cost      decimal.Decimal
+	Platform string
+	Cost     decimal.Decimal
 }
 
-// mergeJsOpsStatsRevenue 纯归并：模型级营收行 → 按插件 decimal 累加。
-// 未命中模型映射的行跳过（模型声明已变更/已删的历史数据无法归到插件）；
+// mergeJsOpsStatsRevenue 纯归并：platform 级营收行 → 按插件 decimal 累加。
+// 归属按任务 platform（js:{key}）而非模型名——上游模型清单跨插件可重名，同一平台
+// 模型可能由多家插件服务，只有任务落库时记下的插件才能准确归属。
 // 累加全程 decimal，出口才经 billing.InexactFloat64 转 float（JSON number 契约）。
-func mergeJsOpsStatsRevenue(modelPlugin map[string]string, rows []jsOpsStatsRevenueRow) map[string]decimal.Decimal {
+func mergeJsOpsStatsRevenue(rows []jsOpsStatsRevenueRow) map[string]decimal.Decimal {
 	out := make(map[string]decimal.Decimal)
 	for _, row := range rows {
-		key, ok := modelPlugin[strings.ToLower(row.ModelName)]
+		key, ok := jsPlatformPluginKey(row.Platform)
 		if !ok {
 			continue
 		}
@@ -251,46 +234,28 @@ func (s *sAdmin) JSPluginOpsStats(ctx context.Context, req *v1.JSPluginOpsStatsR
 	}
 	tasks := aggregateJsOpsStatsTasks(pureTaskRows)
 
-	// 营收侧聚合：模型集合来自 manifest 声明（原始大小写进 IN，Postgres varchar
-	// 比较区分大小写；映射查找时统一小写兜底漂移）。IN 列表 = 插件数 × 每插件模型数，
-	// 量级几十到几百，单条 IN 即可、无需分块；bil_usage_logs 是全系统最大写入表，
-	// 聚合必须带 created_at 时间窗（BRIN 索引），实扣优先口径与仪表盘/用量汇总一致
-	//（actual_cost 优先，0/NULL 回退 total_cost）。
-	modelPlugin := buildJsOpsStatsModelMap(manifests)
-	revenue := make(map[string]decimal.Decimal)
-	if len(modelPlugin) > 0 {
-		models := make([]string, 0, len(modelPlugin))
-		modelSeen := make(map[string]bool, len(modelPlugin))
-		for _, m := range manifests {
-			if m == nil {
-				continue
-			}
-			for _, model := range m.Models {
-				if model == "" || modelSeen[model] {
-					continue
-				}
-				modelSeen[model] = true
-				models = append(models, model)
-			}
-		}
-		revRows := make([]struct {
-			ModelName string          `json:"model_name"`
-			Cost      decimal.Decimal `json:"cost"`
-		}, 0)
-		if err := dao.BilUsageLogs.Ctx(ctx).
-			WhereIn("model_name", models).
-			Where("created_at >= ?", cutoff).
-			Fields("model_name, COALESCE(SUM(COALESCE(NULLIF(actual_cost, 0), total_cost)), 0) AS cost").
-			Group("model_name").
-			Scan(&revRows); err != nil {
-			return nil, gerror.Wrap(err, "统计 JS 插件营收失败")
-		}
-		pureRevRows := make([]jsOpsStatsRevenueRow, 0, len(revRows))
-		for _, r := range revRows {
-			pureRevRows = append(pureRevRows, jsOpsStatsRevenueRow{ModelName: r.ModelName, Cost: r.Cost})
-		}
-		revenue = mergeJsOpsStatsRevenue(modelPlugin, pureRevRows)
+	// 营收侧聚合：任务用量日志按 request_id 关联任务行，按任务 platform（js:{key}）
+	// 分组——同名模型多插件服务时只有任务归属能准确拆分。bil_usage_logs 是全系统
+	// 最大写入表，聚合必须带 created_at 时间窗（BRIN 索引）；实扣优先口径与仪表盘/
+	// 用量汇总一致（actual_cost 优先，0/NULL 回退 total_cost）。
+	revRows := make([]struct {
+		Platform string          `json:"platform"`
+		Cost     decimal.Decimal `json:"cost"`
+	}, 0)
+	if err := g.DB().Ctx(ctx).Raw(`
+SELECT t.platform AS platform,
+       COALESCE(SUM(COALESCE(NULLIF(u.actual_cost, 0), u.total_cost)), 0) AS cost
+FROM bil_usage_logs u
+JOIN tsk_model_tasks t ON t.request_id = u.request_id
+WHERE u.created_at >= ? AND u.request_type = 3 AND t.platform LIKE 'js:%'
+GROUP BY t.platform`, cutoff).Scan(&revRows); err != nil {
+		return nil, gerror.Wrap(err, "统计 JS 插件营收失败")
 	}
+	pureRevRows := make([]jsOpsStatsRevenueRow, 0, len(revRows))
+	for _, r := range revRows {
+		pureRevRows = append(pureRevRows, jsOpsStatsRevenueRow{Platform: r.Platform, Cost: r.Cost})
+	}
+	revenue := mergeJsOpsStatsRevenue(pureRevRows)
 
 	// enabled 口径：当前是否在服务 = 存在于运行中 generation（active+enabled 才会装载）
 	gen := jsplugin.CurrentGeneration()

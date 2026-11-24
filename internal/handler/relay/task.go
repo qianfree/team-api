@@ -235,8 +235,8 @@ func selectTaskChannel(r *ghttp.Request, body []byte) (*relay_common.ChannelMeta
 
 // selectTaskChannelFor 带候选过滤的渠道选择：accept 返回 false 的候选视为不可用，
 // 上报后取下一候选（与物化失败同路径；过滤不命中不计为渠道健康问题——渠道本身
-// 没坏，只是不属于本次调度的目标集合）。/pjs 分发器用它在同名多插件（sharedModels）
-// 场景下把候选约束为本插件的渠道。
+// 没坏，只是不属于本次调度的目标集合）。/pjs 分发器用它把候选约束为本插件的渠道
+// （上游模型跨插件可重名，归属由渠道 plugin_key 决定）。
 func selectTaskChannelFor(r *ghttp.Request, body []byte, accept func(*relay_common.ChannelMeta) bool) (*relay_common.ChannelMeta, error) {
 	// 从请求体提取模型名
 	var req struct {

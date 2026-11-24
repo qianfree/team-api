@@ -181,14 +181,8 @@ func HandleTaskSubmit(
 	var platform constant.TaskPlatform
 	if providerType == constant.ProviderJSTask {
 		// JS 任务插件：平台标识 = js:{plugin_key}，轮询侧据此路由到具体插件池。
-		// plugin_key 优先取渠道显式配置（覆盖语义），缺省按模型解析——v1 冲突预检
-		// 保证模型对插件独占，渠道只需配模型路由（chn_abilities），零额外配置
+		// 渠道必须绑定插件（settings.plugin_key）：模型跨插件可重名，归属只由渠道决定
 		pluginKey := channelMeta.Settings.PluginKey
-		if pluginKey == "" {
-			if resolved, ok := jsplugin.ResolvePluginKeyForModel(modelName); ok {
-				pluginKey = resolved
-			}
-		}
 		if pluginKey != "" {
 			// JS 插件模型双入口：/pjs 原生路由（分发器已注入解码计划）或标准任务端点
 			// （/v1/videos、/v1/video/generations——插件声明 standardVideos 时在此合成
@@ -222,8 +216,8 @@ func HandleTaskSubmit(
 			}
 			platform = constant.TaskPlatform("js:" + pluginKey)
 		} else {
-			g.Log().Warningf(ctx, "HandleTaskSubmit: js task channel cannot resolve plugin (model=%s, channelID=%d)", modelName, channelMeta.ChannelID)
-			writeTaskError(rc.Writer, http.StatusBadRequest, "js task channel cannot resolve plugin by model", "")
+			g.Log().Warningf(ctx, "HandleTaskSubmit: js task channel is not bound to a plugin (model=%s, channelID=%d)", modelName, channelMeta.ChannelID)
+			writeTaskError(rc.Writer, http.StatusBadRequest, "js task channel is not bound to a plugin (settings.plugin_key)", "")
 			return
 		}
 	} else {
@@ -309,7 +303,13 @@ func HandleTaskSubmit(
 
 	// 6. 估算计费 + 预扣（ratios 为计费上下文：float64 乘数 + spec.* 规格事实值；
 	// body 同传给 EstimateTaskCost 供参数倍率按归一化任务体匹配，命中注入 ratios）
-	ratios := adaptor.EstimateBilling(ctx, info, body)
+	ratios, estimateErr := estimateTaskRatios(ctx, adaptor, info, body)
+	if estimateErr != nil {
+		g.Log().Warningf(ctx, "HandleTaskSubmit: estimate billing rejected, model=%s, status=%d, err=%s",
+			modelName, estimateErr.StatusCode, estimateErr.Message)
+		writeTaskError(rc.Writer, estimateErr.StatusCode, estimateErr.Message, estimateErr.ErrCode)
+		return
+	}
 	if ratios == nil {
 		// 计费层会向 ratios 注入冻结值（参数倍率命中、公式求值上下文），nil 时注入丢失
 		ratios = map[string]any{}
@@ -321,8 +321,16 @@ func HandleTaskSubmit(
 			writeTaskError(rc.Writer, http.StatusBadRequest, common.ErrBillingFormulaEval.Error(), "")
 			return
 		}
+		// 未配价模型 fail-closed：与同步路径同文案的请求错误，而非按占位价放行
+		if errors.Is(err, common.ErrModelPricingNotConfigured) {
+			g.Log().Errorf(ctx, "HandleTaskSubmit: model pricing not configured, model=%s, err=%v", modelName, err)
+			writeTaskError(rc.Writer, http.StatusBadRequest, "model pricing not configured: "+modelName, "")
+			return
+		}
+		// 其余（取价故障、方案未注册等定价异常）是内部错误：完整错误链只进日志，
+		// 不向客户端泄露内部细节
 		g.Log().Errorf(ctx, "HandleTaskSubmit: estimate cost failed, model=%s, err=%v", modelName, err)
-		writeTaskError(rc.Writer, http.StatusInternalServerError, "estimate cost failed: "+err.Error(), "")
+		writeTaskError(rc.Writer, http.StatusInternalServerError, "billing temporarily unavailable", "")
 		return
 	}
 	g.Log().Debugf(ctx, "HandleTaskSubmit: estimatedCost=%.4f", estimatedCost.InexactFloat64())
@@ -534,6 +542,15 @@ func HandleTaskSubmit(
 		"created_at": now.Unix(),
 	}
 	writeJSON(rc.Writer, http.StatusOK, respBody)
+}
+
+// estimateTaskRatios 取计费上下文：适配器实现了 StrictBillingEstimator 时走严格路径
+// （估算失败返回错误，提交管线据此拒绝），否则沿用 EstimateBilling 的宽松语义。
+func estimateTaskRatios(ctx context.Context, adaptor common.TaskAdaptor, info *common.RelayInfo, body []byte) (map[string]any, *common.TaskError) {
+	if strict, ok := adaptor.(common.StrictBillingEstimator); ok {
+		return strict.EstimateBillingStrict(ctx, info, body)
+	}
+	return adaptor.EstimateBilling(ctx, info, body), nil
 }
 
 // standardEntrySurface 标准任务端点路径 → 入口标识（JS 插件 standardVideos 解码用）。

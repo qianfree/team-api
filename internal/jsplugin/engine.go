@@ -153,6 +153,9 @@ func (e *GojaEngine) Compile(source string) (*CompiledPlugin, error) {
 	if err != nil {
 		return nil, gerror.Wrap(err, "meta 序列化失败")
 	}
+	if err := contract.CheckRemovedFields(metaJSON); err != nil {
+		return nil, gerror.Wrap(err, "manifest 校验失败")
+	}
 	var m contract.Manifest
 	if err := json.Unmarshal(metaJSON, &m); err != nil {
 		return nil, gerror.Wrap(err, "meta 不是合法的 manifest JSON")

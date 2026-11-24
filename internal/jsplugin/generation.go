@@ -1,12 +1,9 @@
 package jsplugin
 
 import (
-	"context"
 	"strings"
 	"sync/atomic"
 	"time"
-
-	"github.com/gogf/gf/v2/os/glog"
 
 	"github.com/qianfree/team-api/internal/jsplugin/contract"
 )
@@ -68,7 +65,7 @@ func hookCandidates(m *contract.Manifest) []string {
 	}
 	for _, name := range []string{
 		contract.HookNameDecode, contract.HookNameRenderSubmit, contract.HookNameRenderTask,
-		"renderTasks", "estimateUsage",
+		"renderTasks", "estimateUsage", contract.HookNameValidateRequest,
 		"buildSubmitRequest", "parseSubmitResponse", "buildQueryRequest", "parseQueryResponse",
 	} {
 		add(name)
@@ -111,7 +108,6 @@ type genRoute struct {
 type Generation struct {
 	plugins        map[string]*ActivePlugin
 	routesByPlugin map[string][]genRoute // pluginKey → 该插件路由（参数少者优先，插件内排序）
-	models         map[string]string     // 模型名(小写) → pluginKey（冲突预检与渠道选择辅助）
 	createdAt      time.Time
 }
 
@@ -167,12 +163,6 @@ func (g *Generation) Plugins() []*ActivePlugin {
 	return out
 }
 
-// FindPluginByModel 按模型名（大小写不敏感）查声明它的插件（冲突预检用）。
-func (g *Generation) FindPluginByModel(model string) (string, bool) {
-	key, ok := g.models[strings.ToLower(model)]
-	return key, ok
-}
-
 // ---------------------------------------------------------------------------
 // 原子发布
 // ---------------------------------------------------------------------------
@@ -182,7 +172,6 @@ var currentGeneration atomic.Pointer[Generation]
 func init() {
 	currentGeneration.Store(&Generation{
 		plugins: map[string]*ActivePlugin{},
-		models:  map[string]string{},
 	})
 }
 
@@ -201,21 +190,10 @@ func buildGeneration(plugins []*ActivePlugin) *Generation {
 	g := &Generation{
 		plugins:        make(map[string]*ActivePlugin, len(plugins)),
 		routesByPlugin: make(map[string][]genRoute, len(plugins)),
-		models:         make(map[string]string, len(plugins)),
 		createdAt:      time.Now(),
 	}
 	for _, p := range plugins {
 		g.plugins[p.Key] = p
-		for _, m := range p.Manifest.Models {
-			lower := strings.ToLower(m)
-			// 兜底告警：模型同时出现在多个插件的有效清单（配置扩展的保存预检竞态或
-			// 绕过），回落解析按后装载者。正常路径冲突在激活/配置保存时已被拒绝。
-			if prev, dup := g.models[lower]; dup && prev != p.Key {
-				glog.Warningf(context.Background(),
-					"jsplugin: 模型 %s 同时被插件 %s 与 %s 声明（检查 modelsFromConfig 配置），模型回落解析按后者", m, prev, p.Key)
-			}
-			g.models[lower] = p.Key
-		}
 		routes := make([]genRoute, 0, len(p.Manifest.Routes))
 		for _, route := range p.Manifest.Routes {
 			shape := contract.NormalizePathShape(route.Path)

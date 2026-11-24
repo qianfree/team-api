@@ -150,6 +150,7 @@ func TestSubmitFlowWithFileRefs(t *testing.T) {
 	adaptor := &Adaptor{}
 	info := relayInfo(vendor.URL)
 	info.ChannelMeta.Settings.PluginKey = "fileref-demo"
+	info.ChannelMeta.UpstreamModelName = "img_model"
 	adaptor.Init(info)
 	if taskErr := adaptor.ValidateRequest(ctx, info, nil); taskErr != nil {
 		t.Fatalf("ValidateRequest 失败: %s", taskErr.Message)
