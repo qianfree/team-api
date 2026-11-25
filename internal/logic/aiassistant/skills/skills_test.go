@@ -48,6 +48,8 @@ func TestBillingFormulaValidate(t *testing.T) {
 // TestJSPluginReferenceTemplate js_plugin 参考注入含完整 golden 模板，
 // 且标准视频端点契约（standardVideos/decodeVideos）在提示词中有说明——
 // 缺失会导致 AI 生成的视频插件不支持 /v1/videos 等标准端点。
+// 同时锁定与宿主运行期行为对齐的要点：按文案写出的插件不得在上线后才暴露
+// （fetch 鉴权、query 路由形态、multipart 文件处理、错误消息透出口径）。
 func TestJSPluginReferenceTemplate(t *testing.T) {
 	ref := JSPluginSkill{}.Reference()
 	if !strings.Contains(ref, "export const meta") {
@@ -56,10 +58,32 @@ func TestJSPluginReferenceTemplate(t *testing.T) {
 	if !strings.Contains(ref, jsplugin.TemplateSource()) {
 		t.Fatal("golden 模板应全量注入")
 	}
-	for _, want := range []string{"standardVideos", "decodeVideos", "referenceRoles", "upstreamModel", "平台模型名", "failReason", "tasks[].state"} {
+	for _, want := range []string{
+		"standardVideos", "decodeVideos", "referenceRoles", "upstreamModel", "平台模型名", "failReason", "tasks[].state",
+		// utils.fetch 鉴权：仅同源注入渠道密钥，跨域不带鉴权
+		"同源", "不带任何鉴权",
+		// query 路由只认路径参数、读库不调上游
+		"必须带路径参数", "查询串（?id=）读不到",
+		// multipart 文件：不承接须显式拒绝，承接用占位符
+		"ctx.files", "__fileRef", "静默丢弃",
+		// 其余运行期事实
+		"renderTasks", // dynamic 批量查询的缺省渲染钩子
+		"JSON.parse",  // fetch 的 json 解析依赖响应 Content-Type
+		"artifact_storage",
+		// 工具模式：代码一律经 write_code/append_code/edit_code/validate_code 工具产出
+		//（与后端 PluginCodeTools 定义、前端 agent loop 共用同一套工具名）
+		"write_code", "append_code", "edit_code", "validate_code",
+		// 严禁铺垫 + 思考从简：推理模型的 reasoning 不回传历史，每轮在思考里起草完整
+		// 代码会形成「单轮数万 token 思考」的空转（agent loop 的成本失控源头）
+		"严禁铺垫", "思考从简",
+	} {
 		if !strings.Contains(ref, want) {
 			t.Fatalf("参考缺少 %q 的契约说明", want)
 		}
+	}
+	// 旧说法与实现不符（fetch 从不无条件注入渠道密钥），不得回潮
+	if strings.Contains(ref, "由平台注入渠道密钥，插件设置无效") {
+		t.Fatal("utils.fetch 鉴权说明应区分同源 / 跨域，不得声称无条件注入渠道密钥")
 	}
 }
 

@@ -52,11 +52,12 @@ type Adaptor struct {
 
 	// 轮询链状态（FetchTask 后紧跟 ParseTaskResult，顺序由 pollSingleTask 保证）
 	lastQueryTasks []contract.QueryTaskRef
-	// lastAllowedHosts / lastBaseURL FetchTask/FetchBatchTasks 算出的 fetch 白名单
-	// （渠道 host ∪ manifest.allowedHosts）与渠道地址，紧随其后的 Parse 钩子复用——
-	// parse 内 utils.fetch 与 build 钩子保持同一套白名单和相对路径解析基准
+	// lastAllowedHosts / lastBaseURL / lastApiKey FetchTask/FetchBatchTasks 算出的 fetch 白名单
+	// （渠道 host ∪ manifest.allowedHosts）、渠道地址与渠道密钥，紧随其后的 Parse 钩子复用——
+	// parse 内 utils.fetch 与 build 钩子保持同一套白名单、相对路径解析基准与同源鉴权
 	lastAllowedHosts []string
 	lastBaseURL      string
+	lastApiKey       string
 }
 
 // ---------------------------------------------------------------------------
@@ -137,12 +138,13 @@ func (a *Adaptor) ValidateRequest(ctx context.Context, info *common.RelayInfo, _
 			return taskErr
 		}
 		if fixed != nil {
-			// 计划是请求级对象（分发器/合成各自新建），复制 Decoded 后替换请求体
+			// 就地替换归一请求体（计划是请求级对象，分发器/合成方各自新建，此时无并发读）。
+			// 不能复制计划：parseSubmitResponse 的 immediate / state 回填在 a.plan 上，而
+			// 分发器（受理即终态）与任务管线（落 plugin_state）读的是 ctx 里的原计划——
+			// 此前复制后回填落在副本上，两者被静默丢弃
 			decoded := *plan.Decoded
 			decoded.RequestBody = fixed
-			cp := *plan
-			cp.Decoded = &decoded
-			plan = &cp
+			plan.Decoded = &decoded
 		}
 	}
 	a.plan = plan
@@ -162,7 +164,7 @@ func (a *Adaptor) callValidateRequest(ctx context.Context, plan *jsplugin.Submit
 		return nil, &common.TaskError{StatusCode: http.StatusInternalServerError, Message: "js adaptor: marshal validateRequest args failed"}
 	}
 	allowed := append([]string{hostOf(a.info.ChannelMeta.BaseURL)}, plan.Plugin.Manifest.AllowedHosts...)
-	out, err := plan.Plugin.Pool.Call(channelHookCtx(ctx, a.info.ChannelMeta.BaseURL, allowed), contract.HookNameValidateRequest, args)
+	out, err := plan.Plugin.Pool.Call(channelHookCtx(ctx, a.info.ChannelMeta.BaseURL, a.info.ChannelMeta.ApiKey, allowed), contract.HookNameValidateRequest, args)
 	if err != nil {
 		// 插件拒绝请求 = 客户端请求不可接受（400）；消息净化防密钥片段外泄
 		return nil, &common.TaskError{StatusCode: http.StatusBadRequest, Message: jsplugin.SanitizeHookMessage(err.Error())}
@@ -218,7 +220,7 @@ func (a *Adaptor) EstimateBillingStrict(ctx context.Context, _ *common.RelayInfo
 	if err != nil {
 		return nil, &common.TaskError{StatusCode: http.StatusInternalServerError, Message: "js adaptor: marshal estimateUsage args failed"}
 	}
-	out, err := a.plan.Plugin.Pool.Call(channelHookCtx(ctx, a.info.ChannelMeta.BaseURL, a.submitAllowedHosts()), "estimateUsage", args)
+	out, err := a.plan.Plugin.Pool.Call(channelHookCtx(ctx, a.info.ChannelMeta.BaseURL, a.info.ChannelMeta.ApiKey, a.submitAllowedHosts()), "estimateUsage", args)
 	if err != nil {
 		// 与 buildSubmitRequest 失败同口径（502，消息净化防密钥片段外泄）
 		return nil, jsHookTaskError(err)
@@ -258,7 +260,7 @@ func (a *Adaptor) ensureSubmitDesc(ctx context.Context) (*contract.BuildRequestR
 	})
 	// fetch 白名单随调用注入（渠道 host ∪ manifest.allowedHosts）：submit 钩子内
 	// utils.fetch 访问渠道域与轮询链同口径放行；渠道 baseUrl 同步注入（相对路径解析基准）
-	qctx := channelHookCtx(ctx, a.info.ChannelMeta.BaseURL, a.submitAllowedHosts())
+	qctx := channelHookCtx(ctx, a.info.ChannelMeta.BaseURL, a.info.ChannelMeta.ApiKey, a.submitAllowedHosts())
 	out, err := a.plan.Plugin.Pool.Call(qctx, "buildSubmitRequest", args)
 	if err != nil {
 		return nil, jsHookTaskError(err)
@@ -387,7 +389,7 @@ func (a *Adaptor) DoResponse(ctx context.Context, resp *http.Response, _ *common
 		Body:         a.planDecodedBody(),
 	})
 	// parse 钩子与 build 钩子同口径注入 fetch 白名单与渠道 baseUrl（parse 内可能 utils.fetch 补取详情）
-	out, err := a.plan.Plugin.Pool.Call(channelHookCtx(ctx, a.info.ChannelMeta.BaseURL, a.submitAllowedHosts()), "parseSubmitResponse", args)
+	out, err := a.plan.Plugin.Pool.Call(channelHookCtx(ctx, a.info.ChannelMeta.BaseURL, a.info.ChannelMeta.ApiKey, a.submitAllowedHosts()), "parseSubmitResponse", args)
 	if err != nil {
 		return "", body, jsHookTaskError(err)
 	}
@@ -425,9 +427,10 @@ func (a *Adaptor) submitAllowedHosts() []string {
 }
 
 // channelHookCtx 组装有渠道上下文的钩子调用 ctx：fetch 白名单 + 相对路径解析
-// 基准（utils.fetch 相对 URL 按渠道 baseUrl 拼接，与主链路 resolveUpstreamURL 同语义）。
-func channelHookCtx(ctx context.Context, baseURL string, allowed []string) context.Context {
-	return jsplugin.WithBaseURL(jsplugin.WithAllowedHosts(ctx, allowed), baseURL)
+// 基准（utils.fetch 相对 URL 按渠道 baseUrl 拼接，与主链路 resolveUpstreamURL 同语义）
+// + 渠道密钥（utils.fetch 同源请求注入 Bearer，与主链路默认鉴权同语义）。
+func channelHookCtx(ctx context.Context, baseURL, apiKey string, allowed []string) context.Context {
+	return jsplugin.WithChannelKey(jsplugin.WithBaseURL(jsplugin.WithAllowedHosts(ctx, allowed), baseURL), apiKey)
 }
 
 // ---------------------------------------------------------------------------
@@ -463,6 +466,7 @@ func (a *Adaptor) FetchTask(ctx context.Context, baseURL, apiKey string, taskDat
 	// 白名单与渠道地址留存给紧随其后的 ParseTaskResult（parse 钩子内 utils.fetch 复用）
 	a.lastAllowedHosts = append([]string{hostOf(baseURL)}, plugin.Manifest.AllowedHosts...)
 	a.lastBaseURL = baseURL
+	a.lastApiKey = apiKey
 
 	taskRef := contract.QueryTaskRef{
 		TaskID:   td.TaskID,
@@ -478,7 +482,7 @@ func (a *Adaptor) FetchTask(ctx context.Context, baseURL, apiKey string, taskDat
 	}
 	// fetch 白名单 = 渠道 host ∪ manifest.allowedHosts（同时作为绝对 URL/重定向校验集）
 	allowed := append([]string{hostOf(baseURL)}, plugin.Manifest.AllowedHosts...)
-	qctx := channelHookCtx(ctx, baseURL, allowed)
+	qctx := channelHookCtx(ctx, baseURL, apiKey, allowed)
 	out, err := plugin.Pool.Call(qctx, "buildQueryRequest", args)
 	if err != nil {
 		return nil, fmt.Errorf("buildQueryRequest: %w", err)
@@ -538,7 +542,7 @@ func (a *Adaptor) ParseTaskResult(body []byte) (*common.TaskInfo, error) {
 	}
 	// parse 钩子沿用 FetchTask 的白名单与渠道地址——轮询循环无请求 ctx 可传，
 	// 不注入的话 parse 内 utils.fetch 只剩实例级 manifest.allowedHosts，渠道 host 会被拒
-	pctx := channelHookCtx(context.Background(), a.lastBaseURL, a.lastAllowedHosts)
+	pctx := channelHookCtx(context.Background(), a.lastBaseURL, a.lastApiKey, a.lastAllowedHosts)
 	out, err := plugin.Pool.Call(pctx, "parseQueryResponse", args)
 	if err != nil {
 		return nil, fmt.Errorf("parseQueryResponse: %w", err)
@@ -644,6 +648,7 @@ func (a *Adaptor) FetchBatchTasks(ctx context.Context, baseURL, apiKey string, r
 	useProxy := batchUseProxy(refs)
 	a.lastAllowedHosts = append([]string{hostOf(baseURL)}, plugin.Manifest.AllowedHosts...)
 	a.lastBaseURL = baseURL
+	a.lastApiKey = apiKey
 
 	// 任务引用（TaskData 快照随行——批量插件的 parse 钩子可按任务分派）
 	a.lastQueryTasks = make([]contract.QueryTaskRef, 0, len(refs))
@@ -660,7 +665,7 @@ func (a *Adaptor) FetchBatchTasks(ctx context.Context, baseURL, apiKey string, r
 		return nil, err
 	}
 	allowed := append([]string{hostOf(baseURL)}, plugin.Manifest.AllowedHosts...)
-	qctx := channelHookCtx(ctx, baseURL, allowed)
+	qctx := channelHookCtx(ctx, baseURL, apiKey, allowed)
 	out, err := plugin.Pool.Call(qctx, "buildQueryRequest", args)
 	if err != nil {
 		return nil, fmt.Errorf("buildQueryRequest: %w", err)
@@ -733,7 +738,7 @@ func (a *Adaptor) ParseBatchTasks(body []byte) (map[string]*common.TaskInfo, err
 		return nil, err
 	}
 	// parse 钩子沿用 FetchBatchTasks 的白名单与渠道地址，与逐任务路径同语义
-	pctx := channelHookCtx(context.Background(), a.lastBaseURL, a.lastAllowedHosts)
+	pctx := channelHookCtx(context.Background(), a.lastBaseURL, a.lastApiKey, a.lastAllowedHosts)
 	out, err := plugin.Pool.Call(pctx, "parseQueryResponse", args)
 	if err != nil {
 		return nil, fmt.Errorf("parseQueryResponse: %w", err)

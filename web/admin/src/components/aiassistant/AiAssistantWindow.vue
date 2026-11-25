@@ -21,6 +21,8 @@ import { sanitizeHtml } from '@/utils/sanitize'
 import { hasPermission } from '@/utils/permission'
 import { useAuthStore } from '@/stores/auth'
 import { usePublicSettings } from '@/composables/usePublicSettings'
+import hljs from 'highlight.js/lib/core'
+import javascript from 'highlight.js/lib/languages/javascript'
 import {
   useAiAssistantChat,
   SKILL_OPTIONS,
@@ -28,6 +30,9 @@ import {
   type MessagePart,
   type ValidateReport,
 } from './useAiAssistantChat'
+
+// 按需注册（core + javascript；token 配色在 main.css 的双主题里定义）
+hljs.registerLanguage('javascript', javascript)
 
 /**
  * 全局 AI 助手浮动窗口：非模态（无遮罩，不挡页面操作），拖标题栏任意移动、
@@ -127,6 +132,29 @@ watch(
 function renderMarkdown(text: string): string {
   if (!text) return ''
   return sanitizeHtml(marked.parse(text) as string)
+}
+
+/** 工具调用的展示名（agent 循环里的 write/append/edit/validate） */
+function toolLabel(name: string): string {
+  switch (name) {
+    case 'write_code': return '写入代码'
+    case 'append_code': return '追加代码'
+    case 'edit_code': return '修改代码'
+    case 'validate_code': return '校验'
+    default: return name || '工具调用'
+  }
+}
+
+/** 代码卡内容：js 源码高亮（hljs 输出已转义，v-html 安全）；formula 保持纯文本。
+ *  非 v-html 场景的兜底输出须手动转义（AI 产出可能含 <、&） */
+function highlightedCode(part: MessagePart): string {
+  const esc = part.content.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  if (part.lang === 'formula' || !part.content) return esc
+  try {
+    return hljs.highlight(part.content, { language: 'javascript', ignoreIllegals: true }).value
+  } catch {
+    return esc
+  }
 }
 
 function skillLabel(key: string): string {
@@ -624,7 +652,7 @@ watch(activeView, (v) => {
                 </div>
               </div>
               <p class="cfg-hint">
-                激活技能生成代码时，输出上限自动抬到 16,384、温度降到 0.2（你的配置更严格时以你的为准）；
+                激活技能生成代码时，输出上限自动抬到 32,768、温度降到 0.2（你的配置更严格时以你的为准，上游不接受时自动回退）；
                 单次输出被截断时，可在工作台点「续写剩余部分」接着写，续写会合并进同一版本。
               </p>
             </section>
@@ -761,10 +789,12 @@ watch(activeView, (v) => {
                       <IconCopy />
                     </button>
                   </div>
-                  <pre v-show="!partCollapsed(msg, idx)" class="ai-code__pre"><code>{{ part.content }}</code></pre>
-                  <!-- 被 max_tokens 截断：明确告知 + 一键续写 -->
-                  <div v-if="part.truncated" class="ai-trunc">
-                    <span class="ai-trunc__text">输出达到长度上限，代码不完整</span>
+                  <pre v-show="!partCollapsed(msg, idx)" class="ai-code__pre"><code :class="part.lang === 'formula' ? '' : 'hljs'" v-html="highlightedCode(part)"></code></pre>
+                  <!-- 被 max_tokens 截断 / 分段输出未完：明确告知 + 一键续写（自动续写超限时出现） -->
+                  <div v-if="part.truncated || part.pendingMore" class="ai-trunc">
+                    <span class="ai-trunc__text">
+                      {{ part.truncated ? '输出达到长度上限，代码不完整' : '已达自动续写上限，还有后续段落' }}
+                    </span>
                     <button type="button" class="ai-trunc__btn" :disabled="streaming" @click="onContinueCode(part)">
                       {{ streaming ? '续写中…' : '续写剩余部分' }}
                     </button>
@@ -804,6 +834,15 @@ watch(activeView, (v) => {
                   </div>
                 </div>
               </template>
+
+              <!-- 工具调用行（agent 模式）：模型经 write/append/edit/validate 工具读写代码，宿主执行 -->
+              <div v-if="msg.role === 'assistant' && msg.toolCalls?.length" class="ai-tools">
+                <span v-for="(tc, ti) in msg.toolCalls" :key="tc.id || ti" class="ai-toolcall">
+                  <i class="ai-toolcall__dot" />
+                  <b>{{ toolLabel(tc.name) }}</b>
+                  <em v-if="tc.arguments.length">{{ tc.arguments.length.toLocaleString() }} 字符</em>
+                </span>
+              </div>
 
               <!-- 等待首 token -->
               <div v-if="msg.id === typingMsgId && !msg.thinking" class="ai-typing"><i /><i /><i /></div>
@@ -1560,6 +1599,40 @@ watch(activeView, (v) => {
   scrollbar-width: thin;
 }
 
+
+/* 工具调用行（agent 模式） */
+.ai-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.ai-toolcall {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border: 1px solid color-mix(in srgb, var(--ta-primary) 22%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ta-primary) 4%, var(--ta-bg-card));
+  font-size: 11px;
+  color: var(--ta-text-secondary);
+}
+.ai-toolcall__dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ta-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ta-primary) 15%, transparent);
+}
+.ai-toolcall b {
+  font-weight: 500;
+  color: var(--ta-text-primary);
+}
+.ai-toolcall em {
+  font-style: normal;
+  color: var(--ta-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
 
 .ai-typing {
   display: inline-flex;

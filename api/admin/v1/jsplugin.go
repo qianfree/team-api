@@ -69,7 +69,7 @@ type JSPluginDryRunReq struct {
 
 // JSPluginDryRunCheck 试运行单项检查结果
 type JSPluginDryRunCheck struct {
-	Name   string `json:"name"`   // compile | hooks | conflict | sample-decode | sample-build | lint-fetch-url
+	Name   string `json:"name"`   // compile | lint-host-api | lint-module-state | hooks | standard-endpoint | sample-decode | sample-validate | sample-build | sample-estimate | sample-parse-submit | sample-query | sample-render
 	Status string `json:"status"` // pass=通过 | warn=提示 | fail=缺陷
 	Detail string `json:"detail"` // 中文说明
 }
