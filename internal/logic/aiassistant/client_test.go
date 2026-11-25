@@ -2,6 +2,7 @@ package aiassistant
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -40,9 +41,9 @@ func TestChatStreamDeltas(t *testing.T) {
 	})
 
 	var got strings.Builder
-	res, err := client.ChatStream(context.Background(), []ChatMessage{{Role: "user", Content: "hi"}}, 100, 0.5, func(delta string) {
+	res, err := client.ChatStream(context.Background(), []ChatMessage{{Role: "user", Content: "hi"}}, 100, 0.5, nil, func(delta string) {
 		got.WriteString(delta)
-	}, nil)
+	}, nil, nil)
 	if err != nil {
 		t.Fatalf("ChatStream: %v", err)
 	}
@@ -60,7 +61,7 @@ func TestChatStreamNoDoneFlag(t *testing.T) {
 		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n"))
 	})
 	var got strings.Builder
-	if _, err := client.ChatStream(context.Background(), []ChatMessage{{Role: "user", Content: "hi"}}, 0, 0, func(s string) { got.WriteString(s) }, nil); err != nil {
+	if _, err := client.ChatStream(context.Background(), []ChatMessage{{Role: "user", Content: "hi"}}, 0, 0, nil, func(s string) { got.WriteString(s) }, nil, nil); err != nil {
 		t.Fatalf("ChatStream: %v", err)
 	}
 	if got.String() != "ok" {
@@ -74,7 +75,7 @@ func TestChatStreamHTTPError(t *testing.T) {
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = w.Write([]byte(`{"error":{"message":"invalid api key"}}`))
 	})
-	_, err := client.ChatStream(context.Background(), []ChatMessage{{Role: "user", Content: "hi"}}, 0, 0, nil, nil)
+	_, err := client.ChatStream(context.Background(), []ChatMessage{{Role: "user", Content: "hi"}}, 0, 0, nil, nil, nil, nil)
 	if err == nil {
 		t.Fatal("应报错")
 	}
@@ -95,7 +96,7 @@ func TestClientFullEndpointMode(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.BaseURL = srv.URL + "/custom/path"
 	cfg.EndpointMode = EndpointModeFull
-	_, err := NewClient(cfg).ChatStream(context.Background(), []ChatMessage{{Role: "user", Content: "hi"}}, 0, 0, nil, nil)
+	_, err := NewClient(cfg).ChatStream(context.Background(), []ChatMessage{{Role: "user", Content: "hi"}}, 0, 0, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("ChatStream: %v", err)
 	}
@@ -124,8 +125,8 @@ func TestChatStreamReasoning(t *testing.T) {
 	})
 
 	var think, body strings.Builder
-	_, err := client.ChatStream(context.Background(), []ChatMessage{{Role: "user", Content: "hi"}}, 100, 0.5,
-		func(s string) { body.WriteString(s) }, func(s string) { think.WriteString(s) })
+	_, err := client.ChatStream(context.Background(), []ChatMessage{{Role: "user", Content: "hi"}}, 100, 0.5, nil,
+		func(s string) { body.WriteString(s) }, func(s string) { think.WriteString(s) }, nil)
 	if err != nil {
 		t.Fatalf("ChatStream: %v", err)
 	}
@@ -146,7 +147,7 @@ func TestChatStreamFinishReason(t *testing.T) {
 		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}\n\n"))
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	})
-	res, err := client.ChatStream(context.Background(), []ChatMessage{{Role: "user", Content: "hi"}}, 4096, 0.2, func(string) {}, nil)
+	res, err := client.ChatStream(context.Background(), []ChatMessage{{Role: "user", Content: "hi"}}, 4096, 0.2, nil, func(string) {}, nil, nil)
 	if err != nil {
 		t.Fatalf("ChatStream: %v", err)
 	}
@@ -170,5 +171,71 @@ func TestIsMaxTokensRejected(t *testing.T) {
 	}
 	if IsMaxTokensRejected(nil) {
 		t.Fatal("nil 不应判定为拒绝")
+	}
+}
+
+// TestChatStreamToolCalls 流式工具调用：分片聚合（id/name 首片、arguments 逐片拼接）、
+// 多调用按 index 排序、finish_reason=tool_calls 采集、onToolDelta 增量回调、
+// 请求体携带 tools 定义（agent loop 的必备链路）。
+func TestChatStreamToolCalls(t *testing.T) {
+	var gotReq struct {
+		Tools []struct {
+			Type     string `json:"type"`
+			Function struct {
+				Name       string `json:"name"`
+				Parameters struct {
+					Type string `json:"type"`
+				} `json:"parameters"`
+			} `json:"function"`
+		} `json:"tools"`
+		ToolChoice string `json:"tool_choice"`
+	}
+	client := newTestClient(t, EndpointModeBase, "", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotReq)
+		w.Header().Set("Content-Type", "text/event-stream")
+		// 工具调用分片（OpenAI 流式形态）：首片带 id/name，arguments 逐片拼接
+		_, _ = w.Write([]byte(`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_a","type":"function","function":{"name":"write_code","arguments":""}}]}}]}` + "\n\n"))
+		_, _ = w.Write([]byte(`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"code\":\"// he"}}]}}]}` + "\n\n"))
+		_, _ = w.Write([]byte(`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"llo\"}"}}]}}]}` + "\n\n"))
+		// 第二个调用（index 1）
+		_, _ = w.Write([]byte(`data: {"choices":[{"delta":{"tool_calls":[{"index":1,"id":"call_b","type":"function","function":{"name":"validate_code","arguments":"{}"}}]}}]}` + "\n\n"))
+		_, _ = w.Write([]byte(`data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}` + "\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	})
+
+	tools := []ToolDef{PluginCodeTools[0], PluginCodeTools[3]}
+	type delta struct {
+		index          int
+		id, name, args string
+	}
+	var deltas []delta
+	res, err := client.ChatStream(context.Background(), []ChatMessage{{Role: "user", Content: "hi"}}, 4096, 0.2,
+		tools, nil, nil, func(index int, id, name, argsDelta string) {
+			deltas = append(deltas, delta{index, id, name, argsDelta})
+		})
+	if err != nil {
+		t.Fatalf("ChatStream: %v", err)
+	}
+	if res.FinishReason != FinishReasonToolCalls {
+		t.Fatalf("finish_reason 应为 tool_calls，得到 %q", res.FinishReason)
+	}
+	if len(res.ToolCalls) != 2 {
+		t.Fatalf("应聚合出 2 个工具调用，得到 %d", len(res.ToolCalls))
+	}
+	a, b := res.ToolCalls[0], res.ToolCalls[1]
+	if a.ID != "call_a" || a.Function == nil || a.Function.Name != "write_code" || a.Function.Arguments != `{"code":"// hello"}` {
+		t.Fatalf("第一个调用聚合异常: %+v", a)
+	}
+	if b.ID != "call_b" || b.Function.Name != "validate_code" || b.Function.Arguments != "{}" {
+		t.Fatalf("第二个调用聚合异常: %+v", b)
+	}
+	if len(deltas) != 4 || deltas[0].name != "write_code" || deltas[0].id != "call_a" || deltas[3].name != "validate_code" {
+		t.Fatalf("增量回调异常: %+v", deltas)
+	}
+	if len(gotReq.Tools) != 2 || gotReq.Tools[0].Function.Name != "write_code" || gotReq.Tools[0].Function.Parameters.Type != "object" {
+		t.Fatalf("请求未携带 tools 定义: %+v", gotReq.Tools)
+	}
+	if gotReq.ToolChoice != "auto" {
+		t.Fatalf("tool_choice 应为 auto: %q", gotReq.ToolChoice)
 	}
 }

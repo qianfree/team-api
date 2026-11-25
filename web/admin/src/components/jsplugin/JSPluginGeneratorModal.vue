@@ -9,10 +9,12 @@ import { ref, computed, watch, nextTick } from 'vue'
 import { Message, Modal, Select } from '@arco-design/web-vue'
 import {
   IconAttachment, IconBulb, IconCheckCircle, IconClose, IconCloseCircle,
-  IconCode, IconCopy, IconDownload, IconExclamationCircle, IconPause, IconRefresh,
+  IconCode, IconCopy, IconDownload, IconEdit, IconExclamationCircle, IconPause, IconRefresh,
   IconRobot, IconSend, IconUpload,
 } from '@arco-design/web-vue/es/icon'
 import { marked } from 'marked'
+import hljs from 'highlight.js/lib/core'
+import javascript from 'highlight.js/lib/languages/javascript'
 import { sanitizeHtml } from '@/utils/sanitize'
 import { hasPermission } from '@/utils/permission'
 import { downloadTextFile } from '@/utils/download'
@@ -24,7 +26,12 @@ import {
   type ValidateReport,
 } from '@/components/aiassistant/useAiAssistantChat'
 
-const props = defineProps<{ visible: boolean }>()
+const props = defineProps<{
+  visible: boolean
+  /** 详情抽屉「AI 升级」载入的现有插件：打开时以此为基线开新会话（右栏显示现有源码，
+   *  聊天描述升级需求，AI 经 read_code/edit_code 定点修改） */
+  inject?: { key: string; version: string; source: string } | null
+}>()
 const emit = defineEmits<{
   (e: 'update:visible', v: boolean): void
   (e: 'apply', source: string): void
@@ -46,6 +53,9 @@ const {
   stop,
   repair,
   continueCode,
+  validatePart,
+  persistNow,
+  injectExistingPlugin,
   addFiles,
   removeFile,
   prettySize,
@@ -55,11 +65,13 @@ const {
 // 注意 settings 是 ref，script 里必须 .value 取值（模板才会自动解包）
 const assistantDisabled = computed(() => publicSettings.value.ai_assistant_enabled !== true)
 
-/** 空态引导问句：点一下填进输入框（不直接发送，留出改字空间） */
+/** 空态引导问句：点一下填进输入框（不直接发送，留出改字空间）。
+ *  JS 插件只接异步任务（提交 → 轮询 → 终态），不支持任务取消，也不做同步协议转换——
+ *  引导问句不要许诺契约外的能力，否则模型会照着生成用不了的插件 */
 const QUICK_ASKS = [
-  '为某供应商生成任务插件：支持提交任务、查询进度、取消任务',
+  '为某供应商生成任务插件：支持提交任务、查询进度',
   '参考我上传的 API 文档，生成对应的 JS 任务插件',
-  '插件需要把 OpenAI 格式请求转成供应商私有协议，帮我写适配层',
+  '为视频模型生成插件：支持首尾帧与参考素材，可经标准端点 /v1/videos 提交',
 ]
 
 /** 可见消息：隐藏的续写指令仍进上游上下文，但不渲染在会话里 */
@@ -109,10 +121,24 @@ const versionOptions = computed(() =>
   })),
 )
 
+// 按需注册（core + javascript，不引入全量语言包与官方主题——token 配色走 main.css 双主题）
+hljs.registerLanguage('javascript', javascript)
+
 const currentSource = computed(() => currentVersion.value?.part.content || '')
 const lineCount = computed(() =>
   currentSource.value ? currentSource.value.split(/\r?\n/).length : 0,
 )
+
+/** 右栏源码高亮：ignoreIllegals 容忍流式/截断的不完整片段；
+ *  hljs 输出中的代码文本已转义（& < >），v-html 安全 */
+const highlightedSource = computed(() => {
+  if (!currentSource.value) return ''
+  try {
+    return hljs.highlight(currentSource.value, { language: 'javascript', ignoreIllegals: true }).value
+  } catch {
+    return currentSource.value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  }
+})
 
 /** 校验统计：报告标题右侧的 通过/警告/未通过 计数 */
 const reportStats = computed(() => {
@@ -128,15 +154,94 @@ const reportStats = computed(() => {
 watch(
   () => codeVersions.value.length,
   (n, o) => {
-    if (n > (o || 0)) selectedIdx.value = 0
+    selectedIdx.value = 0
+    // 版本集合变化（新生成/切换目标）：编辑态失效，避免 v-model 写到已被替换的版本
+    if (n !== (o || 0)) editing.value = false
   },
 )
+
+// ── 手动编辑：切换式（默认高亮只读，编辑时纯文本 textarea）──────────────
+// 轻量场景（改版本号/小修）不引入编辑器依赖；textarea 无法内嵌高亮，代价是编辑态无高亮
+const editing = ref(false)
+
+/** 生成中/版本切换时强制退出编辑（内容正在被替换，就地编辑会写错对象） */
+watch(streaming, (s) => {
+  if (s) editing.value = false
+})
+watch(
+  () => currentVersion.value?.key,
+  () => {
+    editing.value = false
+  },
+)
+// 编辑态退出即落盘：无论从哪条路径退出（完成/切版本/生成开始），手改内容都不丢
+watch(editing, (now, was) => {
+  if (was && !now) persistNow()
+})
+
+function startEdit() {
+  const v = currentVersion.value
+  if (!v || streaming.value) return
+  // 内容即将变化：旧校验报告不再可信，进入编辑即作废
+  v.part.report = undefined
+  editing.value = true
+  nextTick(() => {
+    const el = editEl.value
+    if (el) {
+      el.focus()
+      // 光标落到末尾（改版本号等小修多在文件头部，但全选感太强，末尾最中性）
+      el.setSelectionRange(el.value.length, el.value.length)
+    }
+  })
+}
+
+/** 完成编辑：退出编辑态并对手改后的全文重新校验（报告直接呈现） */
+async function finishEdit() {
+  const v = currentVersion.value
+  editing.value = false
+  if (!v || !v.part.content.trim()) return
+  validating.value = true
+  try {
+    await validatePart(v.part)
+  } finally {
+    validating.value = false
+  }
+}
+
+/** 手动校验进行中（编辑完成按钮的反馈态） */
+const validating = ref(false)
+
+/** 编辑区 Tab 键插入两个空格（默认行为会跳出焦点，改代码时很打断） */
+function onEditKeydown(ev: KeyboardEvent) {
+  if (ev.key !== 'Tab') return
+  ev.preventDefault()
+  const el = ev.target as HTMLTextAreaElement
+  const { selectionStart: s, selectionEnd: e, value } = el
+  el.value = value.slice(0, s) + '  ' + value.slice(e)
+  el.setSelectionRange(s + 2, s + 2)
+  // 同步回响应式数据（绕过 v-model 的事件时机）
+  const v = currentVersion.value
+  if (v) v.part.content = el.value
+}
+
+const editEl = ref<HTMLTextAreaElement | null>(null)
 
 // ── 渲染与工具 ────────────────────────────────────────────
 
 function renderMarkdown(text: string): string {
   if (!text) return ''
   return sanitizeHtml(marked.parse(text) as string)
+}
+
+/** 工具调用的展示名（agent 循环里的 write/append/edit/validate） */
+function toolLabel(name: string): string {
+  switch (name) {
+    case 'write_code': return '写入代码'
+    case 'append_code': return '追加代码'
+    case 'edit_code': return '修改代码'
+    case 'validate_code': return '校验'
+    default: return name || '工具调用'
+  }
 }
 
 /** 助手等待首个 token：气泡位置显示打字指示器 */
@@ -320,7 +425,12 @@ watch(
   () => props.visible,
   async (v) => {
     if (v) {
-      restore()
+      // 「AI 升级」注入优先于会话恢复：以现有源码为基线开新会话
+      if (props.inject?.source) {
+        injectExistingPlugin(props.inject)
+      } else {
+        restore()
+      }
       fetchSettings()
       await scrollChatToBottom()
       await nextTick()
@@ -449,11 +559,20 @@ watch(
                   <span class="pgen-codechip__icon"><IconCode /></span>
                   <span class="pgen-codechip__text">
                     <b>已生成 plugin.js</b>
-                    <em>第 {{ codeIndexMap.get(`${msg.id}:${idx}`) }} 版<template v-if="part.truncated"> · 未写完</template></em>
+                    <em>第 {{ codeIndexMap.get(`${msg.id}:${idx}`) }} 版<template v-if="part.truncated || part.pendingMore"> · 未写完</template></em>
                   </span>
                   <span class="pgen-codechip__arrow">右侧查看 →</span>
                 </button>
               </template>
+
+              <!-- 工具调用行（agent 模式）：模型经 write/append/edit/validate 工具读写代码，宿主执行 -->
+              <div v-if="msg.role === 'assistant' && msg.toolCalls?.length" class="pgen-tools">
+                <span v-for="(tc, ti) in msg.toolCalls" :key="tc.id || ti" class="pgen-toolcall">
+                  <i class="pgen-toolcall__dot" />
+                  <b>{{ toolLabel(tc.name) }}</b>
+                  <em>{{ tc.arguments.length.toLocaleString() }} 字符</em>
+                </span>
+              </div>
 
               <!-- 等待首 token -->
               <div v-if="msg.id === typingMsgId && !msg.thinking" class="pgen-typing"><i /><i /><i /></div>
@@ -537,9 +656,6 @@ watch(
               :options="versionOptions"
             />
             <span v-else-if="codeVersions.length === 1" class="pgen-ver">第 1 版</span>
-            <span v-if="currentSource" class="pgen-code__meta">
-              {{ lineCount }} 行 · {{ currentSource.length.toLocaleString() }} 字符
-            </span>
           </div>
           <div v-if="currentSource" class="pgen-code__actions">
             <button type="button" class="pgen-ghostbtn" title="下载为 plugin.js" @click="downloadCode">
@@ -549,16 +665,22 @@ watch(
               <IconCopy />复制
             </button>
             <button type="button" class="pgen-apply" title="带入上传弹窗：试运行 / 上传入库" @click="applySource">
-              <IconUpload />用此源码上传
+              <IconUpload />
+              <span class="pgen-apply__full">用此源码上传</span>
+              <span class="pgen-apply__short">上传</span>
             </button>
           </div>
         </header>
 
         <div class="pgen-code__body">
-          <!-- 输出被 max_tokens 截断：明确告知 + 一键续写（续写会合并进同一版本） -->
-          <div v-if="currentVersion?.part.truncated" class="pgen-trunc">
+          <!-- 截断 / 分段未完提示条：自动续写超限后转为手动一键续写（续写会合并进同一版本） -->
+          <div v-if="currentVersion?.part.truncated || currentVersion?.part.pendingMore" class="pgen-trunc">
             <IconExclamationCircle />
-            <span class="pgen-trunc__text">输出达到长度上限，源码不完整（{{ lineCount }} 行）</span>
+            <span class="pgen-trunc__text">
+              {{ currentVersion.part.truncated
+                ? `输出达到长度上限，源码不完整（${lineCount} 行）`
+                : '已达自动续写上限，还有后续段落未输出' }}
+            </span>
             <button type="button" class="pgen-trunc__btn" :disabled="streaming" @click="onContinue">
               {{ streaming ? '续写中…' : '续写剩余部分' }}
             </button>
@@ -567,14 +689,47 @@ watch(
           <!-- 源码主体：流式跟随 / 版本切换 -->
           <div v-if="currentVersion" class="pgen-src" :class="{ 'is-streaming': streaming && isLatestSelected }">
             <div class="pgen-src__bar">
-              <span class="pgen-src__file"><IconCode /><b>plugin.js</b></span>
-              <span class="pgen-src__state">
-                <template v-if="streaming && isLatestSelected"><i class="pgen-src__pulse" />生成中…</template>
-                <template v-else>只读预览</template>
+              <span class="pgen-src__filegroup">
+                <span class="pgen-src__file"><IconCode /><b>plugin.js</b></span>
+                <span v-if="currentSource" class="pgen-src__meta" :title="`${lineCount} 行 · ${currentSource.length.toLocaleString()} 字符`">
+                  {{ lineCount }} 行 · {{ currentSource.length.toLocaleString() }} 字符
+                </span>
+              </span>
+              <span class="pgen-src__stategroup">
+                <template v-if="editing">
+                  <span class="pgen-src__state is-editing">编辑中</span>
+                  <button type="button" class="pgen-src__done" :disabled="validating" @click="finishEdit">
+                    {{ validating ? '校验中…' : '完成并校验' }}
+                  </button>
+                </template>
+                <template v-else>
+                  <span class="pgen-src__state">
+                    <template v-if="streaming && isLatestSelected"><i class="pgen-src__pulse" />生成中…</template>
+                    <template v-else>只读预览</template>
+                  </span>
+                  <button
+                    v-if="currentSource && !streaming"
+                    type="button"
+                    class="pgen-src__edit"
+                    title="手动修改当前版本（如版本号）"
+                    @click="startEdit"
+                  >
+                    <IconEdit />编辑
+                  </button>
+                </template>
               </span>
             </div>
             <div ref="srcEl" class="pgen-src__scroll">
-              <pre><code>{{ currentSource }}</code></pre>
+              <!-- 编辑态：纯文本 textarea（改动直接写入当前版本；Tab 插入两空格） -->
+              <textarea
+                v-if="editing && currentVersion"
+                ref="editEl"
+                v-model="currentVersion.part.content"
+                class="pgen-src__edit-area"
+                spellcheck="false"
+                @keydown="onEditKeydown"
+              ></textarea>
+              <pre v-else><code class="hljs language-javascript" v-html="highlightedSource"></code></pre>
             </div>
           </div>
           <div v-else class="pgen-src pgen-src--empty">
@@ -810,6 +965,8 @@ watch(
   font-size: 13px;
   font-weight: 600;
   color: var(--ta-text-primary);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .pgen-pane__count {
   padding: 1px 7px;
@@ -1185,6 +1342,40 @@ watch(
 }
 
 
+/* 工具调用行（agent 模式） */
+.pgen-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.pgen-toolcall {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border: 1px solid color-mix(in srgb, var(--ta-primary) 22%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ta-primary) 4%, var(--ta-bg-card));
+  font-size: 11px;
+  color: var(--ta-text-secondary);
+}
+.pgen-toolcall__dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ta-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ta-primary) 15%, transparent);
+}
+.pgen-toolcall b {
+  font-weight: 500;
+  color: var(--ta-text-primary);
+}
+.pgen-toolcall em {
+  font-style: normal;
+  color: var(--ta-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
 /* 打字指示器 */
 .pgen-typing {
   display: inline-flex;
@@ -1404,6 +1595,7 @@ watch(
 }
 .pgen-code__ver {
   width: 122px;
+  flex-shrink: 0;
 }
 .pgen-ver {
   padding: 1px 7px;
@@ -1411,19 +1603,15 @@ watch(
   font-size: 11px;
   color: var(--ta-text-secondary);
   background: var(--ta-bg-secondary);
-}
-.pgen-code__meta {
-  font-size: 11.5px;
-  color: var(--ta-text-tertiary);
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .pgen-code__actions {
   display: flex;
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
+  margin-left: auto;
+  padding-left: 8px;
 }
 .pgen-apply {
   display: inline-flex;
@@ -1440,9 +1628,14 @@ watch(
   cursor: pointer;
   box-shadow: 0 3px 10px -3px color-mix(in srgb, var(--ta-primary) 55%, transparent);
   transition: opacity var(--ta-duration-fast) var(--ta-ease), transform var(--ta-duration-fast) var(--ta-ease);
+  white-space: nowrap;
 }
 .pgen-apply:hover {
   transform: translateY(-1px);
+}
+/* 主按钮长文案（窄屏收缩为「上传」） */
+.pgen-apply__short {
+  display: none;
 }
 
 .pgen-code__body {
@@ -1482,6 +1675,23 @@ watch(
   gap: 6px;
   font-size: 11.5px;
   color: var(--ta-text-tertiary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.pgen-src__filegroup {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+/* 行数 / 字符统计放文件名条（头部一行只留标题与按钮，避免挤压换行） */
+.pgen-src__meta {
+  font-size: 11px;
+  color: var(--ta-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
 }
 .pgen-src__file svg {
   color: var(--ta-primary);
@@ -1497,6 +1707,67 @@ watch(
   gap: 6px;
   font-size: 11px;
   color: var(--ta-text-tertiary);
+}
+.pgen-src__state.is-editing {
+  color: rgb(var(--orange-5));
+}
+.pgen-src__stategroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+/* 文件名条上的编辑/完成小按钮（贴近代码区，不挤头部） */
+.pgen-src__edit,
+.pgen-src__done {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--ta-duration-fast) var(--ta-ease), color var(--ta-duration-fast) var(--ta-ease);
+}
+.pgen-src__edit {
+  border: 1px solid var(--ta-border);
+  background: var(--ta-bg-card);
+  color: var(--ta-text-secondary);
+}
+.pgen-src__edit:hover {
+  border-color: color-mix(in srgb, var(--ta-primary) 40%, transparent);
+  color: var(--ta-primary);
+}
+.pgen-src__done {
+  border: none;
+  background: var(--ta-primary-gradient);
+  color: #fff;
+  box-shadow: 0 2px 8px -2px color-mix(in srgb, var(--ta-primary) 55%, transparent);
+}
+.pgen-src__done:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+/* 编辑态 textarea：与高亮 pre 的排版完全一致（等宽字体/行高/内边距），视觉无跳变 */
+.pgen-src__edit-area {
+  display: block;
+  width: 100%;
+  min-height: 100%;
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: var(--ta-text-primary);
+  font-family: ui-monospace, SFMono-Regular, Consolas, 'Courier New', monospace;
+  font-size: 12.5px;
+  line-height: 1.72;
+  white-space: pre;
+  overflow-x: auto;
+  tab-size: 2;
+  padding: 14px 16px;
+  margin: 0;
 }
 .pgen-src__pulse {
   width: 6px;
@@ -1855,7 +2126,7 @@ watch(
   background: var(--ta-bg-secondary);
 }
 
-/* ── 窄屏：不堆叠（弹窗仍是左右分栏），只压缩装饰 ── */
+/* ── 窄屏：不堆叠（弹窗仍是左右分栏），只压缩装饰与次级按钮 ── */
 @media (max-width: 1100px) {
   .pgen-head__chip {
     display: none;
@@ -1863,7 +2134,8 @@ watch(
   .pgen-card__hint {
     display: none;
   }
-  .pgen-code__meta {
+  /* 头部只保标题 + 版本 + 主按钮，下载/复制收进按钮省空间 */
+  .pgen-code__actions .pgen-ghostbtn {
     display: none;
   }
 }
@@ -1888,8 +2160,15 @@ watch(
   .pgen-head__sub {
     display: none;
   }
-  .pgen-code__actions .pgen-ghostbtn {
+  /* 移动端：主按钮长文案收缩为「上传」，保住标题与版本选择器的空间 */
+  .pgen-apply {
+    padding: 0 10px;
+  }
+  .pgen-apply__full {
     display: none;
+  }
+  .pgen-apply__short {
+    display: inline;
   }
 }
 </style>

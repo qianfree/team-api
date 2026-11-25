@@ -34,13 +34,19 @@ type aiChatRequest struct {
 //	data: {"type":"code_start","skill":"js_plugin","lang":"js"}
 //	data: {"type":"code_delta","content":"..."}   代码增量（专用代码卡片渲染，不经 markdown）
 //	data: {"type":"code_end","implicit":true}      闭栏是服务端补的（模型未写闭栏）
+//	data: {"type":"tool_start","index":0,"id":"...","name":"write_code"}   工具调用开始（js_plugin 技能）
+//	data: {"type":"tool_delta","index":0,"text":"..."}                     工具参数增量（arguments JSON 原文分片）
+//	data: {"type":"tool_end","index":0,"id":"...","name":"...","arguments":"{...}"} 工具调用聚合完成（以此为准解析执行）
 //	data: {"type":"truncated","reason":"max_tokens","limit":N} 输出被输出上限截断
 //	data: {"type":"validate", ...}                技能校验报告（流末，提取到代码且有激活技能时）
-//	data: {"type":"notice","message":"..."}       非致命提示（如 max_tokens 回退重试）
+//	data: {"type":"notice","message":"..."}       非致命提示（如 max_tokens 回退重试 / 工具降级）
 //	data: {"type":"usage","model":"...","prompt_tokens":N,...}
 //	data: {"type":"error","message":"..."}        流中错误（此后紧跟 [DONE]）
 //	data: [DONE]
 //
+// js_plugin 技能激活时请求携带工具定义（write_code/append_code/edit_code/validate_code），
+// 模型以 tool_calls 结束一轮，前端执行工具并以 role=tool 消息回传续轮（agent loop）。
+// 端点不接受工具（未写出任何增量即失败）时自动降级为无工具重试本轮，围栏文本协议兜底。
 // 流开始前的失败（未启用/未配置/限流/参数错误）走统一 JSON 错误响应。
 func HandleAiAssistantChat(r *ghttp.Request) {
 	ctx := r.Context()
@@ -98,11 +104,14 @@ func HandleAiAssistantChat(r *ghttp.Request) {
 
 	// runStream 跑一次完整流（含收尾冲刷）。wroteAny 由 emit 统一置位：
 	// 只有「一个字都没写出去」时，回退重试才是安全且不重复的。
-	runStream := func(mt int, temp float64) (*aiassistant.StreamResult, error) {
+	// tools 非空时模型以 tool_calls 结束，工具事件经 tool_start/tool_delta 透出、
+	// 流末按聚合结果逐个发 tool_end（前端以此为准解析执行）。
+	runStream := func(mt int, temp float64, tools []aiassistant.ToolDef) (*aiassistant.StreamResult, error) {
 		splitter := aiassistant.NewFenceSplitter()
 		textBuf.Reset()
 		codeBuf.Reset()
 		inCode, codeOpened, fenceLang = false, false, ""
+		toolSeen := map[int]bool{}
 
 		emit := func(evs []aiassistant.FenceEvent) {
 			for _, ev := range evs {
@@ -130,7 +139,7 @@ func HandleAiAssistantChat(r *ghttp.Request) {
 			}
 		}
 
-		res, err := client.ChatStream(ctx, msgs, mt, temp, func(delta string) {
+		res, err := client.ChatStream(ctx, msgs, mt, temp, tools, func(delta string) {
 			wroteAny = true
 			textBuf.WriteString(delta)
 			emit(splitter.Feed(delta))
@@ -138,15 +147,42 @@ func HandleAiAssistantChat(r *ghttp.Request) {
 			// 思考过程不进围栏切分器（它不是正文，也不参与代码提取）
 			wroteAny = true
 			writeSSE(r, map[string]any{"type": "thinking", "content": reasoning})
+		}, func(index int, id, name, argsDelta string) {
+			wroteAny = true
+			if !toolSeen[index] {
+				toolSeen[index] = true
+				writeSSE(r, map[string]any{"type": "tool_start", "index": index, "id": id, "name": name})
+			}
+			if argsDelta != "" {
+				writeSSE(r, map[string]any{"type": "tool_delta", "index": index, "text": argsDelta})
+			}
 		})
 		// 流结束：冲刷未完成行 + 隐式闭合（出错也冲刷，保住已生成的部分）
 		emit(splitter.Finish())
+		// 工具调用聚合完成事件：参数完整原文在此（前端增量拼接仅作进度展示）
+		for _, tc := range res.ToolCalls {
+			name, args := "", ""
+			if tc.Function != nil {
+				name = tc.Function.Name
+				args = tc.Function.Arguments
+			}
+			writeSSE(r, map[string]any{"type": "tool_end", "index": tc.Index, "id": tc.ID, "name": name, "arguments": args})
+		}
 		return res, err
 	}
 
-	res, err := runStream(maxTokens, temperature)
-	// 上游不接受抬高后的 max_tokens（小上限模型/上下文窗口不足）：回退配置值重试一次。
-	// 前置条件是还没写出任何增量，否则重试会把内容重复推给前端。
+	// js_plugin 技能激活 → 请求携带代码工具集（agent loop 模式）
+	var tools []aiassistant.ToolDef
+	for _, k := range activeSkills {
+		if k == "js_plugin" {
+			tools = aiassistant.PluginCodeTools
+			break
+		}
+	}
+
+	res, err := runStream(maxTokens, temperature, tools)
+	// 回退一：上游不接受抬高后的 max_tokens（小上限模型/上下文窗口不足）——回退配置值
+	// 重试（保留工具模式）。前置条件是还没写出任何增量，否则重试会把内容重复推给前端。
 	if err != nil && maxTokens != cfg.MaxTokens && !wroteAny && aiassistant.IsMaxTokensRejected(err) {
 		g.Log().Warningf(ctx, "[AiAssistant] max_tokens %d rejected, fallback to %d: %v", maxTokens, cfg.MaxTokens, err)
 		writeSSE(r, map[string]any{
@@ -154,7 +190,17 @@ func HandleAiAssistantChat(r *ghttp.Request) {
 			"message": fmt.Sprintf("上游不接受 %d 的输出上限，已回退到 %d 重试", maxTokens, cfg.MaxTokens),
 		})
 		maxTokens = cfg.MaxTokens
-		res, err = runStream(cfg.MaxTokens, cfg.Temperature)
+		res, err = runStream(cfg.MaxTokens, temperature, tools)
+	}
+	// 回退二：端点不接受工具调用（未写出任何增量即失败）——降级为无工具重试本轮，
+	// 围栏文本协议兜底。仅 js_plugin 技能受影响；billing_formula 本就无工具
+	if err != nil && tools != nil && !wroteAny && !aiassistant.IsMaxTokensRejected(err) {
+		g.Log().Warningf(ctx, "[AiAssistant] tools rejected by endpoint, fallback to fence protocol: %v", err)
+		writeSSE(r, map[string]any{
+			"type":    "notice",
+			"message": "端点不接受工具调用，本轮已回退为文本协议模式",
+		})
+		res, err = runStream(maxTokens, temperature, nil)
 	}
 
 	if err != nil {

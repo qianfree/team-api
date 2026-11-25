@@ -25,9 +25,41 @@ type Client struct {
 }
 
 // ChatMessage 一条对话消息。
+// 工具调用链路（Claude Code 式 agent loop）的两种扩展形态：
+//   - assistant 消息携带 ToolCalls（模型发起的工具调用，Content 可为空）
+//   - role=tool 消息携带 ToolCallID（宿主执行结果，Content 为结果文本）
 type ChatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string     `json:"role"`
+	Content    string     `json:"content"`
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
+}
+
+// ToolCall 一次工具调用（OpenAI 兼容形态）。
+type ToolCall struct {
+	Index    int           `json:"-"`    // 流式聚合用（按 index 对齐分片），不出协议
+	ID       string        `json:"id"`   // 工具调用 ID（回传 tool 消息时引用）
+	Type     string        `json:"type"` // 恒 "function"
+	Function *ToolCallFunc `json:"function"`
+}
+
+// ToolCallFunc 工具调用的函数名与参数（Arguments 为 JSON 字符串原文）。
+type ToolCallFunc struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+// ToolDef 提供给模型的工具定义（OpenAI 兼容 tools 数组项）。
+type ToolDef struct {
+	Type     string      `json:"type"` // "function"
+	Function ToolDefFunc `json:"function"`
+}
+
+// ToolDefFunc 工具定义的函数描述（Parameters 为 JSON Schema 对象）。
+type ToolDefFunc struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Parameters  json.RawMessage `json:"parameters"`
 }
 
 // Usage 一次调用的 token 计量（端点未返回时为零值）。
@@ -69,6 +101,8 @@ type chatRequest struct {
 	Temperature   float64       `json:"temperature,omitempty"`
 	Stream        bool          `json:"stream,omitempty"`
 	StreamOptions *streamOpts   `json:"stream_options,omitempty"`
+	Tools         []ToolDef     `json:"tools,omitempty"`
+	ToolChoice    string        `json:"tool_choice,omitempty"`
 }
 
 type streamOpts struct {
@@ -88,13 +122,26 @@ type chatResponse struct {
 	} `json:"error"`
 }
 
+// streamToolCallDelta 工具调用分片的增量字段：index 对齐同一次调用的各分片，
+// id/name 只在首片出现，arguments 逐片拼接。
+type streamToolCallDelta struct {
+	Index    int    `json:"index"`
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function *struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+}
+
 // streamDelta 单条分片的增量字段。
 // 同时兼容两种思考字段：reasoning_content（DeepSeek/Qwen/GLM 等）与
 // reasoning（部分兼容端点的写法），两者都不参与正文。
 type streamDelta struct {
-	Content          string `json:"content"`
-	ReasoningContent string `json:"reasoning_content"`
-	Reasoning        string `json:"reasoning"`
+	Content          string                `json:"content"`
+	ReasoningContent string                `json:"reasoning_content"`
+	Reasoning        string                `json:"reasoning"`
+	ToolCalls        []streamToolCallDelta `json:"tool_calls"`
 }
 
 // ReasoningText 思考增量（两种字段名任取其一）。
@@ -114,13 +161,18 @@ type streamChunk struct {
 	Usage *Usage `json:"usage"`
 }
 
-// FinishReasonLength 上游因 max_tokens 被截断（其余取值：stop / content_filter / tool_calls）。
-const FinishReasonLength = "length"
+// FinishReasonLength 上游因 max_tokens 被截断；FinishReasonToolCalls 以工具调用结束
+// （等待宿主执行并回传结果后继续）；其余取值 stop / content_filter。
+const (
+	FinishReasonLength    = "length"
+	FinishReasonToolCalls = "tool_calls"
+)
 
 // StreamResult 一次流式调用的结果。
 type StreamResult struct {
 	Usage        Usage
-	FinishReason string // 端点未返回时为空
+	FinishReason string     // 端点未返回时为空
+	ToolCalls    []ToolCall // 本次响应聚合出的工具调用（按 index 排序；无则为空）
 }
 
 // Truncated 本次输出是否因达到 max_tokens 被截断。
@@ -140,11 +192,67 @@ type ConnTestResult struct {
 	Error      string `json:"error,omitempty"`
 }
 
+// toolCallAccumulator 流式工具调用聚合器：按 index 归并分片（id/name 首片出现，
+// arguments 逐片拼接），与 OpenAI 兼容端点的增量协议一致。
+type toolCallAccumulator struct {
+	byIndex map[int]*ToolCall
+	order   []int
+}
+
+func (a *toolCallAccumulator) feed(d streamToolCallDelta) *ToolCall {
+	if a.byIndex == nil {
+		a.byIndex = map[int]*ToolCall{}
+	}
+	tc, ok := a.byIndex[d.Index]
+	if !ok {
+		tc = &ToolCall{Index: d.Index, Type: "function", Function: &ToolCallFunc{}}
+		a.byIndex[d.Index] = tc
+		a.order = append(a.order, d.Index)
+	}
+	if d.ID != "" {
+		tc.ID = d.ID
+	}
+	if d.Type != "" {
+		tc.Type = d.Type
+	}
+	if d.Function != nil {
+		if d.Function.Name != "" {
+			tc.Function.Name = d.Function.Name
+		}
+		tc.Function.Arguments += d.Function.Arguments
+	}
+	return tc
+}
+
+// sorted 聚合结果（按 index 升序，即模型发出的调用顺序）。
+func (a *toolCallAccumulator) sorted() []ToolCall {
+	if len(a.order) == 0 {
+		return nil
+	}
+	idxes := append([]int(nil), a.order...)
+	for i := 1; i < len(idxes); i++ {
+		for j := i; j > 0 && idxes[j] < idxes[j-1]; j-- {
+			idxes[j], idxes[j-1] = idxes[j-1], idxes[j]
+		}
+	}
+	out := make([]ToolCall, 0, len(idxes))
+	for _, idx := range idxes {
+		out = append(out, *a.byIndex[idx])
+	}
+	return out
+}
+
+// ToolDeltaCb 工具调用增量回调：index 对齐聚合（id/name 首次出现时给出，此后为空），
+// argsDelta 为 arguments 分片原文——调用方据此向前端流式透出参数进度。
+type ToolDeltaCb func(index int, id, name, argsDelta string)
+
 // ChatStream 流式对话：逐增量回调 onDelta（正文）与 onReasoning（思考过程），
-// 返回最终 usage。推理型模型会先持续输出思考内容再输出正文，两条通道必须分开
-// 回传，否则前端只能干等正文首 token。
-// ctx 取消（管理员关闭页面/停止生成）会联动中断上游请求，及时止损 token。
-func (c *Client) ChatStream(ctx context.Context, messages []ChatMessage, maxTokens int, temperature float64, onDelta, onReasoning func(string)) (*StreamResult, error) {
+// 返回最终 usage 与聚合出的工具调用。推理型模型会先持续输出思考内容再输出正文，
+// 两条通道必须分开回传，否则前端只能干等正文首 token。
+// tools 非空时请求携带工具定义（Claude Code 式 agent loop：模型以 tool_calls 结束，
+// 宿主执行后以 role=tool 消息回传结果再续）。ctx 取消联动中断上游请求，及时止损 token。
+func (c *Client) ChatStream(ctx context.Context, messages []ChatMessage, maxTokens int, temperature float64,
+	tools []ToolDef, onDelta, onReasoning func(string), onToolDelta ToolDeltaCb) (*StreamResult, error) {
 	reqBody := chatRequest{
 		Model:       c.model,
 		Messages:    messages,
@@ -153,6 +261,8 @@ func (c *Client) ChatStream(ctx context.Context, messages []ChatMessage, maxToke
 		Stream:      true,
 		// OpenAI 兼容端点普遍支持/忽略该字段，最终 chunk 会带 usage 供成本透出
 		StreamOptions: &streamOpts{IncludeUsage: true},
+		Tools:         tools,
+		ToolChoice:    "auto",
 	}
 	body, err := json.Marshal(reqBody)
 	if err != nil {
@@ -181,6 +291,7 @@ func (c *Client) ChatStream(ctx context.Context, messages []ChatMessage, maxToke
 	}
 
 	res := &StreamResult{}
+	var acc toolCallAccumulator
 	reader := bufio.NewReaderSize(resp.Body, 64<<10)
 	for {
 		line, err := reader.ReadString('\n')
@@ -200,6 +311,7 @@ func (c *Client) ChatStream(ctx context.Context, messages []ChatMessage, maxToke
 		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 		if data == "" || data == "[DONE]" {
 			if data == "[DONE]" {
+				res.ToolCalls = acc.sorted()
 				return res, nil
 			}
 			continue
@@ -224,8 +336,24 @@ func (c *Client) ChatStream(ctx context.Context, messages []ChatMessage, maxToke
 		if d.Content != "" && onDelta != nil {
 			onDelta(d.Content)
 		}
+		for _, tc := range d.ToolCalls {
+			merged := acc.feed(tc)
+			if onToolDelta != nil {
+				var argsDelta, id, name string
+				if tc.Function != nil {
+					argsDelta = tc.Function.Arguments
+					name = tc.Function.Name
+				}
+				id = tc.ID
+				if id == "" {
+					id = merged.ID
+				}
+				onToolDelta(tc.Index, id, name, argsDelta)
+			}
+		}
 	}
 	// 流未发 [DONE] 自然结束（部分兼容端点的形态），结果原样返回
+	res.ToolCalls = acc.sorted()
 	return res, nil
 }
 

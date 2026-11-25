@@ -329,7 +329,7 @@ func transferOne(ctx context.Context, fs *lcommon.FileService, job *transferJob,
 		v := rcommon.GetJSONPath(data, art.SourcePath)
 		rawURL, ok := v.(string)
 		if !ok || rawURL == "" {
-			return false, fmt.Errorf("url 路径 %s 取值非字符串", art.SourcePath)
+			return false, fmt.Errorf("url 路径 %s 在 taskData 中取不到值（检查产物声明的取值路径是否与上游响应结构一致；数组元素用形如 results[0].url 的下标）", art.SourcePath)
 		}
 		target, rErr := resolveSource(ctx, job.ChannelID, rawURL, art.SourceAuth)
 		if rErr != nil {

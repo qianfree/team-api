@@ -7,7 +7,7 @@ import {
   Button, Drawer, Message, Modal, Popconfirm, Space, Table, Tag,
 } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
-import { IconCopy, IconLink } from '@arco-design/web-vue/es/icon'
+import { IconCopy, IconLink, IconRobot } from '@arco-design/web-vue/es/icon'
 import request from '@/utils/request'
 import { downloadTextFile } from '@/utils/download'
 import JSPluginSourceModal from './JSPluginSourceModal.vue'
@@ -28,6 +28,7 @@ const emit = defineEmits<{
   (e: 'toggle', enabled: boolean): void
   (e: 'config'): void
   (e: 'changed'): void
+  (e: 'aiUpgrade', payload: { key: string; version: string; source: string }): void
 }>()
 
 const routes = ref<JSPluginRoute[]>([])
@@ -44,6 +45,27 @@ const sourceVersion = ref('')
 function viewSource(version: string) {
   sourceVersion.value = version
   sourceVisible.value = true
+}
+
+// AI 升级：拉取激活版本源码交给父页面带入生成工作台（新会话 + 基线版本 + 聊天修改）
+const aiUpgrading = ref(false)
+async function startAiUpgrade() {
+  const p = props.plugin
+  if (!p?.active_version || aiUpgrading.value) return
+  aiUpgrading.value = true
+  try {
+    const res: any = await request.get(`/admin/js-plugins/${p.key}/versions/${p.active_version}/source`)
+    const d = res.data?.data
+    if (!d?.source) {
+      Message.warning('未获取到源码内容')
+      return
+    }
+    emit('aiUpgrade', { key: p.key, version: p.active_version, source: d.source })
+  } catch {
+    // 拦截器已提示
+  } finally {
+    aiUpgrading.value = false
+  }
 }
 
 const status = computed(() => (props.plugin ? pluginStatus(props.plugin) : null))
@@ -332,6 +354,15 @@ const versionColumns: TableColumnData[] = [
           type="secondary"
           @click="viewSource(plugin.active_version)"
         >查看源码</Button>
+        <Button
+          v-if="plugin.active_version"
+          type="secondary"
+          :loading="aiUpgrading"
+          title="带入 AI 插件生成工作台：以当前源码为基线，通过聊天描述升级需求，AI 定点修改"
+          @click="startAiUpgrade"
+        >
+          <template #icon><IconRobot /></template>AI 升级
+        </Button>
         <Button type="secondary" @click="emit('config')">配置</Button>
         <Button
           v-if="canPurge && canUpload"

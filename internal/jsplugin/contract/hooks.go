@@ -27,7 +27,7 @@ type DecodeContext struct {
 	Method  string            `json:"method"`            // HTTP 方法
 	Params  map[string]string `json:"params,omitempty"`  // 路径参数（:action 等）
 	Body    json.RawMessage   `json:"body,omitempty"`    // 客户端请求体（JSON 原文；multipart 时为字段合并对象）
-	Headers map[string]string `json:"headers,omitempty"` // 客户端请求头（Authorization 已剔除）
+	Headers map[string]string `json:"headers,omitempty"` // 客户端请求头（首值；Authorization / Cookie 已剔除）
 	// Files multipart 上传的文件引用（FileReference）：ref 为请求级不透明句柄，
 	// 字节永不进 JS——插件在 buildSubmitRequest 的 body 里以 {__fileRef, encoding,
 	// maxBytes?} 占位符引用，宿主发送前内联编码。同名字段多文件时 ref 带 #index。

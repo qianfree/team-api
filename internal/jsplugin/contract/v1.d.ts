@@ -125,7 +125,10 @@ export interface Route {
 export interface FetchResponse {
   status: number;
   headers: Record<string, string>;
-  /** responseType="json" 且响应为 JSON → 对象；"text" → string；"bytes" → ArrayBuffer */
+  /**
+   * responseType="json"（缺省）且响应头 Content-Type 含 json → 对象，否则 → string；
+   * "text" → string；"bytes" → ArrayBuffer
+   */
   body: any;
 }
 
@@ -136,6 +139,9 @@ export interface Utils {
    * build*Request 同语义；decode/render 等无渠道上下文的钩子内被拒）或绝对 URL
    * （host 须在白名单内：渠道 baseUrl host ∪ meta.allowedHosts）；
    * ≤4 次/钩子、15s/次、30s/批、1MiB/响应；不跟随重定向。
+   * 鉴权：目标与渠道 baseUrl 同源（scheme + host 相同，相对路径天然同源）时由基座
+   * 注入 "Bearer <渠道密钥>"；跨域请求不带任何鉴权；插件自设的 Authorization 一律被剔除
+   * （与 build*Request 的可覆盖语义不同）。
    */
   fetch(request: {
     url: string;
@@ -176,6 +182,7 @@ export interface DecodeContext {
   method: string;
   params?: Record<string, string>;
   body?: any;
+  /** 客户端请求头的首值（Authorization / Cookie 已剔除） */
   headers?: Record<string, string>;
   /** multipart 上传的文件引用（字节不进 JS；body 内以占位符引用） */
   files?: Array<{ref: string; field: string; filename: string; mimeType: string; size: number}>;

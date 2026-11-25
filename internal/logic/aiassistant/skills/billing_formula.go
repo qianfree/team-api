@@ -41,7 +41,7 @@ func (BillingFormulaSkill) Reference() string {
 	}
 
 	// u() facts 注册表：动态取自 KnownFactKeys（含插件动态注册键）
-	b.WriteString("\n二、u(\"key\") 旁路计量函数（非 token 计量：秒数/字节数/插件自定义单位）。\n")
+	b.WriteString("\n二、u(\"key\") 旁路计量函数（非 token 计量：秒数/张数/字节数，以及 JS 任务插件的宿主固定用量词汇）。\n")
 	b.WriteString("key 必须是字符串字面量且已注册，可用 key 注册表：\n")
 	facts := formula.KnownFactKeys()
 	factNames := make([]string, 0, len(facts))

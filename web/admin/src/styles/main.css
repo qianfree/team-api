@@ -598,3 +598,84 @@ body {
     scroll-behavior: auto !important;
   }
 }
+
+/* ── 代码高亮 token（highlight.js，插件生成工作台与 AI 助手代码卡共用）──
+   只定义颜色，不设背景（容器自带底色）；跟随亮/暗双主题 */
+.hljs-comment,
+.hljs-quote {
+  color: #6a737d;
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-doctag {
+  color: #cf222e;
+}
+.hljs-string,
+.hljs-regexp,
+.hljs-meta .hljs-string {
+  color: #0a3069;
+}
+.hljs-number,
+.hljs-symbol,
+.hljs-attr,
+.hljs-property,
+.hljs-selector-attr {
+  color: #0550ae;
+}
+.hljs-title,
+.hljs-title.class_,
+.hljs-title.function_ {
+  color: #8250df;
+}
+.hljs-built_in,
+.hljs-variable.language_ {
+  color: #b35900;
+}
+.hljs-params,
+.hljs-variable,
+.hljs-type {
+  color: inherit;
+}
+.hljs-meta,
+.hljs-punctuation {
+  color: #57606a;
+}
+
+/* 暗色主题（body.arco-theme-dark，同 main.css 顶部的主题切换约定） */
+body.arco-theme-dark .hljs-comment,
+body.arco-theme-dark .hljs-quote {
+  color: #8b949e;
+}
+body.arco-theme-dark .hljs-keyword,
+body.arco-theme-dark .hljs-selector-tag,
+body.arco-theme-dark .hljs-literal,
+body.arco-theme-dark .hljs-doctag {
+  color: #ff7b72;
+}
+body.arco-theme-dark .hljs-string,
+body.arco-theme-dark .hljs-regexp,
+body.arco-theme-dark .hljs-meta .hljs-string {
+  color: #a5d6ff;
+}
+body.arco-theme-dark .hljs-number,
+body.arco-theme-dark .hljs-symbol,
+body.arco-theme-dark .hljs-attr,
+body.arco-theme-dark .hljs-property,
+body.arco-theme-dark .hljs-selector-attr {
+  color: #79c0ff;
+}
+body.arco-theme-dark .hljs-title,
+body.arco-theme-dark .hljs-title.class_,
+body.arco-theme-dark .hljs-title.function_ {
+  color: #d2a8ff;
+}
+body.arco-theme-dark .hljs-built_in,
+body.arco-theme-dark .hljs-variable.language_ {
+  color: #ffa657;
+}
+body.arco-theme-dark .hljs-meta,
+body.arco-theme-dark .hljs-punctuation {
+  color: #8b949e;
+}

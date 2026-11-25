@@ -446,11 +446,12 @@ func parseUploadFiles(r *ghttp.Request) (map[string]jsplugin.FilePayload, []cont
 // buildDecodeContext 组装解码上下文（multipart 时 body 为字段合并对象 + files 引用）。
 func buildDecodeContext(r *ghttp.Request, plugin *jsplugin.ActivePlugin, route contract.Route, params map[string]string, nativePath string, body []byte, decodeFiles []contract.FileRef) (contract.DecodeContext, bool) {
 	ctx := contract.DecodeContext{
-		Path:   nativePath,
-		Method: strings.ToUpper(r.Method),
-		Params: params,
-		Body:   json.RawMessage(body),
-		Files:  decodeFiles,
+		Path:    nativePath,
+		Method:  strings.ToUpper(r.Method),
+		Params:  params,
+		Body:    json.RawMessage(body),
+		Headers: clientHeaders(r.Header),
+		Files:   decodeFiles,
 	}
 	if len(decodeFiles) > 0 {
 		// multipart：body 字段（JSON 原文）+ 其余文本字段合并为对象
@@ -489,6 +490,19 @@ func buildDecodeContext(r *ghttp.Request, plugin *jsplugin.ActivePlugin, route c
 		}
 	}
 	return ctx, true
+}
+
+// clientHeaders 客户端请求头 → 解码契约的 headers（每个头取首值）。凭据类头不进插件：
+// Authorization 是网关 API Key（契约约定剔除），Cookie 可能携带管理端会话。
+func clientHeaders(header http.Header) map[string]string {
+	headers := make(map[string]string, len(header))
+	for k, vs := range header {
+		if len(vs) == 0 || strings.EqualFold(k, "Authorization") || strings.EqualFold(k, "Cookie") {
+			continue
+		}
+		headers[k] = vs[0]
+	}
+	return headers
 }
 
 // callDecodeHook 调用解码钩子（别名优先）并校验返回；错误时已写出响应。
