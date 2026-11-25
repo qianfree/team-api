@@ -59,6 +59,10 @@ func TestMigratedAlibabaVideoFlow(t *testing.T) {
 	if v, _ := est.Number(contract.UsageOutputSeconds); v != 10 || est.Resolution != "1080P" || est.GenerateAudio == nil || !*est.GenerateAudio {
 		t.Fatalf("估算异常: %+v", est)
 	}
+	// wan3.0 系恒报 input_video_seconds：无参考视频为 0（与终态上报的键集合一致）
+	if v, ok := est.Number(contract.UsageInputVideoSeconds); !ok || v != 0 {
+		t.Fatalf("无参考视频时输入视频时长应为 0: %+v", est)
+	}
 
 	built, err := contract.ValidateBuiltRequest(call("buildSubmitRequest", contract.BuildSubmitContext{
 		Body: body, Model: decoded.Model, UpstreamModel: "wan3.0-video",
@@ -107,6 +111,56 @@ func TestMigratedAlibabaVideoFlow(t *testing.T) {
 	in, _ := term.Number(contract.UsageInputVideoSeconds)
 	if out != 10 || in != 3 || term.Resolution != "1080P" {
 		t.Fatalf("wan3.0 双段用量异常: %+v", term)
+	}
+}
+
+// TestMigratedAlibabaInputVideoPreDeduct wan3.0 官方计费时长 = 输入视频 + 输出视频：
+// 带参考视频的请求预估须按上限报 input_video_seconds，预扣才会冻结输入视频费（结算按官方
+// usage 多退少补）。此前预估漏报，预扣只冻结输出秒，输入视频费到结算才补扣。
+func TestMigratedAlibabaInputVideoPreDeduct(t *testing.T) {
+	cleanup, err := PublishForTest(alibabaSource(t))
+	if err != nil {
+		t.Fatalf("发布失败: %v", err)
+	}
+	t.Cleanup(cleanup)
+	plugin, _ := CurrentGeneration().Plugin("alibaba")
+	call := hookCaller(t, plugin)
+
+	video := `[{"type":"reference_video","url":"https://cdn.example.com/ref.mp4"}]`
+	image := `[{"type":"reference_image","url":"https://cdn.example.com/a.png"}]`
+	cases := []struct {
+		name     string
+		upstream string
+		media    string
+		duration string
+		wantOut  float64
+		wantIn   float64 // -1 = 不上报该键（输入视频不计费的型号）
+	}{
+		{"输出 5s：输入按参考视频合计上限 15s", "wan3.0-video", video, `,"duration":5`, 5, 15},
+		{"输出 20s：输入受「输入+输出≤30s」约束", "wan3.0-video", video, `,"duration":20`, 20, 10},
+		{"智能时长：输出按 30s 上限，总额已顶满", "wan3.0-video", video, `,"duration":-1`, 30, 0},
+		{"仅参考图：输入视频为 0", "wan3.0-video", image, `,"duration":5`, 5, 0},
+		{"prime 同口径", "wan3.0-video-prime", video, `,"duration":5`, 5, 15},
+		{"wan2.6 输入视频不计费：不上报该键", "wan2.6-i2v", video, `,"duration":5`, 5, -1},
+	}
+	for _, c := range cases {
+		est := mustHostUsageObj(t, call("estimateUsage", contract.EstimateUsageContext{
+			Body:  json.RawMessage(`{"vendorBody":{"input":{"prompt":"city night","media":` + c.media + `},"parameters":{"resolution":"720P"` + c.duration + `}}}`),
+			Model: "my-wan", UpstreamModel: c.upstream,
+		}))
+		if v, _ := est.Number(contract.UsageOutputSeconds); v != c.wantOut {
+			t.Fatalf("%s: 输出秒数异常: %+v", c.name, est)
+		}
+		v, ok := est.Number(contract.UsageInputVideoSeconds)
+		if c.wantIn < 0 {
+			if ok {
+				t.Fatalf("%s: 输入视频不计费的型号不应上报 input_video_seconds: %+v", c.name, est)
+			}
+			continue
+		}
+		if !ok || v != c.wantIn {
+			t.Fatalf("%s: 输入视频秒数异常: %+v", c.name, est)
+		}
 	}
 }
 
@@ -164,8 +218,8 @@ func TestMigratedAlibabaSyncImage(t *testing.T) {
 }
 
 // TestMigratedAlibabaStandardVideos 标准视频端点：decodeVideos 出型号中立体，
-// validateRequest 按上游型号落位参考图（wan2.x input.img_url / wan3.0 input.media）
-// 与音频开关（仅 wan3.0 系）。
+// validateRequest 按上游型号落位首帧（wan2.x input.img_url / wan3.x input.media 的
+// 官方类型 first_frame）与音频开关（仅 wan3.0 系）。
 func TestMigratedAlibabaStandardVideos(t *testing.T) {
 	cleanup, err := PublishForTest(alibabaSource(t))
 	if err != nil {
@@ -230,7 +284,9 @@ func TestMigratedAlibabaStandardVideos(t *testing.T) {
 		} `json:"vendorBody"`
 	}
 	_ = json.Unmarshal(wan3Body, &wan3)
-	if len(wan3.VendorBody.Input.Media) != 1 || wan3.VendorBody.Input.Media[0].Type != "image" ||
+	// 首帧用官方 media 类型 first_frame（"image" 不在官方取值内，上游会拒绝）
+	if len(wan3.VendorBody.Input.Media) != 1 || wan3.VendorBody.Input.Media[0].Type != "first_frame" ||
+		wan3.VendorBody.Input.Media[0].URL != "https://img.example.com/b.png" ||
 		wan3.VendorBody.Parameters.Audio == nil || !*wan3.VendorBody.Parameters.Audio {
 		t.Fatalf("wan3.0 vendorBody 映射异常: %s", wan3Body)
 	}

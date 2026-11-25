@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/shopspring/decimal"
+
+	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/relay/common"
 )
 
@@ -102,6 +105,39 @@ func TestEstimateBilling_VideoSpecSignals(t *testing.T) {
 	}
 	if _, has := ratios["spec.duration"]; has {
 		t.Fatalf("image model must not carry duration signal: %v", ratios)
+	}
+}
+
+// wan3.0 输入视频预扣：官方按「输入视频 + 输出视频」时长计费，带参考视频时按上限冻结输入时长
+// （参考视频合计 ≤15s 且「输入+输出≤30s」取较紧者）；输出已顶满上限或不含参考视频时不产出该键
+func TestEstimateBilling_Wan3InputVideo(t *testing.T) {
+	a := &AliAdaptor{}
+	video := `"media":[{"type":"reference_video","url":"https://v.mp4"}]`
+	cases := []struct {
+		name string
+		body string
+		want float64 // -1 = 不产出 spec.input_video_seconds
+	}{
+		{"输出 5s：输入按参考视频合计上限 15s", `{"model":"wan3.0-video","prompt":"p","seconds":"5",` + video + `}`, 15},
+		{"输出 20s：输入受「输入+输出≤30s」约束", `{"model":"wan3.0-video","prompt":"p","seconds":"20",` + video + `}`, 10},
+		{"智能时长：输出按 30s 上限，总额已顶满", `{"model":"wan3.0-video","prompt":"p","metadata":{"duration":-1},` + video + `}`, -1},
+		{"未传时长：只剩参考视频合计上限", `{"model":"wan3.0-video","prompt":"p",` + video + `}`, 15},
+		{"references 角色词汇同样识别", `{"model":"wan3.0-video","prompt":"p","seconds":"5","references":[{"role":"reference_video","url":"https://v.mp4"}]}`, 15},
+		{"仅参考图", `{"model":"wan3.0-video","prompt":"p","seconds":"5","media":[{"type":"reference_image","url":"https://i.png"}]}`, -1},
+		{"wan2.x 输入视频不计费", `{"model":"wan2.6-i2v","prompt":"p","seconds":"5",` + video + `}`, -1},
+	}
+	for _, c := range cases {
+		ratios := a.EstimateBilling(context.Background(), newTestRelayInfo(), []byte(c.body))
+		got, has := ratios["spec.input_video_seconds"].(float64)
+		if c.want < 0 {
+			if has {
+				t.Errorf("%s: 不应产出 spec.input_video_seconds: %v", c.name, ratios)
+			}
+			continue
+		}
+		if !has || got != c.want {
+			t.Errorf("%s: spec.input_video_seconds = %v, want %v", c.name, ratios["spec.input_video_seconds"], c.want)
+		}
 	}
 }
 
@@ -238,6 +274,9 @@ func TestParseTaskResult_Wan3MaterialUsage(t *testing.T) {
 	if info.MaterialUsage.Resolution != "720P" {
 		t.Fatalf("SR → resolution normalization broken: %+v", info.MaterialUsage)
 	}
+	if info.MaterialUsage.InputVideoSeconds != 0 {
+		t.Fatalf("no input video should report zero input seconds: %+v", info.MaterialUsage)
+	}
 
 	// usage 缺失（wan2.x 响应）：MaterialUsage 为 nil，结算回退预扣口径
 	info, err = a.ParseTaskResult([]byte(`{"output":{"task_id":"t2","task_status":"SUCCEEDED","video_url":"https://v2.mp4"}}`))
@@ -256,6 +295,53 @@ func TestParseTaskResult_Wan3MaterialUsage(t *testing.T) {
 	if info.MaterialUsage == nil || info.MaterialUsage.Resolution != "" {
 		t.Fatalf("zero SR should yield empty resolution: %+v", info.MaterialUsage)
 	}
+
+	// 输入视频时长：官方 input_video_duration 进素材计量，供素材计费方案按「输入+输出」结算
+	info, err = a.ParseTaskResult([]byte(`{"output":{"task_id":"t4","task_status":"SUCCEEDED","video_url":"u"},"usage":{"duration":8.5,"input_video_duration":3.5,"output_video_duration":5.0,"SR":1080}}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if info.MaterialUsage == nil || info.MaterialUsage.InputVideoSeconds != 3.5 {
+		t.Fatalf("input video seconds lost: %+v", info.MaterialUsage)
+	}
+}
+
+// wan3.0 输入视频计费端到端（适配器 → 素材计费方案）：带参考视频时预扣含输入视频费，
+// 结算按官方 input_video_duration 多退少补。此前预估与结算都未上报输入视频，走素材方案的
+// wan3.0 任务输入视频从未计费
+func TestWan3InputVideo_MaterialScheme(t *testing.T) {
+	pricing := &billing.PricingResult{
+		BillingMode:      billing.BillingModeSpecial,
+		TenantMultiplier: 1,
+		PerSecondPrices:  map[string]float64{"720P": 0.6},
+		Scheme:           billing.SchemeMiniMaxMaterial,
+	}
+	scheme := billing.LookupScheme(pricing.Scheme)
+	assertCost := func(name string, got decimal.Decimal, want float64) {
+		t.Helper()
+		if diff := got.InexactFloat64() - want; diff > 1e-9 || diff < -1e-9 {
+			t.Errorf("%s: 费用 = %v, want %v", name, got, want)
+		}
+	}
+	a := &AliAdaptor{}
+	estimate := func(body string) map[string]any {
+		return a.EstimateBilling(context.Background(), newTestRelayInfo(), []byte(body))
+	}
+
+	// 预扣：输出 5s + 输入按参考视频合计上限 15s
+	videoRatios := estimate(`{"model":"wan3.0-video","prompt":"p","seconds":"5","metadata":{"resolution":"720P"},"media":[{"type":"reference_video","url":"https://v.mp4"}]}`)
+	assertCost("带参考视频预扣", scheme.EstimateTaskCost(pricing, videoRatios, nil), (5+15)*0.6)
+
+	// 无参考视频：预扣只含输出
+	plainRatios := estimate(`{"model":"wan3.0-video","prompt":"p","seconds":"5","metadata":{"resolution":"720P"}}`)
+	assertCost("无参考视频预扣", scheme.EstimateTaskCost(pricing, plainRatios, nil), 5*0.6)
+
+	// 结算：官方 usage 双段（输出 5s + 输入 3.5s）
+	info, err := a.ParseTaskResult([]byte(`{"output":{"task_id":"t1","task_status":"SUCCEEDED","video_url":"https://v.mp4"},"usage":{"duration":8.5,"input_video_duration":3.5,"output_video_duration":5.0,"SR":720}}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	assertCost("带参考视频结算", scheme.SettleTaskCost(pricing, videoRatios, info.MaterialUsage), (5+3.5)*0.6)
 }
 
 func TestExtractUpstreamRequestID(t *testing.T) {

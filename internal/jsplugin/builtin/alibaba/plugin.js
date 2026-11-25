@@ -24,6 +24,8 @@
 //    usage 双段分别上报，不再由插件相加——是否合并计价由宿主模型定价决定）/
 //    resolution / generate_audio / output_count；按型号的校验（视频/图像类型、分辨率
 //    档位）移到 validateRequest（ctx.upstreamModel），decode 只按路由与体形分流。
+// ⑦ 预扣含输入视频：wan3.0 系官方计费时长 = 输入视频 + 输出视频，预估带参考视频时按
+//    上限报 input_video_seconds（合计 ≤15s 且「输入+输出≤30s」），终态以官方 usage 为准。
 const WAN_MODELS = {
   "wan3.0-video": { resolutions: ["480P", "720P", "1080P"], defaultResolution: "1080P", maxDuration: 30 },
   "wan3.0-video-prime": { resolutions: ["480P", "720P", "1080P"], defaultResolution: "1080P", maxDuration: 30 },
@@ -43,6 +45,11 @@ const WAN_MODELS = {
   "wan2.2-s2v": { resolutions: ["480P", "720P"], defaultResolution: "480P", maxDuration: 10 },
 };
 const WAN_AUDIO_VIDEO_MODELS = ["wan3.0-video", "wan3.0-video-prime"];
+// 官方计费时长 = 输入视频 + 输出视频的型号（查询 usage 双段回报）：预估与终态共用本清单，
+// 保证两个时点对「输入视频是否计费」的判定一致
+const WAN_INPUT_VIDEO_MODELS = ["wan3.0-video", "wan3.0-video-prime"];
+// 参考视频总时长上限（官方约束：最多 5 段、合计 ≤15s）；另有视频输入时「输入+输出 ≤30s」
+const WAN_REFERENCE_VIDEO_MAX_SECONDS = 15;
 // 同步图像（multimodal-generation，immediate）；其余图像系（t2i/legacy 等）异步任务
 const SYNC_IMAGE_MODELS = ["qwen-image", "qwen-image-plus", "qwen-image-max", "qwen-image-2.0", "qwen-image-2.0-pro", "qwen-image-3.0", "qwen-image-3.0-pro", "qwen-image-edit", "qwen-image-edit-plus", "qwen-image-edit-max", "z-image-turbo"];
 const ASYNC_IMAGE_MODELS = ["wan2.7-image-pro", "wan2.7-image", "wan2.6-image", "wan2.6-t2i", "wan2.5-t2i-preview", "wan2.2-t2i-flash", "wan2.2-t2i-plus", "wanx2.1-t2i-turbo", "wanx2.1-t2i-plus", "wanx2.0-t2i-turbo", "wan2.5-i2i-preview", "wanx2.1-imageedit"];
@@ -120,8 +127,8 @@ export function createImage(ctx) {
 }
 
 // decodeVideos 标准视频端点解码（meta.standardVideos 指向）：通用任务体 → DashScope
-// vendorBody（input/parameters 双段）。prompt → input.prompt；参考图（images[0]/
-// metadata.image）→ wan3.0 input.media 数组 / wan2.x input.img_url；seconds/
+// vendorBody（input/parameters 双段）。prompt → input.prompt；首帧（兼容字段 images[0]/
+// metadata.image）→ wan3.x input.media 首帧 / wan2.x input.img_url；seconds/
 // metadata.duration → parameters.duration；metadata.resolution 大写归一按档位校验
 // （与 createTask 同规则）；ratio（metadata.ratio/aspect_ratio）透传；音频开关
 // metadata.generate_audio（bool）优先、回落 metadata.sound（"on"/"off"）。
@@ -133,7 +140,7 @@ export function decodeVideos(ctx) {
   if (!model) throw new Error("model is required");
   if (!trimmed(raw.prompt)) throw new Error("prompt is required");
 
-  // 参考图字段形态（wan3.0 input.media / wan2.x input.img_url）依赖上游型号，
+  // 首帧字段形态（wan3.x input.media / wan2.x input.img_url）依赖上游型号，
   // decode 先记在 _image，validateRequest 按 ctx.upstreamModel 落位
   const input = { prompt: String(raw.prompt) };
   const image = Array.isArray(raw.images) && raw.images.length && typeof raw.images[0] === "string" ? raw.images[0].trim() : trimmed(metadata.image);
@@ -160,8 +167,8 @@ export function decodeVideos(ctx) {
 
 // validateRequest 渠道选定后按上游型号校验并定稿：
 //   - 图像路由：上游须为对应形态（同步 multimodal / 异步 text2image）的百炼图像模型
-//   - 视频：上游须为万相视频模型，分辨率按型号档位校验；标准端点的参考图按型号
-//     落位（wan3.x input.media / wan2.x input.img_url），音频开关仅 wan3.0 系透传
+//   - 视频：上游须为万相视频模型，分辨率按型号档位校验；标准端点的首帧按型号
+//     落位（wan3.x input.media 首帧 / wan2.x input.img_url），音频开关仅 wan3.0 系透传
 export function validateRequest(ctx) {
   const req = plainObject(ctx.body);
   const upstream = trimmed(ctx.upstreamModel || ctx.model);
@@ -179,10 +186,11 @@ export function validateRequest(ctx) {
     throw new Error(upstream + " resolution must be one of " + profile.resolutions.join(", "));
   }
   if (!req._std) return { requestBody: Object.assign({}, req, { _upstream: upstream }) };
-  // 标准端点：按型号定稿参考图与音频开关
+  // 标准端点：按型号定稿首帧与音频开关。兼容字段 images[0]/metadata.image 只承载 first_frame
+  // 角色的素材（宿主归一保证，其余角色本插件未声明承接），wan3.x 用官方 media 类型 first_frame
   const input = Object.assign({}, plainObject(vendor.input));
   if (req._image_ref) {
-    if (base.startsWith("wan3.")) input.media = [{ type: "image", url: req._image_ref }];
+    if (base.startsWith("wan3.")) input.media = [{ type: "first_frame", url: req._image_ref }];
     else input.img_url = req._image_ref;
   }
   const parameters = Object.assign({}, params);
@@ -212,7 +220,20 @@ export function estimateUsage(ctx) {
     resolution: profile.resolutions.includes(trimmed(params.resolution).toUpperCase()) ? trimmed(params.resolution).toUpperCase() : profile.defaultResolution,
   };
   if (WAN_AUDIO_VIDEO_MODELS.includes(base)) usage.generate_audio = params.audio !== false;
+  if (WAN_INPUT_VIDEO_MODELS.includes(base)) {
+    // 官方按「输入视频 + 输出视频」计费：参考视频以 URL 提交、时长此时不可知，按上限预扣
+    //（合计 ≤15s 且「输入+输出≤30s」，取较紧者），终态按官方 usage.input_video_duration
+    // 多退少补。无参考视频恒报 0，与终态上报的键集合一致
+    usage.input_video_seconds = hasReferenceVideo(plainObject(plainObject(req.vendorBody).input))
+      ? Math.max(0, Math.min(WAN_REFERENCE_VIDEO_MAX_SECONDS, profile.maxDuration - usage.output_seconds))
+      : 0;
+  }
   return usage;
+}
+
+// hasReferenceVideo 请求是否带参考视频（官方 media 类型 reference_video）
+function hasReferenceVideo(input) {
+  return Array.isArray(input.media) && input.media.some(function (m) { return Boolean(m) && m.type === "reference_video"; });
 }
 
 // ── 提交链 ────────────────────────────────────────────────
@@ -308,7 +329,7 @@ export function parseQueryResponse(ctx) {
     const facts = {};
     const tdModel = plainObject(t.taskData);
     const model = baseModel(trimmed(tdModel._model) || trimmed(tdModel.model) || trimmed(ctx.model));
-    if (model === "wan3.0-video" || model === "wan3.0-video-prime") {
+    if (WAN_INPUT_VIDEO_MODELS.includes(model)) {
       // wan3.0：官方 usage 双段（输出时长 + 输入参考视频时长）分别上报，合并计价归宿主定价
       const inputSeconds = Number(usage.input_video_duration);
       const outputSeconds = Number(usage.output_video_duration != null ? usage.output_video_duration : usage.duration);
