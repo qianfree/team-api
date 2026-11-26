@@ -195,6 +195,9 @@ var (
 				//（Redis 未配置时不启动，单实例部署无广播需求）
 				jsplugin.DefaultRegistry().StartInvalidateSubscriber()
 			}
+			// 调度目录的 JS 插件激活预检：绑定了未激活插件的渠道不进候选
+			//（否则会抢占调度、选中后提交链报「插件未激活」且无重试）
+			dispatchadapter.SetJSPluginActiveResolver(jsplugin.PluginActive)
 
 			// Global middleware
 			s.Use(middleware.Recovery)

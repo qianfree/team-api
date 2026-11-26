@@ -64,6 +64,13 @@ func Coordinator(ctx context.Context) *dispatch.Coordinator {
 // CatalogInstance 返回目录单例（handler 取 ForwardMeta 用，需先调用过 Coordinator）。
 func CatalogInstance() *Catalog { return catalog }
 
+// CatalogFromCoordinator 确保调度引擎组装后返回目录单例（未组装时触发组装）。
+// 供提交链入口在渠道选择之前读目录（如 /pjs 的上游模型名归一）。
+func CatalogFromCoordinator(ctx context.Context) *Catalog {
+	Coordinator(ctx)
+	return catalog
+}
+
 // HealthAlpha 返回当前路由策略的健康指数 α（健康分 = succ_ewma^α × 100）。
 //
 // 管理后台展示健康分必须与调度 healthFactor、维护快照落盘同源：三处都用 succ^α，

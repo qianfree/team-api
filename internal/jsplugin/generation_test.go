@@ -109,3 +109,36 @@ func TestGenerationRouteNamespaceIsolation(t *testing.T) {
 		}
 	}
 }
+
+// TestPluginActiveAndStandardEndpointSupport 两个导出判定：
+// PluginActive（调度目录剔除未激活 JS 渠道用）与 ChannelServesStandardEndpoint
+// （标准任务端点的候选过滤用）。
+func TestPluginActiveAndStandardEndpointSupport(t *testing.T) {
+	defer publishGeneration(buildGeneration(nil)) // 恢复空 generation，避免污染同包其他测试
+
+	plain := testPlugin("plain", []string{"m1"})
+	withStd := &ActivePlugin{
+		Key: "std",
+		Manifest: &contract.Manifest{
+			Key: "std", Models: []string{"m2"}, StandardVideos: "decodeStandardVideos",
+		},
+	}
+	publishGeneration(buildGeneration([]*ActivePlugin{plain, withStd}))
+
+	if !PluginActive("plain") || !PluginActive("std") {
+		t.Fatal("generation 内的插件应判定为激活")
+	}
+	if PluginActive("missing") {
+		t.Fatal("不在 generation 的插件应判定为未激活")
+	}
+
+	if ChannelServesStandardEndpoint("plain") {
+		t.Fatal("未声明 standardVideos 的插件不能服务标准端点")
+	}
+	if !ChannelServesStandardEndpoint("std") {
+		t.Fatal("声明了 standardVideos 的插件应可服务标准端点")
+	}
+	if ChannelServesStandardEndpoint("missing") || ChannelServesStandardEndpoint("") {
+		t.Fatal("未激活插件不能服务标准端点")
+	}
+}

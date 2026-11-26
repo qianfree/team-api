@@ -14,6 +14,7 @@ import (
 	"github.com/gogf/gf/v2/net/ghttp"
 
 	"github.com/qianfree/team-api/internal/dispatchadapter"
+	"github.com/qianfree/team-api/internal/jsplugin"
 	"github.com/qianfree/team-api/internal/logic/billing"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/monitor"
@@ -230,7 +231,21 @@ func writeTaskChannelSelectionError(r *ghttp.Request, err error) {
 // 任务提交是瞬时动作：选定并物化后立即结束调度会话释放租约；
 // 会话绑定已由调度器在选择时写入，提交结果不额外上报健康（与旧行为一致）。
 func selectTaskChannel(r *ghttp.Request, body []byte) (*relay_common.ChannelMeta, error) {
-	return selectTaskChannelFor(r, body, nil)
+	return selectTaskChannelFor(r, body, standardTaskChannelAccept)
+}
+
+// standardTaskChannelAccept 标准任务端点（/v1/videos、/v1/video/generations、
+// /suno/submit 等）的 JS 渠道候选兜底过滤。目录快照 5s 刷新（另有 pub/sub 失效），
+// 插件刚停用/换版的窗口内目录可能仍含其渠道——选中后 SynthesizeStandardPlan/
+// ValidateRequest 会直接 400 且无渠道级重试（调度会话在选择循环结束时已释放），
+// 把同池的其他可用渠道饿死。此处把「插件未激活 / 未声明 standardVideos」的候选
+// 在选择循环内拦下并换下一候选（与 /pjs 分发器的 accept 过滤同路径，过滤不命中
+// 不计为渠道健康问题——渠道没坏，只是当前不能服务这个入口）。
+func standardTaskChannelAccept(meta *relay_common.ChannelMeta) bool {
+	if relay_constant.ProviderType(meta.ChannelType) != relay_constant.ProviderJSTask {
+		return true
+	}
+	return jsplugin.ChannelServesStandardEndpoint(meta.Settings.PluginKey)
 }
 
 // selectTaskChannelFor 带候选过滤的渠道选择：accept 返回 false 的候选视为不可用，

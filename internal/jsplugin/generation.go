@@ -180,6 +180,23 @@ func CurrentGeneration() *Generation {
 	return currentGeneration.Load()
 }
 
+// PluginActive 报告插件是否在当前 generation（已启用且版本激活）。
+// 供调度目录构建时剔除「绑定了未激活插件的 JS 渠道」（cmd 启动时经
+// dispatchadapter.SetJSPluginActiveResolver 注入）。
+func PluginActive(key string) bool {
+	_, ok := CurrentGeneration().Plugin(key)
+	return ok
+}
+
+// ChannelServesStandardEndpoint 报告渠道绑定的插件当前可否服务标准任务端点
+// （/v1/videos、/v1/video/generations 等）：插件在当前 generation 且声明了
+// standardVideos 解码钩子。供任务提交链在选择循环里过滤候选——渠道一旦选中，
+// 不满足此条件的会在 SynthesizeStandardPlan 处直接 400 且无渠道级重试。
+func ChannelServesStandardEndpoint(pluginKey string) bool {
+	p, ok := CurrentGeneration().Plugin(pluginKey)
+	return ok && p.Manifest.StandardVideos != ""
+}
+
 // publishGeneration 发布新 generation（仅 registry 重建路径调用）。
 func publishGeneration(g *Generation) {
 	currentGeneration.Store(g)

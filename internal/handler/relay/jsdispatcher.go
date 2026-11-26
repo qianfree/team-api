@@ -18,6 +18,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
 
+	"github.com/qianfree/team-api/internal/dispatchadapter"
 	"github.com/qianfree/team-api/internal/jsplugin"
 	"github.com/qianfree/team-api/internal/jsplugin/contract"
 	"github.com/qianfree/team-api/internal/logic/monitor"
@@ -175,8 +176,13 @@ func handleJSTaskSubmit(r *ghttp.Request, plugin *jsplugin.ActivePlugin, route c
 		}
 	}
 
-	// 2) 模型注入 body 副本（selectTaskChannel/extractModelName 从 body.model 读）
-	body2, err := injectModelField(body, decoded.Model)
+	// 2) 模型注入 body 副本（selectTaskChannel/extractModelName 从 body.model 读）。
+	// 解码钩子回显的模型名是插件的上游名（如 minimax-h3），而调度目录按
+	// chn_abilities.model_name（平台名，如 MiniMax-H3）索引，mdl 权限/租户启用/计费
+	// 取价也都以平台名为键——先经目录反查归一，渠道做了「平台名→上游名」映射后
+	// 按上游名调度会查无候选。上游名本身也是平台名（未映射渠道同名）时保持原样。
+	dispatchModel := normalizeDispatchModel(r.Context(), decoded.Model)
+	body2, err := injectModelField(body, dispatchModel)
 	if err != nil {
 		writeJSError(r, http.StatusBadRequest, "request body is not a JSON object")
 		return
@@ -235,7 +241,7 @@ func handleJSTaskSubmit(r *ghttp.Request, plugin *jsplugin.ActivePlugin, route c
 	capture := NewResponseCaptureWriter(hold)
 	rc.Writer = capture
 
-	registerAsyncTask(rc.RequestID, rc.TenantID, rc.UserID, rc.ProjectID, decoded.Model, channelMeta, nativePath)
+	registerAsyncTask(rc.RequestID, rc.TenantID, rc.UserID, rc.ProjectID, dispatchModel, channelMeta, nativePath)
 
 	relay_handler.HandleTaskSubmit(
 		ctx, body2, nativePath, r.Header,
@@ -267,8 +273,9 @@ func handleJSTaskSubmit(r *ghttp.Request, plugin *jsplugin.ActivePlugin, route c
 	}
 
 	// 提交成功且插件导出渲染钩子 → 钩子输出替换标准响应；否则透传扣住的标准输出
+	// （渲染上下文的 Model 用归一后的平台名，与任务落库/查询侧 renderTask 同口径）
 	if rc.TaskID != "" && plugin.HasHook(renderHook) {
-		if rendered := callSubmitRenderer(r.Context(), plugin, renderHook, rc.TaskID, decoded.Model, taskStatus, contentURL); rendered != nil {
+		if rendered := callSubmitRenderer(r.Context(), plugin, renderHook, rc.TaskID, dispatchModel, taskStatus, contentURL); rendered != nil {
 			// 状态码与内容须一次写入：WriteStatus 不带内容会把状态文本（如 "OK"）写进响应体
 			r.Response.WriteStatus(rendered.Status, []byte(rendered.Body))
 			hold.discard()
@@ -647,6 +654,26 @@ func injectModelField(body []byte, model string) ([]byte, error) {
 	modelJSON, _ := json.Marshal(model)
 	m["model"] = modelJSON
 	return json.Marshal(m)
+}
+
+// normalizeDispatchModel 把插件回显的上游模型名归一成平台模型名：
+//   - 上游名本身就是某渠道的平台名（未映射渠道同名服务）→ 原样返回，不影响既有命中；
+//   - 否则经目录 upstream→平台名 反查（多个平台名时取字典序首个，保证确定性）；
+//   - 反查不到（无映射渠道）→ 原样返回，后续按原行为失败并报错。
+//
+// 调度引擎惰性组装，此处先经 Coordinator 触发确保目录可用（提交链紧接着也会组装）。
+func normalizeDispatchModel(ctx context.Context, upstream string) string {
+	cat := dispatchadapter.CatalogFromCoordinator(ctx)
+	if cat == nil {
+		return upstream
+	}
+	if len(cat.Snapshot(ctx, 0, upstream, nil)) > 0 {
+		return upstream
+	}
+	if names := cat.PlatformNamesByUpstream(upstream); len(names) > 0 {
+		return names[0]
+	}
+	return upstream
 }
 
 // extractUpstreamTaskID 从 PrivateData 提取上游任务 ID（渲染上下文用）。

@@ -19,7 +19,22 @@ const (
 	catalogRefreshInterval = 5 * time.Second
 	catalogInvalidateChan  = keyPrefix + "catalog:invalidate" // pub/sub 频道：渠道/能力变更时发布
 	rampNewChannelWindow   = 10 * time.Minute                 // 新建渠道视为爬坡期的窗口
+
+	// jsTaskChannelType JS 任务插件渠道类型（relay/constant.ProviderJSTask，
+	// 本地常量避免向底层常量包外的依赖扩散，与 jsplugin/registry.go 同做法）。
+	jsTaskChannelType = 43
 )
+
+// jsPluginActiveResolver JS 插件激活状态判定（cmd 启动时注入
+// jsplugin.PluginActive）：调度目录构建时据此剔除「绑定了未激活插件的 JS 渠道」。
+// 未注入（单测/未接线）时不判定，行为与旧版一致。
+var jsPluginActiveResolver atomic.Pointer[func(pluginKey string) bool]
+
+// SetJSPluginActiveResolver 注入 JS 插件激活状态判定。传入 nil 清除。
+func SetJSPluginActiveResolver(fn func(pluginKey string) bool) {
+	p := fn
+	jsPluginActiveResolver.Store(&p)
+}
 
 // ChannelMeta 转发所需的渠道元数据（调度核心不关心，handler 构造 ChannelSelection 用）。
 type ChannelMeta struct {
@@ -45,6 +60,7 @@ type catalogRow struct {
 	BaseURL           string  `json:"base_url"`
 	ModelName         string  `json:"model_name"`
 	UpstreamModel     string  `json:"upstream_model"`
+	PluginKey         string  `json:"plugin_key"`
 	Weight            int     `json:"weight"`
 	MaxConcurrency    int     `json:"max_concurrency"`
 	Settings          string  `json:"settings"`
@@ -74,6 +90,12 @@ type snapshotIndex struct {
 	meta          map[int64]map[string]ChannelMeta // channelID → model → 转发元数据
 	strict        map[int64]int                    // 严格容量渠道 → max_concurrency（供 R4 降级查询）
 	channelModels map[int64][]string               // channelID → 服务的模型列表（维护 cron 用）
+	// platformByUpstream 上游模型名 → 平台模型名列表（去重升序）。/pjs 分发器把插件
+	// 回显的上游名归一成平台名做权限/计费/调度用（调度索引键是 chn_abilities.model_name）。
+	platformByUpstream map[string][]string
+	// excludedJS 因「绑定的插件未激活」被剔除出目录的 JS 渠道（升序去重）。
+	// 与上一份快照对比，集合变化时告警一次——静默剔除会让人找不到渠道去哪了。
+	excludedJS []int64
 }
 
 // Catalog 实现 dispatch.CatalogPort：渠道目录内存快照，定时刷新 + pub/sub 失效。
@@ -100,10 +122,11 @@ func NewCatalog(policy func() *dispatch.RoutingPolicy, load catalogLoader, runti
 		c.load = loadCatalogFromDB
 	}
 	c.current.Store(&snapshotIndex{
-		byModel:       map[string][]dispatch.Channel{},
-		meta:          map[int64]map[string]ChannelMeta{},
-		strict:        map[int64]int{},
-		channelModels: map[int64][]string{},
+		byModel:            map[string][]dispatch.Channel{},
+		meta:               map[int64]map[string]ChannelMeta{},
+		strict:             map[int64]int{},
+		channelModels:      map[int64][]string{},
+		platformByUpstream: map[string][]string{},
 	})
 	return c
 }
@@ -151,6 +174,17 @@ func (c *Catalog) ChannelModels() map[int64][]string {
 		out[id] = append([]string(nil), models...)
 	}
 	return out
+}
+
+// PlatformNamesByUpstream 按上游模型名（chn_abilities.upstream_model）反查平台模型名
+// 列表（升序）。/pjs 分发器用它把插件回显的上游名归一成平台名——调度索引、mdl 权限、
+// 计费取价都以平台名为键。无映射渠道时返回 nil。
+func (c *Catalog) PlatformNamesByUpstream(upstream string) []string {
+	idx := c.current.Load()
+	if idx == nil {
+		return nil
+	}
+	return append([]string(nil), idx.platformByUpstream[upstream]...)
 }
 
 // ChannelRuntimeState 单个渠道的调度运行状态聚合（管理后台展示用）。
@@ -372,10 +406,11 @@ func (c *Catalog) Rebuild(ctx context.Context) {
 	rampWindowMs := int64(pol.Ramp.WindowSeconds) * 1000
 
 	idx := &snapshotIndex{
-		byModel:       make(map[string][]dispatch.Channel),
-		meta:          make(map[int64]map[string]ChannelMeta),
-		strict:        make(map[int64]int),
-		channelModels: make(map[int64][]string),
+		byModel:            make(map[string][]dispatch.Channel),
+		meta:               make(map[int64]map[string]ChannelMeta),
+		strict:             make(map[int64]int),
+		channelModels:      make(map[int64][]string),
+		platformByUpstream: make(map[string][]string),
 	}
 	// 同一渠道的运行时读值按 (channel, model) 缓存，避免同轮重复读
 	type rtKey struct {
@@ -385,7 +420,22 @@ func (c *Catalog) Rebuild(ctx context.Context) {
 	rtCache := make(map[rtKey]RuntimeReadout)
 	degraded, carried := 0, 0
 
+	// JS 任务渠道的插件激活预检：渠道 active + 能力 enabled 只说明「渠道行」可服务，
+	// 绑定的插件未启用/无激活版本时渠道实际不可用——不剔除的话它会与正常渠道同池
+	// 竞争并胜出，选中后在提交链报「插件未激活」且无渠道级重试（调度会话已结束），
+	// 把可用渠道全部饿死。未注入 resolver（单测/未接线）时跳过判定，行为与旧版一致。
+	var pluginActive func(pluginKey string) bool
+	if fnp := jsPluginActiveResolver.Load(); fnp != nil {
+		pluginActive = *fnp
+	}
+	excludedJS := make(map[int64]struct{})
+
 	for _, row := range data.rows {
+		if row.ChannelType == jsTaskChannelType && pluginActive != nil &&
+			(row.PluginKey == "" || !pluginActive(row.PluginKey)) {
+			excludedJS[row.ChannelID] = struct{}{}
+			continue
+		}
 		rk := rtKey{row.ChannelID, row.ModelName}
 		rt, ok := rtCache[rk]
 		if !ok {
@@ -427,6 +477,11 @@ func (c *Catalog) Rebuild(ctx context.Context) {
 		}
 		idx.byModel[row.ModelName] = append(idx.byModel[row.ModelName], ch)
 		idx.channelModels[row.ChannelID] = append(idx.channelModels[row.ChannelID], row.ModelName)
+		// 上游名 → 平台名反向索引（仅映射行：upstream 非空且与平台名不同）
+		if row.UpstreamModel != "" && row.UpstreamModel != row.ModelName &&
+			!slices.Contains(idx.platformByUpstream[row.UpstreamModel], row.ModelName) {
+			idx.platformByUpstream[row.UpstreamModel] = append(idx.platformByUpstream[row.UpstreamModel], row.ModelName)
+		}
 
 		if _, ok := idx.meta[row.ChannelID]; !ok {
 			idx.meta[row.ChannelID] = make(map[string]ChannelMeta)
@@ -455,6 +510,27 @@ func (c *Catalog) Rebuild(ctx context.Context) {
 			idx.strict[row.ChannelID] = row.MaxConcurrency
 		}
 	}
+	// 反向索引按平台名排序保证确定性（多个渠道把同一上游名映射到不同平台名时取值稳定）
+	for up, names := range idx.platformByUpstream {
+		slices.Sort(names)
+		idx.platformByUpstream[up] = names
+	}
+	for id := range excludedJS {
+		idx.excludedJS = append(idx.excludedJS, id)
+	}
+	slices.Sort(idx.excludedJS)
+
+	// 剔除集合变化时告警一次（稳定后不再刷屏）：被剔除的渠道在管理后台目录视图里
+	// 直接消失，不给日志的话排障时无从知道渠道为何不参与调度
+	if prev == nil || !slices.Equal(idx.excludedJS, prev.excludedJS) {
+		if len(idx.excludedJS) > 0 {
+			g.Log().Warningf(ctx, "[Dispatch] %d 个 JS 任务渠道因绑定的插件未激活被剔除出调度目录（渠道ID: %v）；启用对应插件后自动恢复",
+				len(idx.excludedJS), idx.excludedJS)
+		} else if len(prev.excludedJS) > 0 {
+			g.Log().Info(ctx, "[Dispatch] 此前因插件未激活被剔除的 JS 任务渠道已全部恢复参与调度")
+		}
+	}
+
 	c.current.Store(idx)
 	if degraded > 0 {
 		g.Log().Warningf(ctx, "[Dispatch] 目录刷新时 Redis 健康读取降级: %d 个渠道×模型读失败，其中 %d 个已沿用上一份快照的健康读值（其余无历史，按满分处理）",
@@ -501,7 +577,9 @@ func loadCatalogFromDB(ctx context.Context) (*catalogData, error) {
 		Where("a.enabled", true).
 		Where("c.status", "active").
 		Fields("c.id as channel_id, c.name as channel_name, c.type as channel_type, c.base_url, " +
-			"a.model_name, a.upstream_model, c.weight, c.max_concurrency, c.settings, " +
+			"a.model_name, a.upstream_model, " +
+			"COALESCE(NULLIF(c.settings::jsonb ->> 'plugin_key', ''), '') as plugin_key, " +
+			"c.weight, c.max_concurrency, c.settings, " +
 			"c.tier, c.strict_capacity, a.cost_ratio, " +
 			"a.supports_responses, a.chat_via_responses, " +
 			"(EXTRACT(EPOCH FROM c.created_at) * 1000)::bigint as created_at_ms").

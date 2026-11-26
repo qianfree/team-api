@@ -293,3 +293,71 @@ func TestCatalog_WorstModel_StableOnTiedScores(t *testing.T) {
 		assert.InDelta(t, 100.0, got[1].WorstModelScore, 1e-6)
 	}
 }
+
+// TestCatalog_JSChannelPluginFilter 目录构建剔除「绑定了未激活插件的 JS 渠道」：
+// 此类渠道渠道行 active、能力 enabled，但插件不在当前 generation——不剔除会抢占
+// 调度并在提交链报「插件未激活」且无渠道级重试。
+func TestCatalog_JSChannelPluginFilter(t *testing.T) {
+	rows := []catalogRow{
+		{ChannelID: 1, ChannelName: "js-inactive", ChannelType: jsTaskChannelType, PluginKey: "hailuo",
+			ModelName: "MiniMax-H3", Weight: 10, Tier: "primary"},
+		{ChannelID: 2, ChannelName: "js-active", ChannelType: jsTaskChannelType, PluginKey: "grsai",
+			ModelName: "MiniMax-H3", UpstreamModel: "minimax-h3", Weight: 5, Tier: "secondary"},
+		{ChannelID: 3, ChannelName: "js-unbound", ChannelType: jsTaskChannelType,
+			ModelName: "MiniMax-H3", Weight: 5, Tier: "secondary"},
+		{ChannelID: 4, ChannelName: "minimax", ChannelType: 29,
+			ModelName: "MiniMax-H3", Weight: 5, Tier: "secondary"},
+	}
+	active := map[string]bool{"grsai": true}
+	SetJSPluginActiveResolver(func(key string) bool { return active[key] })
+	defer SetJSPluginActiveResolver(nil)
+
+	c := testCatalog(rows, nil, nil)
+	got := c.Snapshot(context.Background(), 0, "MiniMax-H3", nil)
+	// 未激活（1）与未绑定插件（3）的 JS 渠道被剔除；激活的（2）与普通渠道（4）保留
+	require.Len(t, got, 2)
+	ids := []int64{got[0].ID, got[1].ID}
+	assert.ElementsMatch(t, []int64{2, 4}, ids)
+	// 剔除集合可观测（升序）
+	assert.Equal(t, []int64{1, 3}, c.current.Load().excludedJS)
+	// 转发元数据同步剔除
+	_, ok := c.ForwardMeta(1, "MiniMax-H3")
+	assert.False(t, ok)
+	// 剔除渠道不占 channelModels（维护 cron 不再遍历）
+	assert.NotContains(t, c.ChannelModels(), int64(1))
+
+	// 插件启用后重建快照，其渠道恢复参与调度；未绑定插件的渠道（3）仍被剔除
+	active["hailuo"] = true
+	c.Rebuild(context.Background())
+	got = c.Snapshot(context.Background(), 0, "MiniMax-H3", nil)
+	require.Len(t, got, 3)
+	ids = []int64{got[0].ID, got[1].ID, got[2].ID}
+	assert.ElementsMatch(t, []int64{1, 2, 4}, ids)
+	assert.Equal(t, []int64{3}, c.current.Load().excludedJS)
+}
+
+// TestCatalog_JSChannelFilterWithoutResolver 未注入 resolver（未接线/单测）时
+// 不做插件判定，行为与旧版一致。
+func TestCatalog_JSChannelFilterWithoutResolver(t *testing.T) {
+	SetJSPluginActiveResolver(nil)
+	c := testCatalog([]catalogRow{
+		{ChannelID: 1, ChannelName: "js", ChannelType: jsTaskChannelType, ModelName: "m", Weight: 5},
+	}, nil, nil)
+	assert.Len(t, c.Snapshot(context.Background(), 0, "m", nil), 1)
+}
+
+// TestCatalog_PlatformNamesByUpstream 上游名 → 平台名反向索引（/pjs 归一用）：
+// 仅映射行（upstream 非空且 ≠ 平台名）进入索引，同上游多平台名去重升序。
+func TestCatalog_PlatformNamesByUpstream(t *testing.T) {
+	rows := []catalogRow{
+		{ChannelID: 2, ChannelName: "B", ModelName: "MiniMax-H3", UpstreamModel: "minimax-h3", Weight: 5},
+		{ChannelID: 3, ChannelName: "C", ModelName: "MiniMax-H3-Pro", UpstreamModel: "minimax-h3", Weight: 5},
+		{ChannelID: 3, ChannelName: "C", ModelName: "MiniMax-H3-Pro", UpstreamModel: "minimax-h3", Weight: 5}, // 重复行去重
+		{ChannelID: 4, ChannelName: "D", ModelName: "gpt-4o", Weight: 5},                                      // 无映射行不进索引
+	}
+	c := testCatalog(rows, nil, nil)
+
+	assert.Equal(t, []string{"MiniMax-H3", "MiniMax-H3-Pro"}, c.PlatformNamesByUpstream("minimax-h3"))
+	assert.Nil(t, c.PlatformNamesByUpstream("gpt-4o"))
+	assert.Nil(t, c.PlatformNamesByUpstream("unknown"))
+}
