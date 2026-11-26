@@ -50,11 +50,12 @@ const aspectRatioOptions = [
 ]
 
 // ── 参考素材 ──
-// 全部素材随请求经 references[] 发出（compileVideoPrompt 决定角色）：单图走 first_frame
-// 首帧（全模型兼容），多图/含音频/含视频走 reference_* 多模态参考（仅多模态参考模型
-// 承接，不支持时上游明确 400）。素材引用形态由上传通道可用性决定（见 submitTask）：
-// 云存储已配置时先经 /v1/files 上传换 file_id（网关解析为对象存储签名 URL 发上游），
-// 否则/失败回退 base64 内联（视频素材无法内联，未上传成功则不发并明确提示）。
+// 全部素材随请求经 references[] 以参考形式发出（compileVideoPrompt 决定角色）：图片一律
+// reference_image、音频 reference_audio、视频 reference_video——不做「单图转首帧」，
+// 首帧与参考图是上游两种语义（MiniMax H3 / grsai 等上游首尾帧须成对且与参考图互斥），
+// 仅多模态参考模型承接，不支持时上游明确 400。素材引用形态由上传通道可用性决定（见
+// submitTask）：云存储已配置时先经 /v1/files 上传换 file_id（网关解析为对象存储签名 URL
+// 发上游），否则/失败回退 base64 内联（视频素材无法内联，未上传成功则不发并明确提示）。
 const {
 	list: attachmentList,
 	totalBytes: attachmentBytes,
@@ -224,7 +225,7 @@ async function submitTask() {
 		}
 		submitPhase.value = 'submitting'
 
-		// 正文里的 [@图片1] 换成纯文字标签；首帧参考图取第一张图片附件
+		// 正文里的 [@图片1] 换成纯文字标签；参考图全部以 reference_image 角色发出
 		const compiled = compileVideoPrompt(prompt.value, attachmentList.value, fileIds)
 		deferredNames.value = compiled.deferred.map(a => a.name)
 
@@ -244,7 +245,7 @@ async function submitTask() {
 		if (aspectRatio.value) {
 			body.aspect_ratio = aspectRatio.value
 		}
-		// 参考素材唯一通道（首帧 = role first_frame），角色选择由 compileVideoPrompt 决定
+		// 参考素材唯一通道，角色由 compileVideoPrompt 决定（图片一律 reference_image）
 		if (compiled.references.length) {
 			body.references = compiled.references
 		}

@@ -238,7 +238,7 @@ const paramTableColumns = computed<DataTableColumns<ParamDef>>(() => [
 				<Icon name="infoCircle" size="sm" class="text-amber-500 mt-0.5 flex-shrink-0" />
 				<div class="text-xs text-amber-700 space-y-1">
 					<p>以上参数通过 <code class="bg-amber-100 px-1 rounded">{{ currentGroup?.endpoint || '/v1/images/generations' }}</code> 端点发送，使用自定义参数区域逐行添加。</p>
-					<p v-if="currentGroup?.async">该厂商图像为<strong>异步任务式</strong>：提交后返回 task_id，需轮询 <code class="bg-amber-100 px-1 rounded">GET /v1/images/generations/async/{task_id}</code> 取图。在线体验会自动完成提交与轮询。</p>
+					<p v-if="currentGroup?.async">该厂商图像为<strong>异步任务式</strong>：提交后返回 task_id，需轮询 <code class="bg-amber-100 px-1 rounded">GET /v1/images/generations/async/{task_id}</code> 取图。此类模型不支持在线体验（仅提供 OpenAI 协议同步调用），请通过 API 调用。</p>
 					<p>参数名为 JSON 键名，值为对应格式的字符串（系统会自动识别布尔值和数字）。</p>
 				</div>
 			</div>

@@ -20,9 +20,8 @@ interface ModelItem {
 	per_request_price?: number | null
 	input_price?: number | null
 	output_price?: number | null
-	// 图片模型异步端点是否可用（真异步厂商，或同步厂商且后台「同步图片异步化」开启）
-	async_image?: boolean
-	// 图片模型同步端点是否可用（「仅异步」厂商为 false）
+	// 图片模型同步端点（OpenAI 协议 /v1/images/generations）是否可用；「仅异步」厂商为 false，
+	// 在线体验图片 Tab 过滤不展示
 	image_sync_supported?: boolean
 	// 模型能力特性 JSON（如 {"vision":true,"audio_input":true}），用于门控附件上传
 	capabilities?: string
