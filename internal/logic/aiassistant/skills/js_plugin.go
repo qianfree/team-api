@@ -112,8 +112,11 @@ func (JSPluginSkill) Reference() string {
 - buildQueryRequest(ctx)：构造轮询请求；入参 ctx.tasks=[{taskId, taskData?, state?}]（per_task 恒单元素，
   batch 为同渠道同插件的全部未终态任务；taskId 是上游任务 ID，taskData 是上一轮快照，state 是上次返回的状态）。
   batch 时 items 里省略上游本轮未回报的任务（或对其返回 done:false）
-- parseQueryResponse(ctx)：解析轮询响应 {items: [{taskId, done, taskData?, state?, usage?, artifacts?, error?}]}；
+- parseQueryResponse(ctx)：解析轮询响应 {items: [{taskId, done, progress?, taskData?, state?, usage?, artifacts?, error?}]}；
   items[].taskId 必须在本次 ctx.tasks 内；done:true 且带 error:{code, message} = 失败。
+  上游带进度时非终态报 items[].progress（number 0~100 或 "42%"），网关归一化落库并在查询端点/renderTask
+  的 task.progress 透出；不报则保持上一轮值（从未上报的任务处理中基座兜底 30%，不要伪造进度），
+  也不要把进度塞进 taskData 私有字段代替上报。
   ctx.status 恒为 200（网关不透传轮询的 HTTP 状态码），不要按 404/5xx 写分支——终态一律按
   ctx.responseBody 的内容判定，无法识别的响应返回 done:false（网关的任务超时兜底）。
   终态 usage 优先读上游响应里的实际计量；上游不返回时才读 state 里保存的请求值
@@ -136,7 +139,8 @@ func (JSPluginSkill) Reference() string {
   data、contentUrl——没有 error 字段，失败原因读 task.failReason。status 是平台状态枚举
   SUBMITTED / IN_PROGRESS / SUCCESS / FAILURE（不是上游状态词）；要对外呈现 OpenAI/厂商状态词
   （queued / in_progress / completed / failed 等）必须在渲染钩子里显式映射。progress 是百分比
-  字符串（如 "50%"，可能为空），需要数字时 parseInt。data 是最新上游快照，成功任务里 artifacts
+  字符串（如 "50%"，来自 items[].progress 上报、未上报保持上一轮值，可能为空），需要数字时 parseInt。
+  data 是最新上游快照，成功任务里 artifacts
   声明路径的值已替换为平台内容链接；contentUrl 为主产物链接。renderSubmit 只收到
   publicTaskId / model / status / contentUrl。renderTasks（dynamic 批量查询的缺省渲染钩子）
   入参 {tasks: [同上任务的数组]}，返回同 {status?, body}

@@ -621,6 +621,8 @@ func applyTaskPollResult(
 	dbgSess *common.DebugSession,
 	dbgAttempt *common.DebugAttempt,
 ) {
+	// 非终态且本轮未上报进度：保持上一轮落库值（详见 backfillPollProgress）
+	backfillPollProgress(taskInfo, task)
 	// 状态变化判定 + 调试记录提交（CAS 更新 task.Status 之前，task 行内即上一次轮询值）
 	if pollStateChanged(taskInfo, task) {
 		dbgAttempt.MarkFinal(nil)
@@ -1130,4 +1132,32 @@ func pollDebugLogEnabled(settings json.RawMessage, task *common.AsyncTask) bool 
 // 独立成纯函数以便回归测试；在 CAS 更新 task 之前调用，task 内即上一次轮询持久化的值
 func pollStateChanged(taskInfo *common.TaskInfo, task *common.AsyncTask) bool {
 	return string(taskInfo.Status) != task.Status || taskInfo.Progress != task.Progress
+}
+
+// noReportInProgressProgress 从未上报进度的任务进入 IN_PROGRESS 后的兜底展示进度：
+// 恒 0% 直到终态会被用户误读为任务卡死
+const noReportInProgressProgress = "30%"
+
+// backfillPollProgress 非终态且本轮未上报进度（旧插件/上游无进度信息）时的回填：
+// 上一轮已有非零进度则保持（插件曾上报后停报，不让进度回跳）；从未上报（提交落库
+// 的 "0%" 或历史空值行）在 IN_PROGRESS 期给非零兜底（见常量注释），早期状态保持
+// 0%。空值直落会让查询端点的 progress 字段随轮询消失（提交 0% → 处理中无字段 →
+// 终态 100%）；终态不回填，失败任务保持空进度的既有语义。独立成纯函数以便回归测试
+func backfillPollProgress(taskInfo *common.TaskInfo, task *common.AsyncTask) {
+	if taskInfo.Status.IsTerminal() || taskInfo.Progress != "" {
+		return
+	}
+	if task.Progress != "" && task.Progress != "0%" {
+		taskInfo.Progress = task.Progress
+		return
+	}
+	if taskInfo.Status == common.TaskStatusInProgress {
+		taskInfo.Progress = noReportInProgressProgress
+		return
+	}
+	if task.Progress != "" {
+		taskInfo.Progress = task.Progress
+	} else {
+		taskInfo.Progress = "0%"
+	}
 }

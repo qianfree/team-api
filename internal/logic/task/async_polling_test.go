@@ -64,6 +64,45 @@ func TestPollStateChanged(t *testing.T) {
 	}
 }
 
+// TestBackfillPollProgress 非终态未上报进度时的回填：
+// 空值直落会让查询端点的 progress 字段随轮询消失；从未上报的任务在
+// IN_PROGRESS 期给非零兜底（恒 0% 会被用户误读为卡死）
+func TestBackfillPollProgress(t *testing.T) {
+	// 插件本轮未上报：保持任务行上一轮值（曾上报后停报，不让进度回跳）
+	info := &common.TaskInfo{Status: common.TaskStatusInProgress}
+	backfillPollProgress(info, &common.AsyncTask{Progress: "42%"})
+	if info.Progress != "42%" {
+		t.Errorf("未上报时应保持上一轮值 42%%，得到 %q", info.Progress)
+	}
+	// 从未上报（提交落库的 "0%" 与历史空值行）：IN_PROGRESS 给非零兜底
+	for _, persisted := range []string{"", "0%"} {
+		info = &common.TaskInfo{Status: common.TaskStatusInProgress}
+		backfillPollProgress(info, &common.AsyncTask{Progress: persisted})
+		if info.Progress != noReportInProgressProgress {
+			t.Errorf("从未上报的 IN_PROGRESS 应回落兜底 %q（落库 %q），得到 %q",
+				noReportInProgressProgress, persisted, info.Progress)
+		}
+	}
+	// 插件已上报：原样保留，不被任务行旧值覆盖
+	info = &common.TaskInfo{Status: common.TaskStatusInProgress, Progress: "37%"}
+	backfillPollProgress(info, &common.AsyncTask{Progress: "42%"})
+	if info.Progress != "37%" {
+		t.Errorf("已上报进度不应被覆盖，得到 %q", info.Progress)
+	}
+	// 早期状态（SUBMITTED）：保持 0%，不提前跳进度
+	info = &common.TaskInfo{Status: common.TaskStatusSubmitted}
+	backfillPollProgress(info, &common.AsyncTask{Progress: "0%"})
+	if info.Progress != "0%" {
+		t.Errorf("SUBMITTED 应保持 0%%，得到 %q", info.Progress)
+	}
+	// 终态不回填：失败任务保持空进度语义（对齐原生适配器）
+	info = &common.TaskInfo{Status: common.TaskStatusFailure}
+	backfillPollProgress(info, &common.AsyncTask{Progress: "42%"})
+	if info.Progress != "" {
+		t.Errorf("终态不应回填进度，得到 %q", info.Progress)
+	}
+}
+
 // TestPollDebugLogEnabled 轮询调试开关判定：JSONB 解析 + 目标过滤 AND 组合
 func TestPollDebugLogEnabled(t *testing.T) {
 	task := &common.AsyncTask{TenantID: 1, UserID: 2, ApiKeyID: 3}

@@ -568,11 +568,13 @@ func taskInfoFromQueryItem(plugin *jsplugin.ActivePlugin, item contract.QueryIte
 	case item.Error != nil:
 		info.Status = common.TaskStatusInProgress
 		info.FailReason = item.Error.Message
+		info.Progress = item.ProgressPct
 	case item.Done:
 		info.Status = common.TaskStatusSuccess
 		info.Progress = "100%"
 	default:
 		info.Status = common.TaskStatusInProgress
+		info.Progress = item.ProgressPct
 	}
 	if len(item.TaskData) > 0 {
 		info.Data = item.TaskData
@@ -839,7 +841,14 @@ func resolveUpstreamURL(baseURL, target string) (string, error) {
 	if !strings.HasPrefix(target, "/") {
 		target = "/" + target
 	}
-	return strings.TrimRight(baseURL, "/") + target, nil
+	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if base == "" {
+		// 渠道 baseUrl 缺失时拼出的裸路径只会让 http 层报
+		// `unsupported protocol scheme ""`，无从定位；前置为明确的配置错误，
+		// 经 task_handler 的 502 路径透给客户端与日志。
+		return "", fmt.Errorf("channel base_url is not configured, cannot resolve upstream path %q", target)
+	}
+	return base + target, nil
 }
 
 // hostOf 从 baseURL 提取 host[:port]（fetch 白名单用）。

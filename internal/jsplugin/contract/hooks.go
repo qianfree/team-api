@@ -2,7 +2,9 @@ package contract
 
 import (
 	"encoding/json"
+	"math"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/gogf/gf/v2/errors/gerror"
@@ -303,11 +305,14 @@ type ArtifactDecl struct {
 type QueryItem struct {
 	TaskID    string          `json:"taskId"`              // 对应 BuildQueryContext.Tasks 的回带
 	Done      bool            `json:"done"`                // 终态判定
+	Progress  json.RawMessage `json:"progress,omitempty"`  // 非终态可选：进度（number 0~100 或 "42%"），校验后读 ProgressPct
 	TaskData  json.RawMessage `json:"taskData,omitempty"`  // 最新上游快照（每轮整体覆盖）
 	State     json.RawMessage `json:"state,omitempty"`     // 省略=保持
-	Usage     json.RawMessage `json:"usage,omitempty"`     // 终态用量（键 ∈ 宿主固定词汇 HostUsageKeys）
+	Usage     json.RawMessage `json:"usage,omitempty"`     // 终态用量（键 ∈ 宿主固定用量词汇 HostUsageKeys）
 	Artifacts []ArtifactDecl  `json:"artifacts,omitempty"` // 终态产物声明
 	Error     *TaskHookError  `json:"error,omitempty"`     // 任务级失败；done=true 且有 error → FAILURE
+	// ProgressPct progress 归一化结果（"42%" 形态；未上报为空）。落库/渲染读它，不读原始 Progress
+	ProgressPct string `json:"-"`
 }
 
 // QueryResult parseQueryResponse 返回。
@@ -345,6 +350,13 @@ func ValidateQueried(raw map[string]json.RawMessage, want []QueryTaskRef) (*Quer
 		if len(item.State) > MaxPassthroughBytes {
 			return nil, gerror.Newf("items[%d].state 超过 %d 字节上限", i, MaxPassthroughBytes)
 		}
+		if len(item.Progress) > 0 {
+			pct, err := normalizeProgress(item.Progress)
+			if err != nil {
+				return nil, gerror.Wrapf(err, "items[%d].progress", i)
+			}
+			item.ProgressPct = pct
+		}
 		if item.Error != nil && strings.TrimSpace(item.Error.Message) == "" {
 			item.Error.Message = "unknown task error"
 		}
@@ -360,6 +372,33 @@ func ValidateQueried(raw map[string]json.RawMessage, want []QueryTaskRef) (*Quer
 // artifactKeyPattern 产物 key 形态：字母数字开头，允许连字符/下划线（对齐 DB 列宽 128；
 // 常见取值形如 "audio-0"、"cover-1"、"video"）。
 var artifactKeyPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$`)
+
+// normalizeProgress 校验并归一化插件上报的进度：接受 number 0~100 或 "42%"/"42"
+// 字符串，输出宿主统一的 "42%" 形态。非法值按契约错误拒绝（干跑/测试期即暴露，
+// 不让坏值静默流进轮询链路）。
+func normalizeProgress(raw json.RawMessage) (string, error) {
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return "", gerror.Newf("须为 number 0~100 或百分比字符串: %s", raw)
+	}
+	var n float64
+	switch t := v.(type) {
+	case float64:
+		n = t
+	case string:
+		f, err := strconv.ParseFloat(strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(t), "%")), 64)
+		if err != nil {
+			return "", gerror.Newf("%q 不是有效进度", t)
+		}
+		n = f
+	default:
+		return "", gerror.Newf("须为 number 0~100 或百分比字符串: %s", raw)
+	}
+	if n < 0 || n > 100 {
+		return "", gerror.Newf("%v 超出 0~100 范围", n)
+	}
+	return strconv.Itoa(int(math.Round(n))) + "%", nil
+}
 
 // validate 校验单条产物声明。
 func (a *ArtifactDecl) validate() error {

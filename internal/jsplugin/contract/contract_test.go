@@ -156,6 +156,59 @@ func TestArtifactValidation(t *testing.T) {
 	}
 }
 
+func TestQueryProgressValidation(t *testing.T) {
+	// 合法形态：number 0~100 / "42%" / "42"，归一化为 "NN%"
+	ok := map[string]struct{ raw, want string }{
+		"整数":     {`37`, "37%"},
+		"带百分号":   {`"42%"`, "42%"},
+		"无百分号串":  {`"42"`, "42%"},
+		"小数四舍五入": {`42.6`, "43%"},
+		"下边界":    {`0`, "0%"},
+		"上边界":    {`100`, "100%"},
+	}
+	for name, c := range ok {
+		raw := map[string]json.RawMessage{
+			"items": json.RawMessage(`[{"taskId":"t1","done":false,"progress":` + c.raw + `}]`),
+		}
+		result, err := ValidateQueried(raw, []QueryTaskRef{{TaskID: "t1"}})
+		if err != nil {
+			t.Fatalf("%s 不应报错: %v", name, err)
+		}
+		if got := result.Items[0].ProgressPct; got != c.want {
+			t.Errorf("%s 归一化结果 %q, want %q", name, got, c.want)
+		}
+	}
+
+	// 未上报：不报错，ProgressPct 为空（由轮询层保持上一轮值）
+	absent := map[string]json.RawMessage{
+		"items": json.RawMessage(`[{"taskId":"t1","done":false}]`),
+	}
+	result, err := ValidateQueried(absent, []QueryTaskRef{{TaskID: "t1"}})
+	if err != nil {
+		t.Fatalf("未上报 progress 不应报错: %v", err)
+	}
+	if result.Items[0].ProgressPct != "" {
+		t.Fatalf("未上报 progress 应为空，得到 %q", result.Items[0].ProgressPct)
+	}
+
+	// 非法值：越界 / 非数值 / 布尔 / null 整体拒绝
+	bad := map[string]string{
+		"越上界":  `101`,
+		"越下界":  `-1`,
+		"乱字符串": `"abc"`,
+		"布尔":   `true`,
+		"null": `null`,
+	}
+	for name, raw := range bad {
+		body := map[string]json.RawMessage{
+			"items": json.RawMessage(`[{"taskId":"t1","done":false,"progress":` + raw + `}]`),
+		}
+		if _, err := ValidateQueried(body, []QueryTaskRef{{TaskID: "t1"}}); err == nil {
+			t.Fatalf("%s（%s）应当报错", name, raw)
+		}
+	}
+}
+
 func TestIconValidation(t *testing.T) {
 	cases := []struct {
 		icon  string

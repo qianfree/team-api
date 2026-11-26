@@ -362,6 +362,8 @@ export interface QueryItem {
   taskId: string;
   /** 终态判定 */
   done: boolean;
+  /** 非终态可选：进度（number 0~100 或 "42%"），基座归一化落库并在查询端点/renderTask 透出；未上报保持上一轮值 */
+  progress?: number | string;
   taskData?: any;
   state?: any;
   /** 终态官方用量（键 ∈ 宿主固定词汇 HostUsage；结算按官方计量多退少补） */

@@ -113,7 +113,7 @@ func HandleTaskSubmit(r *ghttp.Request) {
 	rc.ForwardingTrace = buildTaskForwardingTrace(r.URL.Path, body, channelMeta, capture.StatusCode())
 
 	// 异步记录审计日志
-	go recordTaskSubmitAudit(r, rc, capture, body)
+	go recordTaskSubmitAudit(buildTaskSubmitAudit(r, rc, capture, body))
 }
 
 // HandleTaskFetch 处理异步任务查询（GET /v1/video/generations/:id, GET /suno/fetch/:id）
@@ -364,7 +364,7 @@ func HandleMjSubmit(r *ghttp.Request) {
 	}
 
 	rc.ForwardingTrace = buildTaskForwardingTrace(r.URL.Path, body, channelMeta, capture.StatusCode())
-	go recordTaskSubmitAudit(r, rc, capture, body)
+	go recordTaskSubmitAudit(buildTaskSubmitAudit(r, rc, capture, body))
 }
 
 // HandleAliImageSubmit 处理异步图片生成任务提交（POST /v1/images/generations/async）
@@ -455,7 +455,7 @@ func HandleAliImageSubmit(r *ghttp.Request) {
 	}
 
 	rc.ForwardingTrace = buildTaskForwardingTrace(r.URL.Path, body, channelMeta, capture.StatusCode())
-	go recordTaskSubmitAudit(r, rc, capture, body)
+	go recordTaskSubmitAudit(buildTaskSubmitAudit(r, rc, capture, body))
 }
 
 // registerAsyncTask 注册异步任务到实时监控
@@ -537,9 +537,14 @@ func extractMjTaskID(r *ghttp.Request) string {
 	return ""
 }
 
-// recordTaskSubmitAudit 记录异步任务提交的审计日志
-func recordTaskSubmitAudit(r *ghttp.Request, rc *relay_handler.TaskRelayContext, capture *ResponseCaptureWriter, body []byte) {
-	relayDataProvider.RecordAudit(context.Background(), &relay_common.AuditRecord{
+// buildTaskSubmitAudit 在请求 goroutine 上同步构建任务提交的审计记录。
+// 所有源自 request/response 的字段（r.URL、r.Header、capture 的响应体/状态码/响应头）
+// 必须在 handler 返回前读取：ghttp 在 handler 返回后于服务端 goroutine 执行
+// Response.Flush，net/http 会继续向底层响应头 map 补写 Date/Content-Length 等，
+// 此时审计 goroutine 再读/遍历这些 map 即并发读写，直接 fatal 整个进程
+// （concurrent map iteration and map write，/v1/videos 崩溃的根因）。
+func buildTaskSubmitAudit(r *ghttp.Request, rc *relay_handler.TaskRelayContext, capture *ResponseCaptureWriter, body []byte) *relay_common.AuditRecord {
+	return &relay_common.AuditRecord{
 		TenantID:        rc.TenantID,
 		UserID:          rc.UserID,
 		ApiKeyID:        rc.ApiKeyID,
@@ -561,7 +566,13 @@ func recordTaskSubmitAudit(r *ghttp.Request, rc *relay_handler.TaskRelayContext,
 		TaskID:          rc.TaskID,
 		TaskStatus:      "SUBMITTED",
 		ForwardingTrace: rc.ForwardingTrace,
-	})
+	}
+}
+
+// recordTaskSubmitAudit 异步落库任务提交的审计日志：只消费同步构建好的快照
+// （见 buildTaskSubmitAudit），goroutine 内不触碰 request/response 活对象。
+func recordTaskSubmitAudit(rec *relay_common.AuditRecord) {
+	relayDataProvider.RecordAudit(context.Background(), rec)
 }
 
 // buildTaskForwardingTrace 从渠道选择结果构建转发路径追踪

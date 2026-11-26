@@ -227,7 +227,11 @@ export function parseQueryResponse(ctx) {
       }],
     };
   }
-  return { items: [{ taskId: t.taskId, done: false, taskData: resp, state }] };
+  // 进行中：上游带进度（number 0~100 或 "42%"）时上报，宿主归一化落库并透出给查询端点
+  const item = { taskId: t.taskId, done: false, taskData: resp, state };
+  const progress = Number(resp.progress);
+  if (Number.isFinite(progress) && progress >= 0) item.progress = Math.min(Math.round(progress), 100);
+  return { items: [item] };
 }
 
 // ── 渲染（面向客户端）─────────────────────────────────────

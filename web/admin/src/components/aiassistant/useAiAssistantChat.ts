@@ -99,10 +99,10 @@ export interface PendingAttachment {
   truncated: boolean
 }
 
-/** 技能清单（与后端 internal/logic/aiassistant/skills 注册表对齐） */
+/** 技能清单（与后端 internal/logic/aiassistant/skills 注册表对齐）
+ *  js_plugin 已迁到「插件功能」页的生成工作台，全局助手不再提供该入口 */
 export const SKILL_OPTIONS = [
   { key: 'billing_formula', label: '计费表达式' },
-  { key: 'js_plugin', label: 'JS 插件' },
 ] as const
 
 export interface ChatOptions {

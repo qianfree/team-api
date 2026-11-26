@@ -41,6 +41,41 @@ func TestValidateUpstreamTarget(t *testing.T) {
 	}
 }
 
+// TestResolveUpstreamURL 相对路径拼接与空 baseUrl 前置报错：绝对 URL 原样透传、
+// 相对路径拼渠道 baseUrl，baseUrl 缺失时报明确的配置错误（而非 http 层晦涩的
+// `unsupported protocol scheme ""`——/v1/videos 线上报错的根因之一）。
+func TestResolveUpstreamURL(t *testing.T) {
+	cases := []struct {
+		name    string
+		baseURL string
+		target  string
+		want    string
+		wantErr bool
+	}{
+		{"绝对 URL 原样透传", "https://api.vendor.example", "https://cdn.vendor.example/v1/x", "https://cdn.vendor.example/v1/x", false},
+		{"相对路径拼接", "https://api.vendor.example", "/v1/api/generate", "https://api.vendor.example/v1/api/generate", false},
+		{"baseUrl 尾斜杠剥除", "https://api.vendor.example/", "/v1/api/generate", "https://api.vendor.example/v1/api/generate", false},
+		{"无前导斜杠归一后拼接", "https://api.vendor.example", "v1/api/generate", "https://api.vendor.example/v1/api/generate", false},
+		{"空 baseUrl 相对路径报配置错误", "", "/v1/api/generate", "", true},
+		{"空白 baseUrl 同样报配置错误", "  ", "/v1/api/generate", "", true},
+	}
+	for _, c := range cases {
+		got, err := resolveUpstreamURL(c.baseURL, c.target)
+		if (err != nil) != c.wantErr {
+			t.Errorf("%s: resolveUpstreamURL(%q, %q) err=%v, wantErr=%v", c.name, c.baseURL, c.target, err, c.wantErr)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("%s: resolveUpstreamURL(%q, %q) = %q, want %q", c.name, c.baseURL, c.target, got, c.want)
+		}
+	}
+
+	// 错误消息须指向渠道配置缺失，可定位排障方向
+	if _, err := resolveUpstreamURL("", "/v1/api/generate"); err == nil || !strings.Contains(err.Error(), "base_url") {
+		t.Fatalf("空 baseUrl 应报配置缺失错误: %v", err)
+	}
+}
+
 // absURLPlugin 构造一个 buildQueryRequest 直接返回任务 ID 作为绝对 URL 的插件源码
 // （allowedHosts 由调用方注入，用于测试 manifest 声明面）。
 func absURLPlugin(key string, allowedHosts string) string {
