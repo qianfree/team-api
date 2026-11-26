@@ -484,3 +484,34 @@ ease-out
 - <1024px：左栏收进底部 sheet（`NDrawer placement="bottom"` 80dvh），品类 chips 横滑行 + 「筛选 · N」按钮常驻
 - 筛选为析取分面（disjunctive facets，后端 `marketplace_facets.go` 内存聚合）：计数为 0 的选项禁用置灰
 - 展示带（推荐/上新）为运营编辑位（`mdl_models.is_recommended / is_new / display_order`，管理后台勾选），不参与用户筛选；筛选激活时收起
+
+## 17. API 文档页布局（2026-11 重构）
+
+`/tenant/docs`（`views/service/DocsPage.vue`）从「顶部 tabs + 右侧浮动目录」改为**左侧常驻目录 + 右侧正文**的文档站结构。目录原先挂在右侧，与阅读视线反向、29 个端点平铺且与分类标题重复，正文还要在卡片内做手风琴展开，窄列下参数表与代码块互相挤压。
+
+### 17.1 骨架
+
+- `.docs-shell`：flex，`align-items: stretch`（**不要改回 flex-start**，否则目录列不会被拉高，内部 sticky 在整页滚动后失效）
+- `.docs-rail`：264px，≥1280px 常驻；内部 `.docs-rail-card` 为 `position: sticky; top: 0.75rem`，`max-height: calc(100vh - 7rem)` 且目录区独立滚动
+- `<1280px`（含 1024 平板）：目录收进左侧抽屉（`.docs-drawer`，`min(84vw, 320px)`），顶部「目录」按钮唤出。全局侧栏已占 296px，若 1024 就三栏并排，正文会被压到 400px 以内
+- `.docs-main`：右栏正文，`flex: 1; min-width: 0`
+- `.docs-topbar`：右栏顶部单行工具条，左侧面包屑（`API 文档 / 章节 / 端点`），右侧「目录」（<1280 才出现）与「在线测试」。**不放页面大标题**——全局顶栏已经渲染了「API 文档」，重复一遍会像营销页 hero。不吸顶：左栏已提供吸顶导航，右栏再吸一层会在滚动时切卡片
+
+### 17.2 导航规则
+
+- 左栏分两组：「文档」（快速入门 / 代码示例 / 错误码）与「API 参考」（可点的总览入口 + 12 个分类 + 端点项）
+- 分类**默认全部折叠**（`collapsedCats` 存的是已折叠 id，初始填满所有分类）：27 个端点平铺会把左栏拉成一条长列表；折叠后每行带端点数，需要时再展开。进入某个端点时自动展开其所属分类，否则高亮项藏在收起的组里；搜索命中时也强制展开
+- 移动端抽屉复用同一套折叠逻辑与搜索框，不要另写一份「静态展开」目录——旧实现里桌面折叠、抽屉却永远全铺，两边行为对不上
+- 顶部 tabs 已移除，章节切换统一走左栏；`openSection / openOverview / openEndpoint` 三个入口负责切换并滚回顶部
+- 顶部面包屑由 `currentSectionLabel` + `activeEndpointDetail` 推导，末级即当前端点名；第一级点击回快速入门
+- 详情页的「← 全部接口」只保留返回动作，不再重复分类名（分类已由左栏高亮和面包屑表达）
+- 端点状态由 `activeEndpoint` 单一来源表达：`''` = 总览，否则为详情。总览是紧凑行列表（点击进详情），详情是独立阅读页（参数表 + 请求/响应示例 + 上下翻页）
+- 左栏搜索对标题、路径、method、分类名做包含匹配，命中时强制展开分组，且总览同步过滤；无结果给空状态
+
+### 17.3 其它约定
+
+- method 语义色只在小面积徽标使用：POST 绿 / GET 蓝 / PUT 橙 / DELETE 红（`.method-*`）
+- 分类图标由 `categoryIcons` 映射，数据里 `icon` 字段的部分取值在 `Icon.vue` 中并不存在，不要直接绑定
+- 参数表「必填」列以布尔值渲染（`row.required ? '必填' : '可选'`），未声明 required 视为可选；旧实现传 `String(undefined)` 会渲染出 `undefined`
+- 代码示例默认只展开第一条，其余手风琴收起，避免整页被长代码淹没
+- **滚动容器是 Layout 的 `#main-content`（`overflow: auto`），不是 window**。`sticky top` 与 `scrollTo` 都必须按它算：写成 `top: 5.5rem` 会把目录卡额外推下 80px，顶部留一大片空白；`window.scrollTo` 则完全无效。`scrollToTop()` 里两者都归零以兼容布局变化

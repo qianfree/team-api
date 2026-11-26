@@ -9,18 +9,86 @@ import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
 
 const router = useRouter()
 const activeSection = ref('quickstart')
+// '' 表示 API 参考的「全部接口」总览，否则为当前查看的端点 id
 const activeEndpoint = ref('')
+// 左栏目录：搜索词、移动端抽屉、分类折叠状态
+const railQuery = ref('')
+const railOpen = ref(false)
+const collapsedCats = ref<string[]>([])
 
 // 中继接口与控制台同源部署，示例中的 API 地址直接取当前站点真实域名
 const apiBaseUrl = window.location.origin
 const wsBaseUrl = window.location.protocol === 'https:' ? `wss://${window.location.host}` : `ws://${window.location.host}`
 
 const sections = [
-	{ id: 'quickstart', label: '快速入门' },
-	{ id: 'api-reference', label: 'API 参考' },
-	{ id: 'code-examples', label: '代码示例' },
-	{ id: 'error-codes', label: '错误码' },
+	{ id: 'quickstart', label: '快速入门', icon: 'bolt', desc: '5 分钟完成第一次调用' },
+	{ id: 'api-reference', label: 'API 参考', icon: 'bookOpen', desc: '全部端点 / 参数 / 示例' },
+	{ id: 'code-examples', label: '代码示例', icon: 'terminal', desc: '多语言可复制片段' },
+	{ id: 'error-codes', label: '错误码', icon: 'exclamationCircle', desc: '错误格式与排查' },
 ]
+
+// 分类图标：数据里的 icon 字段部分取值在 Icon.vue 中并不存在，这里做统一映射
+const categoryIcons: Record<string, string> = {
+	chat: 'chat',
+	claude: 'star',
+	responses: 'bolt',
+	embeddings: 'link',
+	images: 'photo',
+	audio: 'musicalNote',
+	rerank: 'trendingUp',
+	moderation: 'shield',
+	models: 'search',
+	video: 'film',
+	realtime: 'terminal',
+	gemini: 'cube',
+}
+
+const methodTone: Record<string, string> = {
+	POST: 'method-post',
+	GET: 'method-get',
+	PUT: 'method-put',
+	DELETE: 'method-delete',
+}
+
+function scrollToTop() {
+	// 实际滚动容器是 Layout 的 #main-content（overflow: auto），window 并不滚动；
+	// 两处都归零以兼容将来布局变化。
+	const scroller = document.getElementById('main-content')
+	if (scroller) scroller.scrollTo({ top: 0, behavior: 'auto' })
+	window.scrollTo({ top: 0, behavior: 'auto' })
+}
+
+function openSection(id: string) {
+	activeSection.value = id
+	if (id !== 'api-reference') activeEndpoint.value = ''
+	railOpen.value = false
+	scrollToTop()
+}
+
+function openOverview() {
+	activeSection.value = 'api-reference'
+	activeEndpoint.value = ''
+	railOpen.value = false
+	scrollToTop()
+}
+
+function openEndpoint(id: string) {
+	activeSection.value = 'api-reference'
+	activeEndpoint.value = id
+	// 目录默认全折叠，进入某个端点时把它所在的分类展开，否则高亮项藏在收起的组里
+	const categoryId = allEndpoints.value.find(ep => ep.id === id)?.categoryId
+	if (categoryId && collapsedCats.value.includes(categoryId)) {
+		collapsedCats.value = collapsedCats.value.filter(c => c !== categoryId)
+	}
+	railOpen.value = false
+	scrollToTop()
+}
+
+function toggleCategory(id: string) {
+	const idx = collapsedCats.value.indexOf(id)
+	if (idx === -1) collapsedCats.value.push(id)
+	else collapsedCats.value.splice(idx, 1)
+}
 
 // ============================================================
 // Quick Start Examples
@@ -1034,10 +1102,77 @@ const categories: Category[] = [
 	},
 ]
 
-// Flatten all endpoints for sidebar navigation
+// 目录默认全部折叠：27 个端点平铺会把左栏撑成一条长列表，找接口反而更慢。
+// collapsedCats 存的是「已折叠」的 id，空数组等于全展开，所以这里要显式填满。
+collapsedCats.value = categories.map(cat => cat.id)
+
+// Flatten all endpoints for rail navigation
 const allEndpoints = computed(() =>
-	categories.flatMap(cat => cat.endpoints.map(ep => ({ ...ep, categoryId: cat.id })))
+	categories.flatMap(cat => cat.endpoints.map(ep => ({ ...ep, categoryId: cat.id, categoryLabel: cat.label })))
 )
+
+// 计数：分类数 / 端点数，用于左栏标题与概览页
+const endpointCount = computed(() => allEndpoints.value.length)
+
+// 搜索过滤：命中端点标题、路径或分类名时保留整组
+const filteredCategories = computed(() => {
+	const q = railQuery.value.trim().toLowerCase()
+	if (!q) return categories
+	return categories
+		.map(cat => {
+			const hitCat = cat.label.toLowerCase().includes(q)
+			const endpoints = hitCat
+				? cat.endpoints
+				: cat.endpoints.filter(ep =>
+					ep.title.toLowerCase().includes(q)
+					|| ep.path.toLowerCase().includes(q)
+					|| ep.method.toLowerCase().includes(q)
+				)
+			return { ...cat, endpoints }
+		})
+		.filter(cat => cat.endpoints.length > 0)
+})
+
+function isCatOpen(id: string) {
+	// 搜索状态下分组强制展开，避免命中结果被折叠隐藏
+	return railQuery.value.trim() !== '' || !collapsedCats.value.includes(id)
+}
+
+const activeEndpointDetail = computed(() =>
+	allEndpoints.value.find(ep => ep.id === activeEndpoint.value) || null
+)
+
+// 顶部面包屑当前章节名（api-reference 详情页的末级由 activeEndpointDetail 提供）
+const currentSectionLabel = computed(
+	() => sections.find(s => s.id === activeSection.value)?.label || '文档'
+)
+
+const filteredEndpointCount = computed(() =>
+	filteredCategories.value.reduce((sum, cat) => sum + cat.endpoints.length, 0)
+)
+
+const activeIndex = computed(() =>
+	allEndpoints.value.findIndex(ep => ep.id === activeEndpoint.value)
+)
+
+const prevEndpoint = computed(() =>
+	activeIndex.value > 0 ? allEndpoints.value[activeIndex.value - 1] : null
+)
+
+const nextEndpoint = computed(() =>
+	activeIndex.value >= 0 && activeIndex.value < allEndpoints.value.length - 1
+		? allEndpoints.value[activeIndex.value + 1]
+		: null
+)
+
+const copiedBase = ref(false)
+async function copyBaseUrl() {
+	try {
+		await navigator.clipboard.writeText(apiBaseUrl)
+		copiedBase.value = true
+		setTimeout(() => { copiedBase.value = false }, 2000)
+	} catch (e) { console.error(e) }
+}
 
 
 // ============================================================
@@ -1161,6 +1296,11 @@ const codeExamples = [
 ]
 
 const copiedExample = ref(-1)
+// 代码示例默认只展开第一条，其余按需展开，避免整页被长代码淹没
+const openExample = ref(0)
+function toggleExample(idx: number) {
+	openExample.value = openExample.value === idx ? -1 : idx
+}
 async function copyExampleCode(idx: number) {
 	try {
 		await navigator.clipboard.writeText(codeExamples[idx].code)
@@ -1210,15 +1350,7 @@ async function copyBlock(text: string, key: string) {
 	} catch (e) { console.error(e) }
 }
 
-// Initialize active endpoint
-function initEndpoint() {
-	if (!activeEndpoint.value && allEndpoints.value.length > 0) {
-		activeEndpoint.value = allEndpoints.value[0].id
-	}
-}
-initEndpoint()
-
-// 请求参数表列定义
+// 参数表列定义
 const paramColumns = computed<DataTableColumns<Param>>(() => [
 	{
 		title: '字段',
@@ -1236,9 +1368,10 @@ const paramColumns = computed<DataTableColumns<Param>>(() => [
 		title: '必填',
 		key: 'required',
 		width: 70,
+		// 未声明 required 的参数一律视为可选，避免出现 undefined 文本
 		render: (row) =>
 			renderBadge(
-				String(row.required),
+				row.required ? 'true' : 'false',
 				{ 'true': '必填', 'false': '可选' },
 				{ 'true': 'badge-danger', 'false': 'badge-gray' }
 			),
@@ -1282,260 +1415,546 @@ const errorColumns = computed<DataTableColumns<any>>(() => [
 </script>
 
 <template>
-	<div class="flex gap-6">
-		<!-- Main Content -->
-		<div class="flex-1 min-w-0 space-y-6">
-			<!-- Page Header -->
-			<div class="page-header flex items-center justify-between">
-				<div>
-					<h1 class="page-title">API 文档</h1>
-					<p class="page-description">集成 Team API 所需的一切 — 兼容 OpenAI / Claude / Gemini 格式</p>
+	<div class="docs-shell">
+		<!-- ==================== 左侧目录（桌面） ==================== -->
+		<aside class="docs-rail">
+			<div class="docs-rail-card">
+				<!-- 搜索 -->
+				<div class="docs-rail-search">
+					<Icon name="search" size="sm" class="docs-rail-search-icon" />
+					<input
+						v-model="railQuery"
+						type="search"
+						class="docs-rail-input"
+						placeholder="搜索接口或路径"
+						aria-label="搜索接口"
+					/>
+					<button
+						v-if="railQuery"
+						class="docs-rail-clear"
+						aria-label="清空搜索"
+						@click="railQuery = ''"
+					>
+						<Icon name="x" size="xs" />
+					</button>
 				</div>
-				<button class="btn btn-primary" @click="goToPlayground">
-					<Icon name="cog" size="sm" />
-					在线测试
-				</button>
-			</div>
 
-			<!-- Section Navigation -->
-			<div class="tabs">
-				<button
-					v-for="section in sections"
-					:key="section.id"
-					@click="activeSection = section.id"
-					class="tab"
-					:class="activeSection === section.id ? 'tab-active' : ''"
-				>
-					{{ section.label }}
-				</button>
+				<!-- 目录树 -->
+				<nav class="docs-rail-scroll" aria-label="文档目录">
+					<p class="docs-rail-label">文档</p>
+					<button
+						v-for="section in sections.filter(s => s.id !== 'api-reference')"
+						:key="section.id"
+						class="docs-rail-item"
+						:class="activeSection === section.id ? 'docs-rail-item-active' : ''"
+						:aria-current="activeSection === section.id ? 'page' : undefined"
+						@click="openSection(section.id)"
+					>
+						<Icon :name="section.icon" size="sm" class="docs-rail-item-icon" />
+						<span class="truncate">{{ section.label }}</span>
+					</button>
+
+					<div class="docs-rail-group">
+						<button
+							class="docs-rail-item docs-rail-item-strong"
+							:class="activeSection === 'api-reference' && !activeEndpoint ? 'docs-rail-item-active' : ''"
+							@click="openOverview"
+						>
+							<Icon name="bookOpen" size="sm" class="docs-rail-item-icon" />
+							<span class="truncate">API 参考</span>
+							<span class="docs-rail-count">{{ endpointCount }}</span>
+						</button>
+
+						<div v-for="cat in filteredCategories" :key="cat.id" class="docs-rail-cat">
+							<button
+								class="docs-rail-cat-head"
+								:aria-expanded="isCatOpen(cat.id)"
+								@click="toggleCategory(cat.id)"
+							>
+								<Icon
+									name="chevronDown"
+									size="xs"
+									class="docs-rail-caret"
+									:class="{ 'docs-rail-caret-closed': !isCatOpen(cat.id) }"
+								/>
+								<span class="truncate">{{ cat.label }}</span>
+								<span class="docs-rail-count">{{ cat.endpoints.length }}</span>
+							</button>
+							<div v-show="isCatOpen(cat.id)" class="docs-rail-eps">
+								<button
+									v-for="ep in cat.endpoints"
+									:key="ep.id"
+									class="docs-rail-ep"
+									:class="activeEndpoint === ep.id ? 'docs-rail-ep-active' : ''"
+									:aria-current="activeEndpoint === ep.id ? 'true' : undefined"
+									:title="ep.path"
+									@click="openEndpoint(ep.id)"
+								>
+									<span class="docs-rail-method" :class="methodTone[ep.method]">{{ ep.method }}</span>
+									<span class="docs-rail-ep-title">{{ ep.title }}</span>
+								</button>
+							</div>
+						</div>
+
+						<p v-if="filteredCategories.length === 0" class="docs-rail-empty">
+							没有匹配的接口
+						</p>
+					</div>
+				</nav>
+
+				<!-- Base URL -->
+				<div class="docs-rail-foot">
+					<span class="docs-rail-foot-label">Base URL</span>
+					<button class="docs-rail-base" :title="apiBaseUrl" @click="copyBaseUrl">
+						<code>{{ apiBaseUrl }}</code>
+						<Icon :name="copiedBase ? 'check' : 'copy'" size="xs" />
+					</button>
+				</div>
+			</div>
+		</aside>
+
+		<!-- ==================== 移动端目录抽屉 ==================== -->
+		<Transition name="fade">
+			<div v-if="railOpen" class="docs-drawer-mask" @click="railOpen = false"></div>
+		</Transition>
+		<Transition name="docs-drawer">
+			<div v-if="railOpen" class="docs-drawer" role="dialog" aria-label="文档目录">
+				<div class="docs-drawer-head">
+					<span class="text-sm font-semibold text-gray-900">文档目录</span>
+					<button class="btn-icon btn-ghost" aria-label="关闭目录" @click="railOpen = false">
+						<Icon name="x" size="md" />
+					</button>
+				</div>
+				<div class="docs-drawer-body">
+					<div class="docs-rail-search docs-drawer-search">
+						<Icon name="search" size="sm" class="docs-rail-search-icon" />
+						<input
+							v-model="railQuery"
+							type="search"
+							class="docs-rail-input"
+							placeholder="搜索接口或路径"
+							aria-label="搜索接口"
+						/>
+						<button v-if="railQuery" class="docs-rail-clear" aria-label="清空搜索" @click="railQuery = ''">
+							<Icon name="x" size="xs" />
+						</button>
+					</div>
+
+					<p class="docs-rail-label">文档</p>
+					<button
+						v-for="section in sections.filter(s => s.id !== 'api-reference')"
+						:key="section.id"
+						class="docs-rail-item"
+						:class="activeSection === section.id ? 'docs-rail-item-active' : ''"
+						@click="openSection(section.id)"
+					>
+						<Icon :name="section.icon" size="sm" class="docs-rail-item-icon" />
+						<span class="truncate">{{ section.label }}</span>
+					</button>
+
+					<div class="docs-rail-group mt-3">
+						<button
+							class="docs-rail-item docs-rail-item-strong"
+							:class="activeSection === 'api-reference' && !activeEndpoint ? 'docs-rail-item-active' : ''"
+							@click="openOverview"
+						>
+							<Icon name="bookOpen" size="sm" class="docs-rail-item-icon" />
+							<span class="truncate">API 参考</span>
+							<span class="docs-rail-count">{{ endpointCount }}</span>
+						</button>
+
+						<div v-for="cat in filteredCategories" :key="cat.id" class="docs-rail-cat">
+							<button
+								class="docs-rail-cat-head"
+								:aria-expanded="isCatOpen(cat.id)"
+								@click="toggleCategory(cat.id)"
+							>
+								<Icon
+									name="chevronDown"
+									size="xs"
+									class="docs-rail-caret"
+									:class="{ 'docs-rail-caret-closed': !isCatOpen(cat.id) }"
+								/>
+								<span class="truncate">{{ cat.label }}</span>
+								<span class="docs-rail-count">{{ cat.endpoints.length }}</span>
+							</button>
+							<div v-show="isCatOpen(cat.id)" class="docs-rail-eps">
+								<button
+									v-for="ep in cat.endpoints"
+									:key="ep.id"
+									class="docs-rail-ep"
+									:class="activeEndpoint === ep.id ? 'docs-rail-ep-active' : ''"
+									@click="openEndpoint(ep.id)"
+								>
+									<span class="docs-rail-method" :class="methodTone[ep.method]">{{ ep.method }}</span>
+									<span class="docs-rail-ep-title">{{ ep.title }}</span>
+								</button>
+							</div>
+						</div>
+
+						<p v-if="filteredCategories.length === 0" class="docs-rail-empty">没有匹配的接口</p>
+					</div>
+				</div>
+			</div>
+		</Transition>
+
+		<!-- ==================== 主内容 ==================== -->
+		<div class="docs-main">
+			<h1 class="sr-only">API 文档</h1>
+
+			<!-- 顶部工具条：面包屑 + 操作。标题已在全局顶栏出现，这里不再重复大标题 -->
+			<div class="docs-topbar">
+				<nav class="docs-crumb" aria-label="当前位置">
+					<button type="button" class="docs-crumb-link" @click="openSection('quickstart')">API 文档</button>
+					<span class="docs-crumb-sep" aria-hidden="true">/</span>
+					<span class="docs-crumb-item">{{ currentSectionLabel }}</span>
+					<template v-if="activeEndpointDetail">
+						<span class="docs-crumb-sep" aria-hidden="true">/</span>
+						<span class="docs-crumb-item docs-crumb-current">{{ activeEndpointDetail.title }}</span>
+					</template>
+				</nav>
+				<div class="docs-topbar-actions">
+					<button class="docs-mobile-toc btn btn-secondary btn-sm" @click="railOpen = true">
+						<Icon name="menu" size="sm" />
+						目录
+					</button>
+					<button class="btn btn-primary btn-sm" @click="goToPlayground">
+						<Icon name="play" size="sm" />
+						在线测试
+					</button>
+				</div>
 			</div>
 
 			<!-- ==================== Quick Start ==================== -->
-			<div v-if="activeSection === 'quickstart'" class="space-y-6">
+			<div v-if="activeSection === 'quickstart'" class="docs-stack">
+				<!-- 接入信息 -->
+				<div class="docs-facts">
+					<div class="docs-fact">
+						<span class="docs-fact-label">Base URL</span>
+						<button class="docs-fact-value docs-fact-copy" :title="apiBaseUrl" @click="copyBaseUrl">
+							<code>{{ apiBaseUrl }}</code>
+							<Icon :name="copiedBase ? 'check' : 'copy'" size="xs" />
+						</button>
+					</div>
+					<div class="docs-fact">
+						<span class="docs-fact-label">认证方式</span>
+						<span class="docs-fact-value">Bearer API Key</span>
+					</div>
+					<div class="docs-fact">
+						<span class="docs-fact-label">兼容协议</span>
+						<span class="docs-fact-value">OpenAI · Claude · Gemini</span>
+					</div>
+				</div>
+
 				<!-- Step 1 -->
 				<div class="card">
-					<div class="card-header flex items-center gap-3">
-						<div class="h-7 w-7 rounded-full flex items-center justify-center text-xs font-bold text-white bg-gradient-to-r from-primary-500 to-primary-600">1</div>
-						<h3 class="font-semibold text-gray-900">获取 API Key</h3>
+					<div class="docs-step-head">
+						<span class="docs-step-num">1</span>
+						<div class="step-text">
+							<h3 class="docs-step-title">获取 API Key</h3>
+							<p class="docs-step-sub">密钥可限定模型与速率，请勿提交到版本控制</p>
+						</div>
+						<router-link to="/tenant/api-keys" class="btn btn-secondary btn-sm docs-step-action ml-auto shrink-0">
+							<Icon name="key" size="sm" />
+							管理密钥
+						</router-link>
 					</div>
-					<div class="card-body">
-						<p class="text-gray-600 text-sm leading-relaxed">
-							在控制台中进入 <router-link to="/tenant/api-keys" class="text-primary-600 hover:underline">API 密钥</router-link> 页面创建新密钥。每个密钥可限定特定模型并配置速率限制。请妥善保管您的密钥——不要分享或提交到版本控制中。
+					<div class="card-body !pt-0">
+						<p class="text-sm leading-relaxed text-gray-600">
+							在控制台的
+							<router-link to="/tenant/api-keys" class="text-primary-600 hover:underline">API 密钥</router-link>
+							页面创建新密钥。每个密钥可限定特定模型并配置速率限制。请妥善保管——不要分享或提交到版本控制中。
 						</p>
 					</div>
 				</div>
 
 				<!-- Step 2 -->
 				<div class="card">
-					<div class="card-header flex items-center gap-3">
-						<div class="h-7 w-7 rounded-full flex items-center justify-center text-xs font-bold text-white bg-gradient-to-r from-primary-500 to-primary-600">2</div>
-						<h3 class="font-semibold text-gray-900">发起第一次请求</h3>
+					<div class="docs-step-head">
+						<span class="docs-step-num">2</span>
+						<div class="step-text">
+							<h3 class="docs-step-title">发起第一次请求</h3>
+							<p class="docs-step-sub">兼容 OpenAI SDK，只需替换 base_url 与 API Key</p>
+						</div>
 					</div>
-					<div class="card-body">
-						<p class="text-gray-600 text-sm leading-relaxed mb-4">
-							Team API 完全兼容 OpenAI API 格式。只需将 <code class="code">base_url</code> 改为我们的端点并使用您的 API Key 即可：
-						</p>
-
-						<!-- Code tabs -->
-						<div class="card overflow-hidden !p-0">
-							<div class="flex items-center bg-gray-50 border-b border-gray-200 px-2">
+					<div class="card-body !pt-0">
+						<div class="docs-code">
+							<div class="docs-code-bar">
 								<button
 									v-for="tab in (['curl', 'python', 'node', 'go'] as CodeTab[])"
 									:key="tab"
 									@click="activeCodeTab = tab"
-									class="px-4 py-2.5 text-xs font-medium transition-colors rounded-t-lg border-b-2 -mb-px"
-									:class="activeCodeTab === tab ? 'text-primary-600 border-primary-600 bg-white' : 'text-gray-500 border-transparent hover:text-gray-700'"
+									class="docs-code-tab"
+									:class="{ 'docs-code-tab-active': activeCodeTab === tab }"
 								>
 									{{ tabLabels[tab] }}
 								</button>
 								<div class="flex-1"></div>
 								<button
 									@click="copyText(getExampleCode(activeCodeTab), activeCodeTab)"
-									class="mr-2 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors"
-									:class="copiedTab === activeCodeTab ? 'text-emerald-600 bg-emerald-50' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'"
+									class="docs-code-copy"
+									:class="{ 'is-copied': copiedTab === activeCodeTab }"
 								>
+									<Icon :name="copiedTab === activeCodeTab ? 'check' : 'copy'" size="xs" />
 									{{ copiedTab === activeCodeTab ? '已复制' : '复制' }}
 								</button>
 							</div>
-							<pre class="code-block"><code>{{ getExampleCode(activeCodeTab) }}</code></pre>
+							<pre class="code-block !rounded-none !rounded-b-xl"><code>{{ getExampleCode(activeCodeTab) }}</code></pre>
 						</div>
 					</div>
 				</div>
 
 				<!-- Step 3 -->
 				<div class="card">
-					<div class="card-header flex items-center gap-3">
-						<div class="h-7 w-7 rounded-full flex items-center justify-center text-xs font-bold text-white bg-gradient-to-r from-primary-500 to-primary-600">3</div>
-						<h3 class="font-semibold text-gray-900">探索与测试</h3>
+					<div class="docs-step-head">
+						<span class="docs-step-num">3</span>
+						<div class="step-text">
+							<h3 class="docs-step-title">探索与测试</h3>
+							<p class="docs-step-sub">40+ 模型，三大协议格式并行可用</p>
+						</div>
 					</div>
-					<div class="card-body">
-						<p class="text-gray-600 text-sm leading-relaxed mb-4">
-							Team API 通过统一接口提供 40+ 个 AI 模型的访问，同时兼容 OpenAI、Claude、Gemini 三大 API 格式。您可以使用 Playground 在线调试不同参数组合，或通过 <code class="code">/v1/models</code> 接口查询完整模型列表。
+					<div class="card-body !pt-0">
+						<p class="mb-4 text-sm leading-relaxed text-gray-600">
+							使用 Playground 在线调试不同参数组合，或通过
+							<code class="code">/v1/models</code>
+							接口查询当前密钥可用的完整模型列表。
 						</p>
-						<div class="flex gap-3">
+						<div class="flex flex-wrap gap-2">
 							<button class="btn btn-primary btn-sm" @click="goToPlayground">
-								<Icon name="cog" size="sm" />
+								<Icon name="play" size="sm" />
 								打开 Playground
 							</button>
-							<button class="btn btn-secondary btn-sm" @click="activeSection = 'api-reference'">
+							<button class="btn btn-secondary btn-sm" @click="openOverview">
 								查看 API 参考
+								<Icon name="arrowRight" size="sm" />
 							</button>
 						</div>
 					</div>
 				</div>
 
-				<!-- Compatibility Banner -->
-				<div class="card bg-gradient-to-r from-primary-50 to-cyan-50 border-primary-200">
-					<div class="card-body">
-						<h3 class="font-semibold text-gray-900 mb-3">兼容性说明</h3>
-						<p class="text-gray-600 text-sm leading-relaxed mb-4">
-							Team API 设计为与主流大模型 API 完全兼容，您可以直接使用各语言官方 SDK：
-						</p>
-						<div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-							<div class="bg-white/80 rounded-xl p-4 border border-primary-100">
-								<div class="text-sm font-semibold text-gray-900 mb-1">OpenAI 兼容</div>
-								<div class="text-xs text-gray-500 mb-2">Chat / Embeddings / Images / Audio</div>
-								<code class="code text-xs">base_url = ".../v1"</code>
-							</div>
-							<div class="bg-white/80 rounded-xl p-4 border border-primary-100">
-								<div class="text-sm font-semibold text-gray-900 mb-1">Claude 兼容</div>
-								<div class="text-xs text-gray-500 mb-2">Anthropic Messages API</div>
-								<code class="code text-xs">base_url = ".../v1"</code>
-							</div>
-							<div class="bg-white/80 rounded-xl p-4 border border-primary-100">
-								<div class="text-sm font-semibold text-gray-900 mb-1">Gemini 兼容</div>
-								<div class="text-xs text-gray-500 mb-2">Google GenerateContent API</div>
-								<code class="code text-xs">端点: /v1beta/models/...</code>
-							</div>
+				<!-- 兼容性 -->
+				<div class="docs-compat">
+					<div class="docs-compat-item">
+						<Icon name="chat" size="md" class="docs-compat-icon" />
+						<div>
+							<div class="docs-compat-title">OpenAI 兼容</div>
+							<div class="docs-compat-sub">Chat / Embeddings / Images / Audio</div>
+							<code class="code text-xs">base_url = ".../v1"</code>
+						</div>
+					</div>
+					<div class="docs-compat-item">
+						<Icon name="star" size="md" class="docs-compat-icon" />
+						<div>
+							<div class="docs-compat-title">Claude 兼容</div>
+							<div class="docs-compat-sub">Anthropic Messages API</div>
+							<code class="code text-xs">base_url = ".../v1"</code>
+						</div>
+					</div>
+					<div class="docs-compat-item">
+						<Icon name="cube" size="md" class="docs-compat-icon" />
+						<div>
+							<div class="docs-compat-title">Gemini 兼容</div>
+							<div class="docs-compat-sub">Google GenerateContent API</div>
+							<code class="code text-xs">/v1beta/models/...</code>
 						</div>
 					</div>
 				</div>
 			</div>
 
 			<!-- ==================== API Reference ==================== -->
-			<div v-if="activeSection === 'api-reference'" class="space-y-6">
-				<!-- Category Cards -->
-				<div v-for="cat in categories" :key="cat.id" class="space-y-3">
-					<h3 class="text-lg font-semibold text-gray-900 flex items-center gap-2">
-						{{ cat.label }}
-					</h3>
-					<div class="space-y-3">
-						<div
-							v-for="ep in cat.endpoints"
-							:key="ep.id"
-							class="card cursor-pointer transition-all duration-200"
-							:class="activeEndpoint === ep.id ? 'ring-2 ring-primary-500/30 shadow-glow' : 'hover:-translate-y-0.5 hover:shadow-card-hover'"
-							@click="activeEndpoint = ep.id"
-						>
-							<div class="card-header">
-								<div class="flex items-center gap-3">
-									<span
-										class="badge text-xs font-bold"
-										:class="{
-											'badge-success': ep.method === 'POST',
-											'badge-primary': ep.method === 'GET',
-											'badge-warning': ep.method === 'PUT',
-											'badge-danger': ep.method === 'DELETE',
-										}"
-									>{{ ep.method }}</span>
-									<code class="code text-sm">{{ ep.path }}</code>
-								</div>
-								<h4 class="font-semibold text-gray-900 mt-2">{{ ep.title }}</h4>
-								<p class="text-sm text-gray-500 mt-0.5">{{ ep.desc }}</p>
+			<div v-if="activeSection === 'api-reference'" class="docs-stack">
+				<!-- 总览 -->
+				<template v-if="!activeEndpointDetail">
+					<p v-if="!railQuery.trim() || filteredEndpointCount > 0" class="docs-intro">
+						<template v-if="railQuery.trim()">
+							匹配 <strong>{{ filteredEndpointCount }}</strong> 个端点，共 {{ endpointCount }} 个。
+						</template>
+						<template v-else>
+							共 <strong>{{ endpointCount }}</strong> 个端点。从左侧目录选择接口查看参数与示例，点击任意一行进入详情。
+						</template>
+					</p>
+					<section v-for="cat in filteredCategories" :key="cat.id" class="docs-cat-block">
+						<div class="docs-cat-bar">
+							<Icon :name="categoryIcons[cat.id] || 'grid'" size="sm" class="docs-cat-icon" />
+							<h3 class="docs-cat-title">{{ cat.label }}</h3>
+							<span class="docs-cat-count">{{ cat.endpoints.length }}</span>
+						</div>
+						<div class="card docs-ep-list">
+							<button
+								v-for="ep in cat.endpoints"
+								:key="ep.id"
+								class="docs-ep-row"
+								@click="openEndpoint(ep.id)"
+							>
+								<span class="docs-method" :class="methodTone[ep.method]">{{ ep.method }}</span>
+								<span class="docs-ep-main">
+									<span class="docs-ep-title">{{ ep.title }}</span>
+									<code class="docs-ep-path">{{ ep.path }}</code>
+									<span class="docs-ep-desc">{{ ep.desc }}</span>
+								</span>
+								<Icon name="chevronRight" size="sm" class="docs-ep-arrow" />
+							</button>
+						</div>
+					</section>
+
+					<div v-if="filteredCategories.length === 0" class="docs-empty">
+						<Icon name="search" size="lg" />
+						<p>没有匹配「{{ railQuery }}」的接口或路径</p>
+						<button class="btn btn-secondary btn-sm" @click="railQuery = ''">清空搜索</button>
+					</div>
+				</template>
+
+				<!-- 端点详情 -->
+				<template v-else>
+					<button class="docs-back" @click="openOverview">
+						<Icon name="arrowLeft" size="xs" />
+						全部接口
+					</button>
+
+					<article class="card docs-detail">
+						<header class="docs-detail-head">
+							<h2 class="docs-detail-title">{{ activeEndpointDetail.title }}</h2>
+							<div class="docs-detail-path">
+								<span class="docs-method" :class="methodTone[activeEndpointDetail.method]">{{ activeEndpointDetail.method }}</span>
+								<code>{{ activeEndpointDetail.path }}</code>
+								<button
+									class="docs-detail-copy"
+									:aria-label="'复制路径 ' + activeEndpointDetail.path"
+									@click="copyBlock(activeEndpointDetail.path, 'path-' + activeEndpointDetail.id)"
+								>
+									<Icon :name="copiedBlock === 'path-' + activeEndpointDetail.id ? 'check' : 'copy'" size="xs" />
+								</button>
+							</div>
+							<p class="docs-detail-desc">{{ activeEndpointDetail.desc }}</p>
+						</header>
+
+						<section v-if="activeEndpointDetail.params.length" class="docs-detail-section">
+							<h4 class="docs-detail-label">请求参数</h4>
+							<ResponsiveDataTable
+								:show-pagination="false"
+								:columns="paramColumns"
+								:scroll-x="tableScrollX(paramColumns)"
+								:data="activeEndpointDetail.params"
+								:row-key="(row:any)=>row.field"
+								card-title-key="field"
+								card-badge-key="required"
+								:card-fields="['type', { key: 'desc', full: true }]"
+							/>
+						</section>
+
+						<section v-if="activeEndpointDetail.example" class="docs-detail-section docs-detail-example">
+							<div class="docs-auth-hint">
+								<Icon name="infoCircle" size="sm" />
+								<span>
+									所有请求需携带
+									<code>Authorization: Bearer sk-your-api-key</code>
+									头
+								</span>
 							</div>
 
-							<!-- Expanded Detail -->
-							<div v-if="activeEndpoint === ep.id" class="card-body space-y-4">
-								<!-- Parameters Table -->
-								<div v-if="ep.params.length > 0">
-									<h5 class="text-sm font-semibold text-gray-800 mb-2">请求参数</h5>
-									<ResponsiveDataTable
-										:show-pagination="false"
-										:columns="paramColumns"
-										:scroll-x="tableScrollX(paramColumns)"
-										:data="ep.params"
-										:row-key="(row:any)=>row.field"
-										card-title-key="field"
-										card-badge-key="required"
-										:card-fields="['type', { key: 'desc', full: true }]"
-									/>
-								</div>
-
-								<!-- Request/Response Examples -->
-								<div v-if="ep.example" class="space-y-3">
-									<!-- Authentication hint -->
-									<div class="bg-primary-50 rounded-xl p-3 text-xs text-primary-700">
-										<Icon name="infoCircle" size="sm" class="inline -mt-0.5" />
-										所有请求需携带 <code class="bg-white/60 rounded px-1">Authorization: Bearer sk-your-api-key</code> 头
-									</div>
-
-									<!-- Request Example -->
-									<div v-if="ep.example.req">
-										<div class="flex items-center justify-between mb-1.5">
-											<span class="text-xs font-semibold text-gray-500 uppercase tracking-wider">请求示例</span>
-											<button
-												class="text-xs text-gray-400 hover:text-primary-600 transition-colors"
-												@click="copyBlock(ep.example!.req!, 'req-' + ep.id)"
-											>
-												{{ copiedBlock === 'req-' + ep.id ? '✓ 已复制' : '复制' }}
-											</button>
-										</div>
-										<pre class="code-block !text-xs"><code>{{ ep.example.req }}</code></pre>
-									</div>
-
-									<!-- Response Example -->
-									<div v-if="ep.example.resp">
-										<div class="flex items-center justify-between mb-1.5">
-											<span class="text-xs font-semibold text-gray-500 uppercase tracking-wider">响应示例</span>
-											<button
-												class="text-xs text-gray-400 hover:text-primary-600 transition-colors"
-												@click="copyBlock(ep.example!.resp!, 'resp-' + ep.id)"
-											>
-												{{ copiedBlock === 'resp-' + ep.id ? '✓ 已复制' : '复制' }}
-											</button>
-										</div>
-										<pre class="code-block !text-xs"><code>{{ ep.example.resp }}</code></pre>
-									</div>
-								</div>
-
-								<!-- Action buttons -->
-								<div v-if="ep.method === 'POST'" class="flex justify-end">
-									<button class="btn btn-ghost btn-sm" @click.stop="goToPlayground">
-										<Icon name="cog" size="sm" />
-										在 Playground 中测试
+							<div v-if="activeEndpointDetail.example.req">
+								<div class="docs-code-caption">
+									<span>请求示例</span>
+									<button
+										class="docs-code-copy"
+										:class="{ 'is-copied': copiedBlock === 'req-' + activeEndpointDetail.id }"
+										@click="copyBlock(activeEndpointDetail.example!.req!, 'req-' + activeEndpointDetail.id)"
+									>
+										<Icon :name="copiedBlock === 'req-' + activeEndpointDetail.id ? 'check' : 'copy'" size="xs" />
+										{{ copiedBlock === 'req-' + activeEndpointDetail.id ? '已复制' : '复制' }}
 									</button>
 								</div>
+								<pre class="code-block !text-xs"><code>{{ activeEndpointDetail.example.req }}</code></pre>
 							</div>
-						</div>
-					</div>
-				</div>
+
+							<div v-if="activeEndpointDetail.example.resp">
+								<div class="docs-code-caption">
+									<span>响应示例</span>
+									<button
+										class="docs-code-copy"
+										:class="{ 'is-copied': copiedBlock === 'resp-' + activeEndpointDetail.id }"
+										@click="copyBlock(activeEndpointDetail.example!.resp!, 'resp-' + activeEndpointDetail.id)"
+									>
+										<Icon :name="copiedBlock === 'resp-' + activeEndpointDetail.id ? 'check' : 'copy'" size="xs" />
+										{{ copiedBlock === 'resp-' + activeEndpointDetail.id ? '已复制' : '复制' }}
+									</button>
+								</div>
+								<pre class="code-block !text-xs"><code>{{ activeEndpointDetail.example.resp }}</code></pre>
+							</div>
+						</section>
+
+						<footer class="docs-detail-foot">
+							<span class="docs-detail-foot-note">
+								<template v-if="activeEndpointDetail.method === 'POST'">可在 Playground 中直接调试该端点</template>
+								<template v-else>该端点为只读查询，无需额外配置</template>
+							</span>
+							<button
+								v-if="activeEndpointDetail.method === 'POST'"
+								class="btn btn-ghost btn-sm"
+								@click="goToPlayground"
+							>
+								<Icon name="play" size="sm" />
+								在 Playground 中测试
+							</button>
+						</footer>
+					</article>
+
+					<!-- 上一个 / 下一个 -->
+					<nav class="docs-pager" aria-label="接口翻页">
+						<button v-if="prevEndpoint" class="docs-pager-btn" @click="openEndpoint(prevEndpoint.id)">
+							<span class="docs-pager-dir"><Icon name="arrowLeft" size="xs" /> 上一个</span>
+							<span class="docs-pager-name">{{ prevEndpoint.title }}</span>
+						</button>
+						<span v-else class="docs-pager-spacer"></span>
+						<button v-if="nextEndpoint" class="docs-pager-btn docs-pager-btn-next" @click="openEndpoint(nextEndpoint.id)">
+							<span class="docs-pager-dir">下一个 <Icon name="arrowRight" size="xs" /></span>
+							<span class="docs-pager-name">{{ nextEndpoint.title }}</span>
+						</button>
+					</nav>
+				</template>
 			</div>
 
 			<!-- ==================== Code Examples ==================== -->
-			<div v-if="activeSection === 'code-examples'" class="space-y-6">
-				<p class="text-sm text-gray-500">Team API 兼容 OpenAI / Anthropic SDK，只需修改 <code class="code">base_url</code> 即可无缝切换。</p>
-				<div v-for="(ex, idx) in codeExamples" :key="ex.title" class="card overflow-hidden">
-					<div class="card-header flex items-center justify-between">
-						<div>
-							<h3 class="font-semibold text-gray-900">{{ ex.title }}</h3>
-							<span class="text-xs text-gray-400 mt-0.5">{{ ex.lang }}</span>
-						</div>
+			<div v-if="activeSection === 'code-examples'" class="docs-stack">
+				<p class="docs-intro">
+					Team API 兼容 OpenAI / Anthropic SDK，只需修改 <code class="code">base_url</code> 即可无缝切换。代码块可直接复制使用。
+				</p>
+				<div class="docs-examples">
+					<div v-for="(ex, idx) in codeExamples" :key="ex.title" class="card docs-example">
 						<button
-							@click="copyExampleCode(idx)"
-							class="btn btn-ghost btn-sm"
-							:class="copiedExample === idx ? 'text-emerald-600' : ''"
+							class="docs-example-head"
+							:aria-expanded="openExample === idx"
+							@click="toggleExample(idx)"
 						>
-							<Icon :name="copiedExample === idx ? 'check' : 'copy'" size="sm" />
-							{{ copiedExample === idx ? '已复制' : '复制' }}
+							<Icon
+								name="chevronDown"
+								size="xs"
+								class="docs-rail-caret"
+								:class="{ 'docs-rail-caret-closed': openExample !== idx }"
+							/>
+							<span class="docs-example-title">{{ ex.title }}</span>
+							<span class="docs-lang-badge">{{ ex.lang }}</span>
+							<span class="flex-1"></span>
+							<span
+								class="docs-code-copy"
+								:class="{ 'is-copied': copiedExample === idx }"
+								role="button"
+								tabindex="0"
+								@click.stop="copyExampleCode(idx)"
+								@keydown.enter.stop="copyExampleCode(idx)"
+							>
+								<Icon :name="copiedExample === idx ? 'check' : 'copy'" size="xs" />
+								{{ copiedExample === idx ? '已复制' : '复制' }}
+							</span>
 						</button>
+						<pre v-show="openExample === idx" class="code-block !rounded-none !rounded-b-xl"><code>{{ ex.code }}</code></pre>
 					</div>
-					<pre class="code-block"><code>{{ ex.code }}</code></pre>
 				</div>
 			</div>
 
 			<!-- ==================== Error Codes ==================== -->
-			<div v-if="activeSection === 'error-codes'" class="space-y-6">
-				<p class="text-sm text-gray-500">
+			<div v-if="activeSection === 'error-codes'" class="docs-stack">
+				<p class="docs-intro">
 					API 返回两种错误格式：AI 代理端点（<code class="code">/v1/*</code>）使用 OpenAI 兼容格式；管理类端点（<code class="code">/api/*</code>）使用统一响应格式。
 				</p>
 
@@ -1593,34 +2012,1075 @@ const errorColumns = computed<DataTableColumns<any>>(() => [
 				</div>
 			</div>
 		</div>
-
-		<!-- Right Sidebar — API Reference TOC (only visible in api-reference section on desktop) -->
-		<aside v-if="activeSection === 'api-reference'" class="hidden lg:block w-64 shrink-0">
-			<div class="sticky top-24 space-y-4">
-				<div class="card !p-4">
-					<h4 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">接口目录</h4>
-					<nav class="space-y-3">
-						<div v-for="cat in categories" :key="cat.id">
-							<div class="text-xs font-semibold text-gray-900 mb-1.5">{{ cat.label }}</div>
-							<button
-								v-for="ep in cat.endpoints"
-								:key="ep.id"
-								@click="activeEndpoint = ep.id"
-								class="block w-full text-left px-2 py-1 text-xs rounded-lg transition-colors"
-								:class="activeEndpoint === ep.id
-									? 'bg-primary-50 text-primary-600 font-medium'
-									: 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'"
-							>
-								<span
-									class="inline-block w-8 text-[10px] font-bold mr-1"
-									:class="ep.method === 'POST' ? 'text-emerald-500' : 'text-primary-500'"
-								>{{ ep.method }}</span>
-								{{ ep.title }}
-							</button>
-						</div>
-					</nav>
-				</div>
-			</div>
-		</aside>
 	</div>
 </template>
+
+<style scoped>
+/* ============================================================
+   API 文档页布局：左侧目录 + 右侧内容
+   ============================================================ */
+.docs-shell {
+	display: flex;
+	/* 不能设 align-items: flex-start：目录列需要拉伸到与正文等高，内部 sticky 才能在整页滚动时持续吸附 */
+	align-items: stretch;
+	gap: 1.5rem;
+}
+
+/* ---------- 左侧目录 ---------- */
+/*
+ * 全局侧栏已占 ~296px，目录仅在 ≥1280px 常驻；
+ * 更窄的视口改用顶部「目录」按钮唤出抽屉，避免三栏把正文压到 400px 以内。
+ */
+.docs-rail {
+	display: none;
+	width: 264px;
+	flex-shrink: 0;
+}
+
+@media (min-width: 1280px) {
+	.docs-rail {
+		display: block;
+	}
+}
+
+.docs-rail-card {
+	position: sticky;
+	/* 滚动容器是 #main-content（已在全局顶栏之下），top 是相对它算的，
+	   不能沿用整页滚动的 5.5rem —— 那会把卡片额外推下 80px，顶部留一大片空白 */
+	top: 0.75rem;
+	display: flex;
+	max-height: calc(100vh - 7rem);
+	flex-direction: column;
+	overflow: hidden;
+	border: 1px solid rgba(255, 255, 255, 0.9);
+	border-radius: 1rem;
+	background: rgba(255, 255, 255, 0.82);
+	box-shadow: 0 10px 34px rgba(91, 104, 151, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+	backdrop-filter: blur(12px);
+}
+
+.docs-rail-search {
+	position: relative;
+	display: flex;
+	flex-shrink: 0;
+	align-items: center;
+	gap: 0.4rem;
+	margin: 0.75rem 0.75rem 0.25rem;
+	padding: 0 0.6rem;
+	height: 2.25rem;
+	border: 1px solid #e2e8f0;
+	border-radius: 0.7rem;
+	background: #f8fafc;
+	color: #94a3b8;
+	transition: border-color 160ms ease, background-color 160ms ease;
+}
+
+.docs-rail-search:focus-within {
+	border-color: var(--color-primary-400);
+	background: #fff;
+	box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.12);
+}
+
+.docs-rail-search-icon {
+	flex-shrink: 0;
+	color: #94a3b8;
+}
+
+.docs-rail-input {
+	width: 100%;
+	min-width: 0;
+	background: transparent;
+	font-size: 0.8125rem;
+	color: #334155;
+	outline: none;
+}
+
+.docs-rail-input::placeholder {
+	color: #a8b3c4;
+}
+
+.docs-rail-input::-webkit-search-cancel-button {
+	display: none;
+}
+
+.docs-rail-clear {
+	display: inline-flex;
+	height: 1.25rem;
+	width: 1.25rem;
+	flex-shrink: 0;
+	align-items: center;
+	justify-content: center;
+	border-radius: 9999px;
+	color: #94a3b8;
+}
+
+.docs-rail-clear:hover {
+	background: #e2e8f0;
+	color: #475569;
+}
+
+.docs-rail-scroll {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	padding: 0.5rem 0.6rem 0.75rem;
+	overscroll-behavior: contain;
+}
+
+.docs-rail-scroll::-webkit-scrollbar {
+	width: 6px;
+}
+
+.docs-rail-scroll::-webkit-scrollbar-thumb {
+	border-radius: 9999px;
+	background: #dbe3ee;
+}
+
+.docs-rail-label {
+	margin: 0.35rem 0.5rem 0.35rem;
+	font-size: 0.6875rem;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: #94a3b8;
+}
+
+.docs-rail-item {
+	display: flex;
+	width: 100%;
+	align-items: center;
+	gap: 0.5rem;
+	border-radius: 0.6rem;
+	padding: 0.4rem 0.5rem;
+	font-size: 0.8125rem;
+	font-weight: 500;
+	color: #64748b;
+	text-align: left;
+	transition: background-color 140ms ease, color 140ms ease;
+}
+
+.docs-rail-item:hover {
+	background: #f1f5f9;
+	color: #1e293b;
+}
+
+.docs-rail-item-icon {
+	flex-shrink: 0;
+	color: #94a3b8;
+}
+
+.docs-rail-item-active {
+	background: var(--color-primary-50);
+	color: var(--color-primary-700);
+	font-weight: 600;
+}
+
+.docs-rail-item-active .docs-rail-item-icon {
+	color: var(--color-primary-600);
+}
+
+.docs-rail-item-strong {
+	margin-top: 0.15rem;
+	color: #334155;
+	font-weight: 600;
+}
+
+.docs-rail-count {
+	margin-left: auto;
+	border-radius: 9999px;
+	background: #f1f5f9;
+	padding: 0 0.35rem;
+	font-size: 0.625rem;
+	font-weight: 700;
+	color: #94a3b8;
+}
+
+.docs-rail-item-active .docs-rail-count {
+	background: #fff;
+	color: var(--color-primary-600);
+}
+
+.docs-rail-group {
+	margin-top: 0.5rem;
+	border-top: 1px solid #eef2f7;
+	padding-top: 0.5rem;
+}
+
+.docs-rail-cat {
+	margin-top: 0.15rem;
+}
+
+.docs-rail-cat-head {
+	display: flex;
+	width: 100%;
+	align-items: center;
+	gap: 0.35rem;
+	border-radius: 0.5rem;
+	padding: 0.35rem 0.5rem 0.35rem 0.75rem;
+	font-size: 0.75rem;
+	font-weight: 600;
+	color: #475569;
+	text-align: left;
+}
+
+.docs-rail-cat-head:hover {
+	background: #f8fafc;
+	color: #0f172a;
+}
+
+.docs-rail-caret {
+	flex-shrink: 0;
+	color: #b6c2d2;
+	transition: transform 180ms ease;
+}
+
+.docs-rail-caret-closed {
+	transform: rotate(-90deg);
+}
+
+.docs-rail-eps {
+	margin-left: 0.75rem;
+	border-left: 1px solid #eef2f7;
+	padding-left: 0.35rem;
+}
+
+.docs-rail-ep {
+	display: flex;
+	width: 100%;
+	align-items: baseline;
+	gap: 0.4rem;
+	border-radius: 0.5rem;
+	padding: 0.3rem 0.45rem;
+	font-size: 0.78125rem;
+	color: #64748b;
+	text-align: left;
+	transition: background-color 140ms ease, color 140ms ease;
+}
+
+.docs-rail-ep:hover {
+	background: #f1f5f9;
+	color: #1e293b;
+}
+
+.docs-rail-ep-active {
+	background: var(--color-primary-50);
+	color: var(--color-primary-700);
+	font-weight: 600;
+}
+
+.docs-rail-method {
+	flex-shrink: 0;
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 0.5625rem;
+	font-weight: 800;
+	letter-spacing: 0.02em;
+}
+
+.docs-rail-ep-title {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.docs-rail-empty {
+	padding: 0.75rem 0.6rem;
+	font-size: 0.75rem;
+	color: #94a3b8;
+}
+
+.docs-rail-foot {
+	flex-shrink: 0;
+	border-top: 1px solid #eef2f7;
+	padding: 0.6rem 0.75rem 0.7rem;
+}
+
+.docs-rail-foot-label {
+	display: block;
+	margin-bottom: 0.25rem;
+	font-size: 0.625rem;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: #a8b3c4;
+}
+
+.docs-rail-base {
+	display: flex;
+	width: 100%;
+	align-items: center;
+	gap: 0.35rem;
+	border-radius: 0.5rem;
+	padding: 0.25rem 0.35rem;
+	color: #475569;
+}
+
+.docs-rail-base:hover {
+	background: #f1f5f9;
+	color: var(--color-primary-700);
+}
+
+.docs-rail-base code {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 0.6875rem;
+	text-align: left;
+}
+
+/* method 语义色 */
+.method-post { color: #059669; }
+.method-get { color: #0284c7; }
+.method-put { color: #d97706; }
+.method-delete { color: #dc2626; }
+
+/* ---------- 移动端抽屉 ---------- */
+.docs-drawer-mask {
+	position: fixed;
+	inset: 0;
+	z-index: 40;
+	background: rgba(15, 23, 42, 0.28);
+	backdrop-filter: blur(2px);
+}
+
+.docs-drawer {
+	position: fixed;
+	top: 0;
+	bottom: 0;
+	left: 0;
+	z-index: 41;
+	display: flex;
+	width: min(84vw, 320px);
+	flex-direction: column;
+	background: #fff;
+	box-shadow: 12px 0 40px rgba(15, 23, 42, 0.16);
+}
+
+.docs-drawer-head {
+	display: flex;
+	flex-shrink: 0;
+	align-items: center;
+	justify-content: space-between;
+	border-bottom: 1px solid #eef2f7;
+	padding: 0.75rem 0.75rem 0.75rem 1rem;
+}
+
+.docs-drawer-body {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	padding: 0.5rem 0.75rem 2rem;
+}
+
+/* 抽屉自带内边距，搜索框不再叠一层外边距 */
+.docs-drawer-search {
+	margin: 0 0 0.75rem;
+}
+
+.docs-drawer-enter-active,
+.docs-drawer-leave-active {
+	transition: transform 220ms ease;
+}
+
+.docs-drawer-enter-from,
+.docs-drawer-leave-to {
+	transform: translateX(-100%);
+}
+
+.docs-mobile-toc {
+	display: inline-flex;
+}
+
+@media (min-width: 1280px) {
+	.docs-mobile-toc {
+		display: none;
+	}
+}
+
+/* 空状态 */
+.docs-empty {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 0.5rem;
+	border-radius: 1rem;
+	border: 1px dashed #dbe3ee;
+	background: rgba(255, 255, 255, 0.6);
+	padding: 2.5rem 1rem;
+	color: #94a3b8;
+}
+
+.docs-empty p {
+	font-size: 0.8125rem;
+}
+
+/* ---------- 主内容 ---------- */
+.docs-main {
+	flex: 1;
+	min-width: 0;
+}
+
+/* 顶部工具条：面包屑 + 操作，随内容滚动（左栏已提供吸顶导航，这里不需要再吸一层） */
+.docs-topbar {
+	margin-bottom: 1rem;
+	padding-bottom: 0.75rem;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 1rem;
+	border-bottom: 1px solid rgba(226, 232, 240, 0.9);
+}
+
+.docs-crumb {
+	display: flex;
+	align-items: center;
+	gap: 0.4rem;
+	min-width: 0;
+	font-size: 0.8125rem;
+	line-height: 1.4;
+}
+
+.docs-crumb-link {
+	flex-shrink: 0;
+	font-weight: 500;
+	color: #64748b;
+	transition: color 160ms ease;
+}
+
+.docs-crumb-link:hover {
+	color: var(--color-primary-600);
+}
+
+.docs-crumb-sep {
+	flex-shrink: 0;
+	color: #cbd5e1;
+}
+
+.docs-crumb-item {
+	font-weight: 600;
+	color: #334155;
+	white-space: nowrap;
+}
+
+.docs-crumb-current {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-weight: 700;
+	color: #0f172a;
+}
+
+.docs-topbar-actions {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	flex-shrink: 0;
+}
+
+.docs-stack {
+	display: flex;
+	flex-direction: column;
+	gap: 1rem;
+}
+
+.docs-intro {
+	font-size: 0.8125rem;
+	line-height: 1.7;
+	color: #64748b;
+}
+
+.docs-intro strong {
+	font-weight: 700;
+	color: #0f172a;
+}
+
+/* 快速入门：信息条 */
+.docs-facts {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+	gap: 0.75rem;
+}
+
+.docs-fact {
+	display: flex;
+	flex-direction: column;
+	gap: 0.25rem;
+	border: 1px solid rgba(255, 255, 255, 0.9);
+	border-radius: 0.9rem;
+	background: rgba(255, 255, 255, 0.78);
+	padding: 0.7rem 0.9rem;
+	box-shadow: inset 0 1px 0 #fff;
+}
+
+.docs-fact-label {
+	font-size: 0.625rem;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: #a8b3c4;
+}
+
+.docs-fact-value {
+	font-size: 0.8125rem;
+	font-weight: 600;
+	color: #334155;
+}
+
+.docs-fact-copy {
+	display: flex;
+	align-items: center;
+	gap: 0.4rem;
+	text-align: left;
+}
+
+.docs-fact-copy code {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 0.75rem;
+	font-weight: 500;
+	color: var(--color-primary-700);
+}
+
+.docs-fact-copy:hover code {
+	color: var(--color-primary-600);
+	text-decoration: underline;
+}
+
+.docs-fact-copy svg {
+	flex-shrink: 0;
+	color: #94a3b8;
+}
+
+/* 步骤 */
+.docs-step-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.75rem;
+	padding: 1rem 1.25rem 0.5rem;
+}
+
+/* 文案区块占据剩余宽度，右侧按钮在窄屏换行而不是挤压标题 */
+.docs-step-head > .step-text {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+/* 窄屏下正文里已有「API 密钥」链接，头部按钮隐藏，避免换行后留下孤行 */
+.docs-step-action {
+	display: none;
+}
+
+@media (min-width: 768px) {
+	.docs-step-action {
+		display: inline-flex;
+	}
+}
+
+.docs-step-num {
+	display: inline-flex;
+	height: 1.6rem;
+	width: 1.6rem;
+	flex-shrink: 0;
+	align-items: center;
+	justify-content: center;
+	border-radius: 9999px;
+	background: linear-gradient(135deg, #14b8a6, #0d9488);
+	font-size: 0.75rem;
+	font-weight: 700;
+	color: #fff;
+	box-shadow: 0 6px 14px rgba(20, 184, 166, 0.28);
+}
+
+.docs-step-title {
+	font-size: 0.9375rem;
+	font-weight: 600;
+	line-height: 1.3;
+	color: #0f172a;
+}
+
+.docs-step-sub {
+	margin-top: 0.1rem;
+	font-size: 0.75rem;
+	color: #94a3b8;
+}
+
+/* 代码块外壳 */
+.docs-code {
+	overflow: hidden;
+	border-radius: 0.75rem;
+	border: 1px solid #e8edf4;
+	background: #0f172a;
+}
+
+.docs-code-bar {
+	display: flex;
+	align-items: center;
+	gap: 0.15rem;
+	padding: 0.25rem 0.5rem;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+	background: #111c31;
+}
+
+.docs-code-tab {
+	border-radius: 0.5rem;
+	padding: 0.35rem 0.7rem;
+	font-size: 0.6875rem;
+	font-weight: 600;
+	color: #94a3b8;
+	transition: background-color 140ms ease, color 140ms ease;
+}
+
+.docs-code-tab:hover {
+	color: #e2e8f0;
+	background: rgba(255, 255, 255, 0.06);
+}
+
+.docs-code-tab-active {
+	background: rgba(20, 184, 166, 0.16);
+	color: #5eead4;
+}
+
+.docs-code-copy {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.25rem;
+	border-radius: 0.45rem;
+	padding: 0.25rem 0.5rem;
+	font-size: 0.6875rem;
+	font-weight: 600;
+	color: #94a3b8;
+	transition: background-color 140ms ease, color 140ms ease;
+}
+
+.docs-code-copy:hover {
+	background: rgba(255, 255, 255, 0.08);
+	color: #e2e8f0;
+}
+
+.docs-code-copy.is-copied {
+	color: #34d399;
+}
+
+/* 兼容性 */
+.docs-compat {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+	gap: 0.75rem;
+}
+
+.docs-compat-item {
+	display: flex;
+	gap: 0.75rem;
+	border-radius: 0.9rem;
+	border: 1px solid rgba(20, 184, 166, 0.16);
+	background: linear-gradient(135deg, rgba(240, 253, 250, 0.9), rgba(236, 254, 255, 0.75));
+	padding: 0.9rem 1rem;
+}
+
+.docs-compat-icon {
+	flex-shrink: 0;
+	color: var(--color-primary-600);
+}
+
+.docs-compat-title {
+	font-size: 0.8125rem;
+	font-weight: 600;
+	color: #0f172a;
+}
+
+.docs-compat-sub {
+	margin: 0.1rem 0 0.4rem;
+	font-size: 0.6875rem;
+	color: #64748b;
+	line-height: 1.5;
+}
+
+/* 概览：分类 */
+.docs-cat-block {
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+}
+
+.docs-cat-bar {
+	display: flex;
+	align-items: center;
+	gap: 0.4rem;
+}
+
+.docs-cat-icon {
+	color: var(--color-primary-600);
+}
+
+.docs-cat-title {
+	font-size: 0.875rem;
+	font-weight: 600;
+	color: #0f172a;
+}
+
+.docs-cat-count {
+	border-radius: 9999px;
+	background: #eef2f7;
+	padding: 0 0.4rem;
+	font-size: 0.625rem;
+	font-weight: 700;
+	color: #94a3b8;
+}
+
+.docs-ep-list {
+	padding: 0.25rem;
+	overflow: hidden;
+}
+
+.docs-ep-row {
+	display: flex;
+	width: 100%;
+	align-items: flex-start;
+	gap: 0.75rem;
+	border-radius: 0.7rem;
+	padding: 0.6rem 0.75rem;
+	text-align: left;
+	transition: background-color 140ms ease;
+}
+
+.docs-ep-row + .docs-ep-row {
+	border-top: 1px solid #f4f7fb;
+}
+
+.docs-ep-row:hover {
+	background: #f8fafc;
+}
+
+.docs-ep-row:hover .docs-ep-arrow {
+	color: var(--color-primary-600);
+	transform: translateX(2px);
+}
+
+.docs-method {
+	margin-top: 0.1rem;
+	flex-shrink: 0;
+	border-radius: 0.35rem;
+	padding: 0.1rem 0.35rem;
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 0.625rem;
+	font-weight: 800;
+	background: #f1f5f9;
+}
+
+.method-post.docs-method { background: #ecfdf5; }
+.method-get.docs-method { background: #eff6ff; }
+.method-put.docs-method { background: #fffbeb; }
+.method-delete.docs-method { background: #fef2f2; }
+
+.docs-ep-main {
+	display: flex;
+	min-width: 0;
+	flex: 1;
+	flex-direction: column;
+	gap: 0.15rem;
+}
+
+.docs-ep-title {
+	font-size: 0.8125rem;
+	font-weight: 600;
+	color: #1e293b;
+}
+
+.docs-ep-path {
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 0.6875rem;
+	color: #94a3b8;
+}
+
+.docs-ep-desc {
+	display: -webkit-box;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+	font-size: 0.75rem;
+	line-height: 1.55;
+	color: #64748b;
+}
+
+.docs-ep-arrow {
+	margin-top: 0.15rem;
+	flex-shrink: 0;
+	color: #cbd5e1;
+	transition: color 140ms ease, transform 140ms ease;
+}
+
+/* 详情 */
+.docs-back {
+	display: inline-flex;
+	width: fit-content;
+	align-items: center;
+	gap: 0.3rem;
+	font-size: 0.75rem;
+	font-weight: 600;
+	color: #64748b;
+}
+
+.docs-back:hover {
+	color: var(--color-primary-600);
+}
+
+.docs-detail {
+	overflow: hidden;
+	padding: 0;
+}
+
+.docs-detail-head {
+	border-bottom: 1px solid #f1f5f9;
+	padding: 1.1rem 1.25rem 1rem;
+}
+
+.docs-detail-title {
+	font-size: 1.125rem;
+	font-weight: 700;
+	line-height: 1.35;
+	color: #0f172a;
+}
+
+.docs-detail-path {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	margin-top: 0.5rem;
+	flex-wrap: wrap;
+}
+
+.docs-detail-path code {
+	border-radius: 0.4rem;
+	background: #f8fafc;
+	padding: 0.15rem 0.45rem;
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 0.75rem;
+	color: #475569;
+}
+
+.docs-detail-copy {
+	display: inline-flex;
+	height: 1.5rem;
+	width: 1.5rem;
+	align-items: center;
+	justify-content: center;
+	border-radius: 0.4rem;
+	color: #94a3b8;
+}
+
+.docs-detail-copy:hover {
+	background: #f1f5f9;
+	color: var(--color-primary-600);
+}
+
+.docs-detail-desc {
+	margin-top: 0.6rem;
+	font-size: 0.8125rem;
+	line-height: 1.75;
+	color: #64748b;
+}
+
+.docs-detail-section {
+	border-bottom: 1px solid #f1f5f9;
+	padding: 1rem 1.25rem;
+}
+
+.docs-detail-label {
+	margin-bottom: 0.6rem;
+	font-size: 0.6875rem;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: #94a3b8;
+}
+
+.docs-detail-example {
+	display: flex;
+	flex-direction: column;
+	gap: 0.75rem;
+}
+
+.docs-auth-hint {
+	display: flex;
+	align-items: flex-start;
+	gap: 0.35rem;
+	border-radius: 0.7rem;
+	background: var(--color-primary-50);
+	padding: 0.55rem 0.7rem;
+	font-size: 0.75rem;
+	line-height: 1.6;
+	color: var(--color-primary-700);
+}
+
+.docs-auth-hint svg {
+	flex-shrink: 0;
+	margin-top: 0.1rem;
+}
+
+.docs-auth-hint code {
+	border-radius: 0.3rem;
+	background: rgba(255, 255, 255, 0.7);
+	padding: 0 0.25rem;
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 0.6875rem;
+}
+
+.docs-code-caption {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 0.35rem;
+}
+
+.docs-code-caption > span {
+	font-size: 0.6875rem;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	color: #94a3b8;
+}
+
+.docs-code-caption .docs-code-copy {
+	color: #94a3b8;
+}
+
+.docs-code-caption .docs-code-copy:hover {
+	background: #f1f5f9;
+	color: var(--color-primary-600);
+}
+
+.docs-code-caption .docs-code-copy.is-copied {
+	color: #059669;
+}
+
+.docs-detail-foot {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.75rem;
+	flex-wrap: wrap;
+	padding: 0.7rem 1.25rem;
+	background: #fbfcfe;
+}
+
+.docs-detail-foot-note {
+	font-size: 0.6875rem;
+	color: #94a3b8;
+}
+
+/* 翻页 */
+.docs-pager {
+	display: flex;
+	align-items: stretch;
+	gap: 0.75rem;
+}
+
+.docs-pager-btn {
+	display: flex;
+	flex: 1;
+	min-width: 0;
+	flex-direction: column;
+	gap: 0.15rem;
+	border: 1px solid rgba(255, 255, 255, 0.9);
+	border-radius: 0.85rem;
+	background: rgba(255, 255, 255, 0.78);
+	padding: 0.6rem 0.85rem;
+	text-align: left;
+	box-shadow: inset 0 1px 0 #fff;
+	transition: border-color 160ms ease, transform 160ms ease;
+}
+
+.docs-pager-btn:hover {
+	border-color: var(--color-primary-200);
+	transform: translateY(-1px);
+}
+
+.docs-pager-btn-next {
+	text-align: right;
+	align-items: flex-end;
+}
+
+.docs-pager-dir {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.2rem;
+	font-size: 0.625rem;
+	font-weight: 700;
+	letter-spacing: 0.04em;
+	color: #94a3b8;
+}
+
+.docs-pager-name {
+	max-width: 100%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 0.78125rem;
+	font-weight: 600;
+	color: #334155;
+}
+
+.docs-pager-spacer {
+	flex: 1;
+}
+
+/* 代码示例 */
+.docs-examples {
+	display: flex;
+	flex-direction: column;
+	gap: 0.6rem;
+}
+
+.docs-example {
+	overflow: hidden;
+	padding: 0;
+}
+
+.docs-example-head {
+	display: flex;
+	width: 100%;
+	align-items: center;
+	gap: 0.5rem;
+	padding: 0.6rem 0.9rem;
+	text-align: left;
+}
+
+.docs-example-head:hover {
+	background: #fbfcfe;
+}
+
+.docs-example-title {
+	font-size: 0.8125rem;
+	font-weight: 600;
+	color: #1e293b;
+}
+
+.docs-lang-badge {
+	border-radius: 9999px;
+	background: #f1f5f9;
+	padding: 0 0.4rem;
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 0.625rem;
+	font-weight: 600;
+	color: #94a3b8;
+}
+
+.docs-example .docs-code-copy {
+	color: #94a3b8;
+}
+
+.docs-example .docs-code-copy:hover {
+	background: #f1f5f9;
+	color: var(--color-primary-600);
+}
+
+.docs-example .docs-code-copy.is-copied {
+	color: #059669;
+}
+</style>
+
