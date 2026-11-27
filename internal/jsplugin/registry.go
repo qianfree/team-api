@@ -183,6 +183,66 @@ func (r *Registry) seedBuiltins(ctx context.Context) error {
 		}
 		glog.Infof(ctx, "jsplugin builtin seeded: %s@%s (active=%v)", compiled.Key, compiled.Version, !hasActive)
 	}
+	// 下线清理：二进制内已不存在的内置 key（如 golden 改为纯模板后移出 builtin/），
+	// 删除其存量 builtin 行，部署实例升级后真正下线
+	return r.removeRetiredBuiltins(ctx, builtins)
+}
+
+// retiredBuiltinKeys 找出 DB 中存在 builtin 行、但二进制内已下线的插件 key
+// （纯逻辑，可单测）。live 为当前二进制的内置 key 集。
+func retiredBuiltinKeys(rows []PluginVersionRow, live map[string]struct{}) []string {
+	seen := make(map[string]struct{})
+	var out []string
+	for i := range rows {
+		key := rows[i].PluginKey
+		if rows[i].Origin != "builtin" {
+			continue
+		}
+		if _, isActive := live[key]; isActive {
+			continue
+		}
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, key)
+	}
+	return out
+}
+
+// removeRetiredBuiltins 内置插件下线清理：删除已下线 key 的 builtin 行（同 key 的
+// upload 行保留——上传版本不受内置下线影响，继续按上传插件服务）；key 失去全部
+// 版本行时连带清理 plugin.{key}.* 配置键（对齐 DeletePlugin 的键清理语义，防同 key
+// 重新上传时静默继承旧配置值）。随 Bootstrap 在 seed 之后、generation 发布之前执行，
+// 清掉的行不会进入本次发布；插件缺席的在途任务由 30 分钟超时网兜底（与 DeletePlugin
+// 对在途任务的语义一致）。
+func (r *Registry) removeRetiredBuiltins(ctx context.Context, live []*CompiledPlugin) error {
+	liveKeys := make(map[string]struct{}, len(live))
+	for _, compiled := range live {
+		liveKeys[compiled.Key] = struct{}{}
+	}
+	var builtinRows []PluginVersionRow
+	if err := g.DB().Model(tableName).Ctx(ctx).Where("origin", "builtin").Scan(&builtinRows); err != nil {
+		return gerror.Wrap(err, "读取内置插件行失败")
+	}
+	for _, key := range retiredBuiltinKeys(builtinRows, liveKeys) {
+		if _, err := g.DB().Model(tableName).Ctx(ctx).
+			Where("plugin_key", key).Where("origin", "builtin").Delete(); err != nil {
+			return gerror.Wrapf(err, "清理下线内置插件 %s 失败", key)
+		}
+		count, err := g.DB().Model(tableName).Ctx(ctx).Where("plugin_key", key).Count()
+		if err != nil {
+			return gerror.Wrapf(err, "核查插件 %s 残留版本失败", key)
+		}
+		// key 已无任何版本行（无上传版本接盘）时清理配置键；清理失败仅告警——
+		// 残留键惰性无害（无人读取），不应阻断启动
+		if count == 0 {
+			if err := deletePluginConfigKeys(ctx, key); err != nil {
+				glog.Warningf(ctx, "jsplugin 下线内置 %s：配置键清理失败（版本已删除，残留键惰性无害）: %v", key, err)
+			}
+		}
+		glog.Infof(ctx, "jsplugin builtin retired: %s（builtin 行已清理，upload 版本不受影响）", key)
+	}
 	return nil
 }
 

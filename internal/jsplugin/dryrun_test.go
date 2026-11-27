@@ -6,12 +6,13 @@ import (
 	"testing"
 )
 
-// dryRunGoldenSource 读取 golden 参考实现源码（与 jsbridge adaptor_test 同一夹具）。
+// dryRunGoldenSource 读取 golden 参考实现源码（作者模板 template/plugin.js，
+// 与 jsbridge adaptor_test 同一夹具）。
 func dryRunGoldenSource(t *testing.T) string {
 	t.Helper()
-	data, err := os.ReadFile("builtin/golden/plugin.js")
+	data, err := os.ReadFile("template/plugin.js")
 	if err != nil {
-		t.Fatalf("读取 golden 插件失败: %v", err)
+		t.Fatalf("读取 golden 模板失败: %v", err)
 	}
 	return string(data)
 }

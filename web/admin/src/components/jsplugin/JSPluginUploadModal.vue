@@ -316,7 +316,7 @@ function onUploadClick() {
             type="button"
             class="up-editor__tpl"
             :disabled="templateLoading"
-            title="下载内置的插件作者模板（golden 参考实现）"
+            title="下载插件作者模板（golden 参考实现）"
             @click="downloadTemplate"
           >
             <IconDownload />{{ templateLoading ? '获取中…' : '下载模板' }}

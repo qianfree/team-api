@@ -45,11 +45,12 @@ export function decodeRequest(ctx) {
   return { kind: "query", taskIds: ((ctx.body || {}).ids) || [] };
 }`
 
+// goldenPluginSource 读取作者模板（golden 参考实现，已移出 builtin/ 不再随启动 seed）。
 func goldenPluginSource(t *testing.T) string {
 	t.Helper()
-	data, err := os.ReadFile("../../../internal/jsplugin/builtin/golden/plugin.js")
+	data, err := os.ReadFile("../../../internal/jsplugin/template/plugin.js")
 	if err != nil {
-		t.Fatalf("读取 golden 插件失败: %v", err)
+		t.Fatalf("读取 golden 模板失败: %v", err)
 	}
 	return string(data)
 }

@@ -97,7 +97,7 @@ func (s *sAdmin) JSPluginDryRun(_ context.Context, req *v1.JSPluginDryRunReq) (*
 	return res, nil
 }
 
-// JSPluginTemplate 模板下载：内置 golden 参考实现源码（作者抄它起步，删掉不需要的钩子）。
+// JSPluginTemplate 模板下载：golden 参考实现模板源码（作者抄它起步，删掉不需要的钩子；非内置实例）。
 func (s *sAdmin) JSPluginTemplate(_ context.Context, _ *v1.JSPluginTemplateReq) (*v1.JSPluginTemplateRes, error) {
 	return &v1.JSPluginTemplateRes{Source: jsplugin.TemplateSource(), FileName: "plugin.template.js"}, nil
 }

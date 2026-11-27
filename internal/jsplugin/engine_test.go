@@ -12,11 +12,13 @@ import (
 	"github.com/qianfree/team-api/internal/jsplugin/contract"
 )
 
+// goldenSource 读取作者模板（golden 参考实现）源码——已从 builtin/ 移至 template/，
+// 不再随启动 seed 为插件实例，仅作模板与测试夹具。
 func goldenSource(t *testing.T) string {
 	t.Helper()
-	data, err := os.ReadFile("builtin/golden/plugin.js")
+	data, err := os.ReadFile("template/plugin.js")
 	if err != nil {
-		t.Fatalf("读取 golden 插件失败: %v", err)
+		t.Fatalf("读取 golden 模板失败: %v", err)
 	}
 	return string(data)
 }

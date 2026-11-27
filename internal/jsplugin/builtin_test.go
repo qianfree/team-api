@@ -19,15 +19,34 @@ func TestBuiltinPluginsCompile(t *testing.T) {
 	for _, b := range builtins {
 		keys[b.Key] = b
 	}
-	for _, key := range []string{"golden", "alibaba", "doubao", "hailuo"} {
+	for _, key := range []string{"alibaba", "doubao", "hailuo", "teamapi"} {
 		if _, ok := keys[key]; !ok {
 			t.Fatalf("缺少内置插件 %s", key)
 		}
 	}
-	// golden 形态断言：视频模型 + 标准端点声明 + validateRequest 示范（模板范本）
-	golden := keys["golden"]
-	if !golden.Manifest.SupportsUpstreamModel("golden_video") || golden.Manifest.StandardVideos != "decodeVideos" {
-		t.Fatalf("golden 应示范视频模型与 standardVideos 声明: %+v", golden.Manifest)
+	// golden 已改为纯作者模板（template/plugin.js），不再作为内置实例 seed
+	if _, ok := keys["golden"]; ok {
+		t.Fatal("golden 已下线，不应再作为内置插件 seed")
+	}
+}
+
+// TestRetiredBuiltinKeys 下线清理纯逻辑：仅命中「DB 有 builtin 行、二进制内已不存在」
+// 的 key；在线内置、upload 行、纯上传插件均不触发。
+func TestRetiredBuiltinKeys(t *testing.T) {
+	live := map[string]struct{}{"hailuo": {}, "teamapi": {}}
+	rows := []PluginVersionRow{
+		{PluginKey: "hailuo", Origin: "builtin"},
+		{PluginKey: "golden", Origin: "builtin"},
+		{PluginKey: "golden", Origin: "builtin"},  // 同 key 多行去重
+		{PluginKey: "golden", Origin: "upload"},   // upload 行不参与判定
+		{PluginKey: "reseller", Origin: "upload"}, // 纯上传插件不触发
+	}
+	got := retiredBuiltinKeys(rows, live)
+	if len(got) != 1 || got[0] != "golden" {
+		t.Fatalf("应仅清理已下线的 golden: %v", got)
+	}
+	if got := retiredBuiltinKeys(nil, live); got != nil {
+		t.Fatalf("无 builtin 行时应返回空: %v", got)
 	}
 }
 

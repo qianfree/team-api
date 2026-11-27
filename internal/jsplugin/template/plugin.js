@@ -1,5 +1,6 @@
-// golden 插件：契约 v1 的参考实现，同时是引擎单测与 E2E 的夹具。
-// 作者模板：抄这个文件起步，删掉不需要的钩子。
+// golden 作者模板：契约 v1 的参考实现，同时是引擎单测与 E2E 的夹具。
+// 位于 internal/jsplugin/template/（独立 embed，经 TemplateSource 供管理端模板下载
+// 与 AI 助手技能注入）——不随启动 seed 为内置插件实例，可照抄后自由改名上传。
 // 双能力示范：golden_music（音乐，仅原生路由入口）+ golden_video（视频，原生路由
 // 与标准端点双入口——视频插件必须声明 meta.standardVideos 并导出对应解码钩子，
 // 否则模型无法经 /v1/videos 与 /v1/video/generations 提交，调用方只能走 /pjs 原生路由）。

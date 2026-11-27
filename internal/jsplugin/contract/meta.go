@@ -1,7 +1,7 @@
 // Package contract 定义 JS 任务插件的 v1 契约：manifest 结构与钩子出入参。
 //
 // 契约即产品：本包是插件作者与基座之间唯一的接口事实源。
-// 对外交付物（v1.d.ts / docs/plugin-api/v1.md / testdata/golden）必须与本包保持一致。
+// 对外交付物（v1.d.ts / docs/plugin-api/v1.md / 作者模板 template/plugin.js）必须与本包保持一致。
 // 演进规则：v1 内只增可选字段，破坏性变更升 apiVersion。
 package contract
 
