@@ -16,6 +16,7 @@ import (
 	"github.com/qianfree/team-api/internal/consts"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
+	"github.com/qianfree/team-api/internal/logic/task/artifact"
 	do "github.com/qianfree/team-api/internal/model/do"
 )
 
@@ -147,8 +148,9 @@ func CleanupExpiredData(ctx context.Context) error {
 
 // FileCleanupResult 报告一次文件保留期清理删除的文件数量。
 type FileCleanupResult struct {
-	ExportsDeleted int `json:"exports_deleted"`
-	ImagesDeleted  int `json:"images_deleted"`
+	ExportsDeleted   int `json:"exports_deleted"`
+	ImagesDeleted    int `json:"images_deleted"`
+	ArtifactsDeleted int `json:"artifacts_deleted"`
 }
 
 // deleteExpiredFiles 删除 created_at 早于 cutoff 的 fil_files 行及其存储对象。
@@ -256,7 +258,7 @@ func CheckFileRetention(ctx context.Context) error {
 	return err
 }
 
-// RunFileRetentionNow 立即执行一次完整保留期清理（导出 + 图片），返回各自删除数量。
+// RunFileRetentionNow 立即执行一次完整保留期清理（导出 + 图片 + JS 插件产物），返回各自删除数量。
 // 供管理后台「手动触发清理」端点调用；不受 file_retention_enabled 开关限制。
 func RunFileRetentionNow(ctx context.Context) (*FileCleanupResult, error) {
 	res := &FileCleanupResult{}
@@ -275,6 +277,11 @@ func RunFileRetentionNow(ctx context.Context) (*FileCleanupResult, error) {
 			return res, err
 		}
 		res.ImagesDeleted = n
+	}
+	if n, err := artifact.CleanupExpiredArtifacts(ctx); err != nil {
+		return res, err
+	} else {
+		res.ArtifactsDeleted = n
 	}
 	return res, nil
 }

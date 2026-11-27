@@ -286,6 +286,8 @@ var Registry = []SettingDef{
 		Label: "启用文件保留期检查"},
 	{Key: "file_image_retention_days", Type: SettingTypeInt, Default: "0", Category: "data_governance",
 		Label: "AI图片保留天数(0=不清理)", Description: "AI re-host 图片超过该天数后自动清理，0 表示不自动删除", Validation: "min:0,max:3650"},
+	{Key: "js_artifact_retention_days", Type: SettingTypeInt, Default: "0", Category: "data_governance",
+		Label: "JS插件产物保留天数(0=不清理)", Description: "JS 任务插件转存产物（jsartifacts/，视频/音频等）超过该天数后自动清理存储对象与登记，内容链接将返回 410；0 表示不自动删除", Validation: "min:0,max:3650"},
 
 	// ── Agreement (用户协议) ──
 	{Key: "agreement_enabled", Type: SettingTypeBool, Default: "false", Category: "agreement",

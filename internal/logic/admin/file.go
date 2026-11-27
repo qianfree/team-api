@@ -204,14 +204,15 @@ func (s *sAdmin) FileDelete(ctx context.Context, req *v1.FileDeleteReq) (*v1.Fil
 	return &v1.FileDeleteRes{}, nil
 }
 
-// FileCleanup 手动触发一次保留期清理（导出 + 图片）。
+// FileCleanup 手动触发一次保留期清理（导出 + 图片 + JS 插件产物）。
 func (s *sAdmin) FileCleanup(ctx context.Context, req *v1.FileCleanupReq) (*v1.FileCleanupRes, error) {
 	result, err := RunFileRetentionNow(ctx)
 	if err != nil {
 		return nil, err
 	}
 	return &v1.FileCleanupRes{
-		ExportsDeleted: result.ExportsDeleted,
-		ImagesDeleted:  result.ImagesDeleted,
+		ExportsDeleted:   result.ExportsDeleted,
+		ImagesDeleted:    result.ImagesDeleted,
+		ArtifactsDeleted: result.ArtifactsDeleted,
 	}, nil
 }

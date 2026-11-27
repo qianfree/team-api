@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -321,6 +322,10 @@ func ServeTaskContent(ctx context.Context, w http.ResponseWriter, task *common.A
 		case found && openErr == nil && artifact != nil && artifact.Body != nil:
 			defer artifact.Body.Close()
 			writeContentStream(ctx, w, task.PublicTaskID, artifact.Body, artifact.ContentType, artifact.Size)
+			return
+		case found && errors.Is(openErr, common.ErrArtifactExpired):
+			// 保留期已过（对象已清理）：410 Gone，不再回落 ResultURL——上游直链同样早已失效
+			writeTaskError(w, http.StatusGone, "artifact expired: retention policy has removed this artifact", "artifact_expired")
 			return
 		case found:
 			openFailed = true

@@ -509,6 +509,10 @@ func registerCronJobs(cs *common.CronScheduler) {
 	cs.Register("file_retention_check", "文件保留检查", "0 5 * * *", func(ctx context.Context) error {
 		return admin.CheckFileRetention(ctx)
 	})
+	cs.Register("js_artifact_cleanup", "JS插件产物保留期清理", "0 6 * * *", func(ctx context.Context) error {
+		_, err := artifact.CleanupExpiredArtifacts(ctx)
+		return err
+	})
 	cs.Register("task_timeout_check", "任务超时检查", "*/10 * * * *", func(ctx context.Context) error {
 		return admin.MarkStuckTasksFailed(ctx)
 	})

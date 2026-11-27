@@ -311,6 +311,7 @@ const retentionSaving = ref(false)
 const cleanupLoading = ref(false)
 const retentionEnabled = ref(true)
 const imageRetentionDays = ref<number>(0)
+const jsArtifactRetentionDays = ref<number>(0)
 
 async function fetchRetention() {
   retentionLoading.value = true
@@ -319,6 +320,7 @@ async function fetchRetention() {
     const list = res.data?.data?.list || []
     for (const item of list) {
       if (item.key === 'file_image_retention_days') imageRetentionDays.value = Number(item.value ?? item.default ?? 0)
+      if (item.key === 'js_artifact_retention_days') jsArtifactRetentionDays.value = Number(item.value ?? item.default ?? 0)
       if (item.key === 'file_retention_enabled') retentionEnabled.value = String(item.value ?? item.default) === 'true'
     }
   } catch {
@@ -333,6 +335,7 @@ async function saveRetention() {
     await request.put('/admin/settings/data_governance', {
       settings: {
         file_image_retention_days: String(imageRetentionDays.value ?? 0),
+        js_artifact_retention_days: String(jsArtifactRetentionDays.value ?? 0),
         file_retention_enabled: String(retentionEnabled.value),
       },
     })
@@ -346,7 +349,7 @@ async function saveRetention() {
 function manualCleanup() {
   Modal.confirm({
     title: '手动清理过期文件',
-    content: '将按当前保留策略立即清理过期的导出文件与 AI 图片（含存储对象）。图片保留天数为 0 时不会清理图片。是否继续？',
+    content: '将按当前保留策略立即清理过期的导出文件、AI 图片与 JS 插件产物（含存储对象）。保留天数为 0 的类别不会清理。是否继续？',
     okText: '开始清理', cancelText: '取消',
     onOk: async () => {
       cleanupLoading.value = true
@@ -439,6 +442,9 @@ onMounted(() => {
               <div class="retention-pop__label">AI 图片保留天数</div>
               <AInputNumber v-model="imageRetentionDays" :min="0" :max="3650" style="width:100%" placeholder="0=不清理" />
               <div class="retention-pop__hint">0 表示不自动删除图片</div>
+              <div class="retention-pop__label">JS 插件产物保留天数</div>
+              <AInputNumber v-model="jsArtifactRetentionDays" :min="0" :max="3650" style="width:100%" placeholder="0=不清理" />
+              <div class="retention-pop__hint">任务产物（视频/音频等转存对象）超过该天数后清理，内容链接将返回 410；0 表示不自动删除</div>
               <AButton type="primary" long :loading="retentionSaving" @click="saveRetention">保存策略</AButton>
             </div>
           </template>

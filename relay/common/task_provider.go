@@ -3,11 +3,16 @@ package common
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"time"
 
 	"github.com/shopspring/decimal"
 )
+
+// ErrArtifactExpired 产物已过保留期被清理（js_artifact_retention_days）。OpenTaskContent
+// 返回该哨兵时内容端点映射 410 Gone，与「未找到 / 回源失败」明确区分。
+var ErrArtifactExpired = errors.New("task artifact expired")
 
 // TaskDataProvider 异步任务数据持久化接口
 type TaskDataProvider interface {
