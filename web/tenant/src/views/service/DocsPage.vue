@@ -864,7 +864,7 @@ const categories: Category[] = [
 				method: 'GET',
 				path: '/v1/videos/{video_id}',
 				title: 'Retrieve Video（OpenAI 协议）',
-				desc: '查询视频任务，返回官方 Video 对象（status: queued / in_progress / completed / failed）。非终态响应携带 openai-poll-after-ms 轮询间隔建议头；生成失败以 status=failed + error 对象表达（HTTP 仍为 200）。completed 时附扩展字段 video_url：平台签名直链，免 API Key 可直接播放/下载，每次查询重新签发（有效期默认 24 小时，过期后重新查询即可）。产物开启转存平台对象存储时，上游已完成但转存未完成期间保持 in_progress（progress=99），转存完成后才返回 completed + video_url（完成后超过 30 分钟仍未转存成功则放行 completed，链接改走实时回源）。',
+				desc: '查询视频任务，返回官方 Video 对象（status: queued / in_progress / completed / failed）。非终态响应携带 openai-poll-after-ms 轮询间隔建议头；生成失败以 status=failed + error 对象表达（HTTP 仍为 200）。completed 时附扩展字段 video_url：免 API Key 可直接播放/下载的交付链接，每次查询重新签发（有效期默认 24 小时，过期后重新查询即可）。产物已转存平台对象存储时 video_url 为对象存储预签名直链（客户端直连下载，支持 Range 拖动播放）；未转存（关闭转存 / 回源放行）时为平台签名链接，由平台代理回源输出。产物开启转存时，上游已完成但转存未完成期间保持 in_progress（progress=99），转存完成后才返回 completed + video_url（完成后超过 30 分钟仍未转存成功则放行 completed，链接改走实时回源）。',
 				params: [
 					{ field: 'video_id', type: 'string', desc: '视频任务 ID（路径参数）', required: true },
 				],
@@ -879,7 +879,7 @@ const categories: Category[] = [
   "model": "doubao-seedance-2-0-260128",
   "prompt": "图片1的人物在视频1的场景中奔跑，背景音乐参考音频1",
   "seconds": "10",
-  "video_url": "${apiBaseUrl}/v1/tasks/video_abc123/content?expires=1817103900&signature=..."
+  "video_url": "https://oss.example.com/bucket/tasks/video_abc123/video.mp4?Expires=1817103900&OSSAccessKeyId=...&Signature=..."
 }`,
 				},
 			},

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	rcommon "github.com/qianfree/team-api/relay/common"
 )
 
@@ -206,5 +207,71 @@ func TestResolveDeliveryNonJSTask(t *testing.T) {
 	}
 	if view := ResolveDelivery(ctx, &rcommon.AsyncTask{Status: "IN_PROGRESS", Platform: "js:myapi", ResultURL: "https://cdn/x.mp4"}); view != (rcommon.TaskDelivery{}) {
 		t.Fatalf("非成功任务应为零值: %+v", view)
+	}
+}
+
+// fakePresignProvider 存储 provider 替身：只关心 PresignedURL 的返回（直链 / 错误）。
+type fakePresignProvider struct {
+	url string
+	err error
+}
+
+func (f *fakePresignProvider) Upload(context.Context, io.Reader, string, string) (string, error) {
+	return "", nil
+}
+
+func (f *fakePresignProvider) Download(context.Context, string) (io.ReadCloser, error) {
+	return nil, errors.New("unused")
+}
+
+func (f *fakePresignProvider) Delete(context.Context, string) error { return nil }
+
+func (f *fakePresignProvider) PresignedURL(context.Context, string, time.Duration) (string, error) {
+	return f.url, f.err
+}
+
+func (f *fakePresignProvider) PresignedThumbnailURL(ctx context.Context, key string, _ int, expires time.Duration) (string, error) {
+	return f.PresignedURL(ctx, key, expires)
+}
+
+func stubFileSvc(t *testing.T, p lcommon.StorageProvider) {
+	t.Helper()
+	old := acquireFileSvc
+	acquireFileSvc = func(context.Context) (*lcommon.FileService, error) { return lcommon.NewFileService(p), nil }
+	t.Cleanup(func() { acquireFileSvc = old })
+}
+
+func TestDeliveryContentURLDirectFirst(t *testing.T) {
+	stubSigning(t, time.Unix(1_800_000_000, 0))
+	ctx := context.Background()
+	task := &rcommon.AsyncTask{PublicTaskID: "task_x"}
+	stored := &artifactRow{ArtifactKey: "video", Status: statusStored, StoredKey: "tasks/task_x/video.mp4"}
+	directLink := "https://oss.example.com/bucket/tasks/task_x/video.mp4?sig=1"
+
+	// 已转存：优先对象存储预签名直链（主/副产物同源）
+	stubFileSvc(t, &fakePresignProvider{url: directLink})
+	if got := deliveryContentURL(ctx, task, stored); got != directLink {
+		t.Fatalf("已转存应直返预签名直链: %s", got)
+	}
+	if got := storedArtifactDirectURL(ctx, stored); got != directLink {
+		t.Fatalf("副产物直链异常: %s", got)
+	}
+
+	// 未转存（direct 模式 / 转存中 / 失败回源）：回落平台签名链接
+	for _, status := range []string{"direct", "failed", "pending", ""} {
+		row := &artifactRow{ArtifactKey: "video", Status: status}
+		if got := deliveryContentURL(ctx, task, row); !strings.HasPrefix(got, "https://api.example.com/v1/tasks/task_x/content?") {
+			t.Fatalf("状态 %q 应回落平台链接: %s", status, got)
+		}
+	}
+	// 无登记行（非 JS 插件任务）：平台链接
+	if got := deliveryContentURL(ctx, task, nil); !strings.HasPrefix(got, "https://api.example.com/v1/tasks/task_x/content?") {
+		t.Fatalf("无登记行应回落平台链接: %s", got)
+	}
+
+	// 预签名失败（local 存储无预签名语义 / TTL 越界等）：回落平台链接
+	stubFileSvc(t, &fakePresignProvider{err: errors.New("presign unsupported")})
+	if got := deliveryContentURL(ctx, task, stored); !strings.HasPrefix(got, "https://api.example.com/v1/tasks/task_x/content?") {
+		t.Fatalf("签名失败应回落平台链接: %s", got)
 	}
 }

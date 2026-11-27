@@ -171,8 +171,12 @@ const statusBadgeClass = computed(() => {
 		default: return 'badge-warning'
 	}
 })
-// 成品视频地址：/v1/videos/{id}/content 需带 API Key 拉流，取回后转 blob URL 供播放/下载
+// 成品视频地址：优先用查询响应的 video_url 免鉴权直链（产物已转存时为 OSS 预签名直链，
+// 字节不过平台、播放器可 Range 拖动），<video> 直接播放；无 video_url 时兜底经
+// /content 端点（API Key 鉴权）代理拉流并转 blob URL
 const videoUrl = ref('')
+// 下载进行中：经 /content 端点按需拉流，防重复点击
+const downloading = ref(false)
 // 任务状态轮询：页面隐藏时暂停（任务在服务端继续执行），恢复可见时立即补拉
 const taskPoller = createPoller(pollLoop, 3000, { immediate: true })
 
@@ -265,7 +269,7 @@ async function submitTask() {
 		if (data.status !== 'completed' && data.status !== 'failed') {
 			startPolling()
 		} else if (data.status === 'completed') {
-			loadVideoContent()
+			applyVideoResult(data.video_url)
 		}
 	} catch (e: any) {
 		currentTask.value = {
@@ -313,7 +317,7 @@ async function pollLoop() {
 		if (data.status === 'completed' || data.status === 'failed') {
 			stopPolling()
 			if (data.status === 'completed') {
-				loadVideoContent()
+				applyVideoResult(data.video_url)
 			}
 			return
 		}
@@ -322,8 +326,18 @@ async function pollLoop() {
 	}
 }
 
-// loadVideoContent 拉取成品视频：content 端点要求 API Key 鉴权，浏览器无法直接用 URL 播放，
-// 取回二进制后转 blob URL 供 <video> 播放与下载
+// applyVideoResult completed 时的成品地址接入：有 video_url 直链直接作为播放源（免鉴权，
+// 已转存时直连对象存储）；无直链（旧后端未签发等）兜底走 content 端点代理拉流
+function applyVideoResult(url?: string) {
+	if (url) {
+		videoUrl.value = url
+		return
+	}
+	loadVideoContent()
+}
+
+// loadVideoContent 兜底拉流：content 端点要求 API Key 鉴权，浏览器无法直接用 URL 播放，
+// 取回二进制后转 blob URL 供 <video> 播放
 async function loadVideoContent() {
 	if (!currentTask.value?.id || videoUrl.value) return
 	try {
@@ -334,20 +348,20 @@ async function loadVideoContent() {
 		})
 		videoUrl.value = URL.createObjectURL(res.data)
 	} catch {
-		// 拉取失败不改变任务状态，下载按钮可重试（downloadVideo 内再次触发加载）
+		// 拉取失败不改变任务状态，可经下载按钮重试
 		currentTask.value = {
 			...currentTask.value,
-			error: currentTask.value?.error || '视频加载失败，请点击下载重试',
+			error: currentTask.value?.error || '视频加载失败，可尝试下载',
 		}
 	}
 }
 
-// releaseVideo 释放 blob URL，避免内存泄漏
+// releaseVideo 释放 blob URL，避免内存泄漏（直链地址 revoke 无副作用，仅清理 blob:）
 function releaseVideo() {
-	if (videoUrl.value) {
+	if (videoUrl.value.startsWith('blob:')) {
 		URL.revokeObjectURL(videoUrl.value)
-		videoUrl.value = ''
 	}
+	videoUrl.value = ''
 }
 
 // 组件卸载时停止轮询并释放资源，避免路由离开后仍持续请求任务状态
@@ -362,17 +376,32 @@ function resetTask() {
 	currentTask.value = null
 }
 
-function downloadVideo() {
-	if (!videoUrl.value) {
-		loadVideoContent()
-		return
+// downloadVideo 下载成品：经 /content 端点按需拉流转 blob 下载。video_url 直链多为跨域
+//（对象存储域名），浏览器会忽略 <a download> 属性（变成打开播放）、未配 CORS 时 fetch 也
+// 受阻；content 端点同源可靠且可指定文件名。流量仅在用户点击下载时发生
+async function downloadVideo() {
+	if (!currentTask.value?.id || downloading.value) return
+	downloading.value = true
+	try {
+		const api = createPlaygroundApi(props.apiKey)
+		const res = await api.get(`/v1/videos/${currentTask.value.id}/content`, {
+			responseType: 'blob',
+			timeout: 300_000,
+		})
+		const blobUrl = URL.createObjectURL(res.data)
+		const a = document.createElement('a')
+		a.href = blobUrl
+		a.download = `video_${currentTask.value.id}.mp4`
+		document.body.appendChild(a)
+		a.click()
+		document.body.removeChild(a)
+		// 浏览器拿到 blob 引用后即可保存，延迟释放兜底极快场景下被过早回收
+		window.setTimeout(() => URL.revokeObjectURL(blobUrl), 30_000)
+	} catch (e: any) {
+		toast.error(e?.message || '视频下载失败，请重试')
+	} finally {
+		downloading.value = false
 	}
-	const a = document.createElement('a')
-	a.href = videoUrl.value
-	a.download = `video_${currentTask.value?.id || 'output'}.mp4`
-	document.body.appendChild(a)
-	a.click()
-	document.body.removeChild(a)
 }
 </script>
 
@@ -498,17 +527,17 @@ function downloadVideo() {
 							:since="genStartAt"
 						/>
 
-						<!-- 任务状态 -->
-						<div v-if="currentTask" class="space-y-4">
-							<!-- 视频结果：与生成态同一尺寸约束（左半侧 + 高度上限），
-							     并让结果区里「视频 + 按钮 + 详情」三块正好放满，不出现滚动条 -->
-							<div v-if="currentTask.status === 'completed' && videoUrl" class="video-result">
-								<video controls class="video-result__player" :src="videoUrl" />
-								<button class="btn btn-secondary btn-sm shrink-0" @click="downloadVideo">
-									<Icon name="arrowDown" size="sm" />
-									下载视频
-								</button>
-							</div>
+							<!-- 任务状态 -->
+							<div v-if="currentTask" class="space-y-4">
+								<!-- 视频结果：与生成态同一尺寸约束（左半侧 + 高度上限），
+								     并让结果区里「视频 + 按钮 + 详情」三块正好放满，不出现滚动条 -->
+								<div v-if="currentTask.status === 'completed' && videoUrl" class="video-result">
+									<video controls class="video-result__player" :src="videoUrl" />
+									<button class="btn btn-secondary btn-sm shrink-0" :disabled="downloading" @click="downloadVideo">
+										<Icon name="arrowDown" size="sm" />
+										{{ downloading ? '下载中...' : '下载视频' }}
+									</button>
+								</div>
 							<!-- 成品加载中（content 端点拉流转 blob） -->
 							<GenerationProgressCard
 								v-else-if="currentTask.status === 'completed'"
