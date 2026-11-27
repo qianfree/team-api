@@ -41,8 +41,10 @@ func (JSPluginSkill) Reference() string {
 - modelsFromConfig（可选）：扩展上游模型承载配置键名（该键须在 config 中声明，type 为 text/string/json，
   不可 encrypted）；其配置值（换行/逗号分隔或 JSON 数组）运行时并入支持清单，上游新增模型改配置即可
 - fetchMode：batch | per_task（缺省 per_task）
-- routes：[{method, path, type}]，method 大写，path 支持 :param 段，type ∈ submit | query | dynamic；
-  可选 decode/render 字段声明钩子别名。三类路由的语义：
+- routes（可选，与 standardVideos 至少声明其一）：[{method, path, type}]，method 大写，path 支持 :param 段，
+  type ∈ submit | query | dynamic；可选 decode/render 字段声明钩子别名。纯标准端点插件（仅经 /v1/videos、
+  /v1/video/generations 提交）可整体省略 routes，连同 decodeRequest/renderSubmit/renderTask 等原生路由
+  专属钩子——标准端点响应由平台渲染。三类路由的语义：
   submit=客户端提交入口（解码 → 选渠道 → 预扣 → 发上游）；
   query=客户端查询单个任务，【必须带路径参数】（如 /result/:task_id，值是平台公开任务 ID task_xxx），
   网关读库后调 renderTask 回包——不调上游、不调 buildQueryRequest；查询串（?id=）读不到，

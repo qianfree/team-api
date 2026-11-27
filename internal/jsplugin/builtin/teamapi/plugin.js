@@ -11,15 +11,15 @@
 // extra_models 登记——上游新增模型只需改配置，无需更新本插件。
 //
 // 实现要点：
-// ① 双入口：标准端点 /v1/videos、/v1/video/generations（meta.standardVideos →
-//    decodeVideos，宿主入钩前已归一为通用任务体、file_id 引用已解析为 URL）与原生
-//    路由 /pjs/teamapi/v1/videos（OpenAI 形状 JSON 直传）。decode 只做体形归一，
-//    不校验模型——平台名由渠道映射决定，参数与模型合法性由上游自己校验。
+// ① 标准端点单入口（不声明 routes，无 /pjs 原生路由）：/v1/videos 与
+//    /v1/video/generations（meta.standardVideos → decodeVideos，宿主入钩前已归一
+//    为通用任务体、file_id 引用已解析为 URL）。decode 只做体形归一，不校验模型
+//    ——平台名由渠道映射决定，参数与模型合法性由上游自己校验；标准端点的响应
+//    （OpenAI Video 对象）与查询 GET /v1/videos/{id} 由平台渲染，无需渲染钩子。
 // ② 产物三档取源：video_url（Team-API 完成响应的直链扩展）→ video:{url}（官方
 //    Sora 兼容形态）→ channel-bearer 回源 /v1/videos/{id}/content（宿主注入渠道
 //    密钥，纯 OpenAI 上游也能用）。下游 GET /v1/videos/{id}/content 由平台基座从
-//    登记产物供给（OSS 转存/回源代理），插件不另设 content 原生路由——render 钩子
-//    只能输出 JSON 文本，无法流式二进制。
+//    登记产物供给（OSS 转存/回源代理）。
 // ③ 用量只报宿主固定词汇（计价口径由宿主模型定价决定）：预扣按请求估算（秒数/
 //    图片角色数/分辨率）；终态映射上游 usage（output_video_seconds→output_seconds、
 //    prompt_tokens→input_tokens、completion_tokens→output_tokens 等）多退少补。
@@ -47,10 +47,8 @@ export const meta = {
       description: "每行一个上游 Team-API 对外模型名，保存后并入本插件支持的上游模型清单（渠道模型路由/映射配合使用）",
     },
   ],
-  routes: [
-    { method: "POST", path: "/v1/videos", type: "submit" },
-    { method: "GET", path: "/v1/videos/:task_id", type: "query" },
-  ],
+  // 纯标准端点插件：不声明 routes（/pjs 无原生入口），仅经 /v1/videos、
+  // /v1/video/generations 提交，查询走平台 GET /v1/videos/{id}
 };
 
 // ── 工具函数 ──────────────────────────────────────────────
@@ -58,7 +56,7 @@ export const meta = {
 function trimmed(v) { return String(v === undefined || v === null ? "" : v).trim(); }
 function plainObject(v) { return v && typeof v === "object" && !Array.isArray(v) ? v : null; }
 
-// 通用任务体（标准端点）与 OpenAI 形状（原生路由）→ 内部 std 体。
+// 通用任务体（标准端点入钩前已归一）→ 内部 std 体。
 // 只做字段搬运与归一，不校验模型/参数——上游 /v1/videos 是同一协议，由它校验。
 function normalizeRequest(raw) {
   const metadata = plainObject(raw.metadata) || {};
@@ -117,19 +115,6 @@ function normalizeRequest(raw) {
 export function decodeVideos(ctx) {
   const raw = plainObject(ctx.body) || {};
   const model = trimmed(ctx.model || raw.model);
-  if (!model) throw new Error("field model is required");
-  return { kind: "submit", model: model, requestBody: normalizeRequest(raw) };
-}
-
-// 原生路由解码（POST /pjs/teamapi/v1/videos）：body 已是 OpenAI 形状。
-// multipart 请走标准端点 /v1/videos（宿主会解析文件引用）——原生路由收到文件
-// 引用无法可靠还原角色，明确拒绝而不是静默丢素材。
-export function decodeRequest(ctx) {
-  if (Array.isArray(ctx.files) && ctx.files.length) {
-    throw new Error("multipart file uploads are not supported on the native route; submit via /v1/videos");
-  }
-  const raw = plainObject(ctx.body) || {};
-  const model = trimmed(raw.model);
   if (!model) throw new Error("field model is required");
   return { kind: "submit", model: model, requestBody: normalizeRequest(raw) };
 }
@@ -283,50 +268,4 @@ export function parseQueryResponse(ctx) {
   const progress = Number(resp.progress);
   if (Number.isFinite(progress) && progress >= 0) item.progress = Math.min(Math.round(progress), 100);
   return { items: [item] };
-}
-
-// ── 渲染（原生路由，面向客户端；标准端点的响应由平台基座渲染）────────
-
-// 平台状态枚举 → OpenAI Videos 状态词
-const OPENAI_STATUS = { SUBMITTED: "queued", IN_PROGRESS: "in_progress", SUCCESS: "completed", FAILURE: "failed" };
-
-function openaiProgress(task, status) {
-  const m = String(trimmed(task.progress)).match(/^(\d+(?:\.\d+)?)\s*%?$/);
-  if (m) return Math.min(Math.round(Number(m[1])), 100);
-  if (status === "completed") return 100;
-  if (status === "in_progress") return 50;
-  return 0;
-}
-
-// renderSubmit 只收到 publicTaskId / model / status / contentUrl
-export function renderSubmit(ctx) {
-  const task = plainObject(ctx.task) || {};
-  return {
-    status: 200,
-    body: {
-      id: trimmed(task.publicTaskId),
-      object: "video",
-      created_at: Math.floor(utils.now() / 1000),
-      status: "queued",
-      progress: 0,
-      model: trimmed(task.model),
-    },
-  };
-}
-
-export function renderTask(ctx) {
-  const task = plainObject(ctx.task) || {};
-  const status = OPENAI_STATUS[trimmed(task.status)] || "queued";
-  const body = {
-    id: trimmed(task.publicTaskId),
-    object: "video",
-    status: status,
-    progress: openaiProgress(task, status),
-    model: trimmed(task.model),
-  };
-  if (status === "completed" && trimmed(task.contentUrl)) body.video_url = trimmed(task.contentUrl);
-  if (status === "failed") {
-    body.error = { code: "video_generation_failed", message: trimmed(task.failReason) || "video generation failed" };
-  }
-  return { status: 200, body: body };
 }

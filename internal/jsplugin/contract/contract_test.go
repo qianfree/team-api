@@ -18,6 +18,21 @@ func validManifest() *Manifest {
 	}
 }
 
+// TestRoutesOptionalWithStandardVideos routes 与 standardVideos 至少声明其一：
+// 声明 standardVideos 的纯标准端点插件（仅经 /v1/videos、/v1/video/generations
+// 提交）可省略 routes；两者皆缺属不可达插件，拒绝。
+func TestRoutesOptionalWithStandardVideos(t *testing.T) {
+	m := validManifest()
+	m.Routes = nil
+	if err := m.Validate(); err == nil {
+		t.Fatal("routes 与 standardVideos 均缺省应被拒绝（插件无任何入口）")
+	}
+	m.StandardVideos = "decodeVideos"
+	if err := m.Validate(); err != nil {
+		t.Fatalf("声明 standardVideos 时省略 routes 应合法: %v", err)
+	}
+}
+
 func TestRemovedManifestFields(t *testing.T) {
 	for _, field := range []string{"sharedModels", "usageSchema"} {
 		meta := []byte(`{"apiVersion":1,"key":"x","` + field + `":true}`)

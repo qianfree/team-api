@@ -223,8 +223,11 @@ func (m *Manifest) Validate() error {
 	default:
 		return gerror.Newf("fetchMode %q 不合法：batch 或 per_task", m.FetchMode)
 	}
-	if len(m.Routes) == 0 {
-		return gerror.New("routes 不能为空：至少声明一条路由")
+	// routes 与 standardVideos 至少声明其一：纯标准端点插件（仅经 /v1/videos、
+	// /v1/video/generations 提交，不暴露 /pjs 原生路由）可省略 routes 及原生路由
+	// 专属钩子（decodeRequest/renderSubmit/renderTask）——标准端点响应由平台渲染
+	if len(m.Routes) == 0 && m.StandardVideos == "" {
+		return gerror.New("routes 不能为空：至少声明一条路由；仅经标准端点服务的插件可省略 routes，但须声明 meta.standardVideos")
 	}
 	seen := make(map[string]struct{}, len(m.Routes))
 	for i, route := range m.Routes {

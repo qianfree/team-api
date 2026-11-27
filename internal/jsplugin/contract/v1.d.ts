@@ -82,8 +82,13 @@ export interface Meta {
   models: string[];
   /** 轮询模式，缺省 per_task */
   fetchMode?: FetchMode;
-  /** 插件原生路由（挂在 /pjs/{key} 下），至少一条 */
-  routes: Route[];
+  /**
+   * 插件原生路由（挂在 /pjs/{key} 下）。与 standardVideos 至少声明其一：
+   * 纯标准端点插件（仅经 /v1/videos、/v1/video/generations 提交，不暴露
+   * /pjs 原生入口）可整体省略 routes，连同 decodeRequest / renderSubmit /
+   * renderTask 等原生路由专属钩子——标准端点的响应由平台渲染。
+   */
+  routes?: Route[];
   /** utils.fetch 额外允许的 host[:port]（渠道 baseUrl host 始终允许） */
   allowedHosts?: string[];
   /** 插件配置项（管理端动态表单；utils.config.get 读取，加密字段已解密注入） */

@@ -176,8 +176,9 @@ func dryRunSampleValidate(ctx context.Context, pool *PluginPool, _ *contract.Man
 
 // dryRunSampleStandard 以通用任务体样例执行 standardVideos 解码钩子。逐个模型尝试
 // （多模型插件常只有部分是视频模型，如 golden_music/golden_video），首个通过即 pass；
-// 编程错误/契约违规立即 fail；全部被拒为 warn。
-func dryRunSampleStandard(ctx context.Context, pool *PluginPool, m *contract.Manifest) DryRunCheck {
+// 编程错误/契约违规立即 fail；全部被拒为 warn。通过时返回解码结果（样例链起点，
+// 纯标准端点插件复用该结果驱动提交/轮询样例环节）。
+func dryRunSampleStandard(ctx context.Context, pool *PluginPool, m *contract.Manifest) (DryRunCheck, *contract.DecodeResult) {
 	const name = "standard-endpoint"
 	hook := m.StandardVideos
 	var firstReject *DryRunCheck
@@ -192,7 +193,7 @@ func dryRunSampleStandard(ctx context.Context, pool *PluginPool, m *contract.Man
 		}, false)
 		if chk != nil {
 			if chk.Status == dryRunFail {
-				return *chk
+				return *chk, nil
 			}
 			if firstReject == nil {
 				firstReject = chk
@@ -201,18 +202,18 @@ func dryRunSampleStandard(ctx context.Context, pool *PluginPool, m *contract.Man
 		}
 		decoded, err := contract.ValidateDecoded(raw, false)
 		if err != nil {
-			return dryRunContractFail(name, hook, err)
+			return dryRunContractFail(name, hook, err), nil
 		}
 		if decoded.Kind != "submit" {
-			return DryRunCheck{Name: name, Status: dryRunFail, Detail: hook + " 返回 kind 须为 submit（标准端点无查询语义）"}
+			return DryRunCheck{Name: name, Status: dryRunFail, Detail: hook + " 返回 kind 须为 submit（标准端点无查询语义）"}, nil
 		}
 		return DryRunCheck{Name: name, Status: dryRunPass,
-			Detail: fmt.Sprintf("标准视频端点已支持：模型可经 /v1/videos 与 /v1/video/generations 提交（解码钩子 %s，样例 model=%s 通过）", hook, decoded.Model)}
+			Detail: fmt.Sprintf("标准视频端点已支持：模型可经 /v1/videos 与 /v1/video/generations 提交（解码钩子 %s，样例 model=%s 通过）", hook, decoded.Model)}, decoded
 	}
 	if firstReject != nil {
-		return *firstReject
+		return *firstReject, nil
 	}
-	return DryRunCheck{Name: name, Status: dryRunWarn, Detail: hook + " 未执行样例（无声明模型）"}
+	return DryRunCheck{Name: name, Status: dryRunWarn, Detail: hook + " 未执行样例（无声明模型）"}, nil
 }
 
 // ---------------------------------------------------------------------------

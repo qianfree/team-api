@@ -66,6 +66,58 @@ func dryRunPatch(t *testing.T, src, old, repl string) string {
 	return strings.Replace(src, old, repl, 1)
 }
 
+// TestDryRunRoutesOmittedStandardOnly 纯标准端点插件（省略 routes，仅声明
+// standardVideos）：编译通过、钩子齐备性仍要求提交/轮询链、样例链以标准端点
+// 解码结果为起点全部执行；反向（两者皆缺）编译 fail。
+func TestDryRunRoutesOmittedStandardOnly(t *testing.T) {
+	src := `export const meta = {
+  apiVersion: 1, key: "stdonly", name: "Std Only", version: "1.0.0",
+  models: ["m1"], standardVideos: "decodeVideos",
+};
+export function decodeVideos(ctx) {
+  return { kind: "submit", model: ctx.model, requestBody: { prompt: "p" } };
+}
+export function buildSubmitRequest(ctx) {
+  return { url: "/v1/videos", method: "POST", body: { model: ctx.upstreamModel || ctx.model, prompt: "p" } };
+}
+export function parseSubmitResponse(ctx) { return { taskId: "t_std" }; }
+export function buildQueryRequest(ctx) {
+  return { url: "/v1/videos/" + ctx.tasks[0].taskId, method: "GET" };
+}
+export function parseQueryResponse(ctx) {
+  return { items: [{ taskId: ctx.tasks[0].taskId, done: false, progress: 10 }] };
+}
+`
+	report := DryRun(src)
+	if report.Manifest == nil || report.Manifest.Key != "stdonly" {
+		t.Fatalf("纯标准端点插件应编译通过: %+v", report.Checks)
+	}
+	if report.HasFail() {
+		t.Fatalf("纯标准端点插件不应有 fail 项: %+v", report.Checks)
+	}
+	byName := dryRunChecksByName(t, report)
+	for _, name := range []string{"compile", "hooks", "standard-endpoint", "sample-build", "sample-parse-submit", "sample-query"} {
+		if c, ok := byName[name]; !ok || c.Status != dryRunPass {
+			t.Errorf("检查 %s 期望 pass，实际存在=%v %+v", name, ok, c)
+		}
+	}
+	// 零路由插件无原生渲染钩子可检：sample-render 不产生（非缺陷）
+
+	// 反向：省略 routes 且未声明 standardVideos = 无任何入口，编译 fail
+	bad := DryRun(`export const meta = {
+  apiVersion: 1, key: "noroute", name: "No Route", version: "1.0.0", models: ["m"],
+};
+export function decodeRequest(ctx) { return { kind: "submit", model: "m" }; }
+export function buildSubmitRequest(ctx) { return { url: "/s" }; }
+export function parseSubmitResponse(ctx) { return { taskId: "t" }; }
+export function buildQueryRequest(ctx) { return { url: "/q" }; }
+export function parseQueryResponse(ctx) { return { items: [{ taskId: ctx.tasks[0].taskId, done: true }] }; }
+`)
+	if !bad.HasFail() {
+		t.Fatal("routes 与 standardVideos 均缺省应编译 fail（插件不可达）")
+	}
+}
+
 // TestDryRunBuiltinsFullChain 全部内置插件：调用链全量样例执行无 fail、静态检查全 pass
 // （新检查项不得对存量合格插件误报）。
 func TestDryRunBuiltinsFullChain(t *testing.T) {
@@ -85,9 +137,14 @@ func TestDryRunBuiltinsFullChain(t *testing.T) {
 				t.Errorf("内置插件 %s 检查 %s 意外 fail: %s", entry.Name(), c.Name, c.Detail)
 			}
 		}
-		for _, name := range []string{"lint-host-api", "lint-module-state", "sample-parse-submit", "sample-query", "sample-render"} {
+		// 渲染钩子仅源自原生路由：零路由（纯标准端点，如 teamapi）无 sample-render 项
+		required := []string{"lint-host-api", "lint-module-state", "sample-parse-submit", "sample-query"}
+		if len(report.Manifest.Routes) > 0 {
+			required = append(required, "sample-render")
+		}
+		for _, name := range required {
 			if c, ok := byName[name]; !ok || c.Status != dryRunPass {
-				t.Errorf("内置插件 %s 检查 %s 期望 pass，实际 %+v", entry.Name(), name, c)
+				t.Errorf("内置插件 %s 检查 %s 期望 pass，实际存在=%v %+v", entry.Name(), name, ok, c)
 			}
 		}
 	}

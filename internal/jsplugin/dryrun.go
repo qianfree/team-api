@@ -121,18 +121,28 @@ func DryRun(source string) *DryRunReport {
 	has := inst.HasHook
 
 	report.Checks = append(report.Checks, dryRunHookCompleteness(m, has))
-	report.Checks = append(report.Checks, dryRunStandardEndpoint(ctx, pool, m, has))
+	stdChk, stdDecoded := dryRunStandardEndpoint(ctx, pool, m, has)
+	report.Checks = append(report.Checks, stdChk)
 
-	// 样例执行：缺钩子的环节直接跳过（hooks 项已 fail，不重复报）
+	// 样例执行：缺钩子的环节直接跳过（hooks 项已 fail，不重复报）。
+	// 解码起点二选一：原生路由 decode（有 submit/dynamic 路由），或标准端点
+	// standardVideos 解码（纯标准端点插件——routes 省略时的唯一提交入口；解码
+	// 样例已在 standard-endpoint 项执行，此处复用结果驱动下游环节）。
 	var taskData json.RawMessage
-	if route, ok := dryRunFirstDecodeRoute(m); ok {
+	route, hasDecodeRoute := dryRunFirstDecodeRoute(m)
+	var decoded *contract.DecodeResult
+	if hasDecodeRoute {
 		decodeHook := route.ResolveDecode()
-		var decoded *contract.DecodeResult
 		if has(decodeHook) {
 			var chk DryRunCheck
 			chk, decoded = dryRunSampleDecode(ctx, pool, route, m, decodeHook)
 			report.Checks = append(report.Checks, chk)
 		}
+	} else if stdDecoded != nil {
+		route = contract.Route{Method: "POST", Path: "/v1/videos", Type: contract.RouteTypeSubmit}
+		decoded = stdDecoded
+	}
+	if hasDecodeRoute || decoded != nil {
 		// 下游环节的入参：decode 样例通过时用其结果，否则回退最小样例体
 		model, body := m.Models[0], dryRunSampleBody(m.Models[0])
 		if decoded != nil && decoded.Kind == "submit" {
@@ -182,6 +192,9 @@ func DryRun(source string) *DryRunReport {
 //     buildSubmitRequest + parseSubmitResponse 必选——分发器与任务桥直接 Pool.Call，缺失即 502
 //   - 存在任一 submit/dynamic 路由（能产生任务）：轮询链 buildQueryRequest +
 //     parseQueryResponse 必选——任务终态只能靠轮询抵达（immediate 同步终态是少数形态）
+//   - 纯标准端点插件（无 submit/dynamic 路由但声明 standardVideos）：标准端点提交
+//     走同一提交链/轮询链，必选钩子不豁免；standardVideos 解码钩子由
+//     standard-endpoint 检查项把关（声明未导出即 fail）
 //   - render 钩子（别名/缺省 renderSubmit/renderTask/renderTasks）可选：未导出则
 //     响应走默认透传（见 jsdispatcher），缺失只提示
 func dryRunHookCompleteness(m *contract.Manifest, has func(string) bool) DryRunCheck {
@@ -230,7 +243,12 @@ func dryRunHookCompleteness(m *contract.Manifest, has func(string) bool) DryRunC
 			opt(route.ResolveRender(contract.HookNameRenderTask), route.Method+" "+route.Path)
 		}
 	}
-	if hasSubmitRoute {
+	// 纯标准端点插件（routes 省略）：标准端点提交同样要走提交链，必选钩子不豁免
+	if !hasSubmitRoute && m.StandardVideos != "" {
+		req("buildSubmitRequest", "标准端点提交链")
+		req("parseSubmitResponse", "标准端点提交链")
+	}
+	if hasSubmitRoute || m.StandardVideos != "" {
 		req("buildQueryRequest", "轮询链")
 		req("parseQueryResponse", "轮询链")
 	}
@@ -265,21 +283,23 @@ func dryRunHookCompleteness(m *contract.Manifest, has func(string) bool) DryRunC
 //   - 声明 standardVideos 但钩子未导出 → fail：标准端点提交时调用必失败（声明即承诺）
 //   - 未声明且 referenceRoles 含视频类角色 → warn：疑似视频插件缺标准端点声明
 //   - 其余 → pass
-func dryRunStandardEndpoint(ctx context.Context, pool *PluginPool, m *contract.Manifest, has func(string) bool) DryRunCheck {
+//
+// 第二返回值为解码样例结果（通过时非 nil）——纯标准端点插件的样例链以此为起点。
+func dryRunStandardEndpoint(ctx context.Context, pool *PluginPool, m *contract.Manifest, has func(string) bool) (DryRunCheck, *contract.DecodeResult) {
 	if m.StandardVideos != "" {
 		if !has(m.StandardVideos) {
 			return DryRunCheck{Name: "standard-endpoint", Status: dryRunFail,
-				Detail: fmt.Sprintf("meta.standardVideos 声明为 %q 但插件未导出该钩子（标准端点提交必失败）", m.StandardVideos)}
+				Detail: fmt.Sprintf("meta.standardVideos 声明为 %q 但插件未导出该钩子（标准端点提交必失败）", m.StandardVideos)}, nil
 		}
 		// 声明且导出：以通用任务体样例实际执行解码钩子
 		return dryRunSampleStandard(ctx, pool, m)
 	}
 	if len(m.ReferenceRoles) > 0 {
 		return DryRunCheck{Name: "standard-endpoint", Status: dryRunWarn,
-			Detail: "声明了 referenceRoles 但未声明 meta.standardVideos：referenceRoles 只对标准视频端点生效，模型将无法经 /v1/videos 与 /v1/video/generations 提交（仅 /pjs 原生路由），请确认"}
+			Detail: "声明了 referenceRoles 但未声明 meta.standardVideos：referenceRoles 只对标准视频端点生效，模型将无法经 /v1/videos 与 /v1/video/generations 提交（仅 /pjs 原生路由），请确认"}, nil
 	}
 	return DryRunCheck{Name: "standard-endpoint", Status: dryRunPass,
-		Detail: "未声明 standardVideos（仅 /pjs 原生路由入口）"}
+		Detail: "未声明 standardVideos（仅 /pjs 原生路由入口）"}, nil
 }
 
 // ---------------------------------------------------------------------------

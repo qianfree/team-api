@@ -32,7 +32,7 @@ func TestTeamapiManifest(t *testing.T) {
 	if m.Key != "teamapi" || m.StandardVideos != "decodeVideos" || m.ModelsFromConfig != "extra_models" {
 		t.Fatalf("入口声明异常: standardVideos=%q modelsFromConfig=%q", m.StandardVideos, m.ModelsFromConfig)
 	}
-	if !m.SupportsUpstreamModel("minimax-h3") {
+	if !m.SupportsUpstreamModel("MiniMax-H3") {
 		t.Fatalf("基线上游模型缺失: %v", m.Models)
 	}
 	for _, role := range []string{"first_frame", "last_frame", "reference_image", "reference_video", "reference_audio", "file", "link"} {
@@ -40,8 +40,9 @@ func TestTeamapiManifest(t *testing.T) {
 			t.Fatalf("参考素材角色未声明: %s", role)
 		}
 	}
-	if len(m.Routes) != 2 {
-		t.Fatalf("原生路由应镜像 OpenAI Videos 提交+查询: %+v", m.Routes)
+	// 纯标准端点插件：不声明原生路由（/pjs 无入口）
+	if len(m.Routes) != 0 {
+		t.Fatalf("不应声明原生路由: %+v", m.Routes)
 	}
 }
 
@@ -96,44 +97,6 @@ func TestTeamapiDecodeVideos(t *testing.T) {
 	refs2, _ := body2["references"].([]any)
 	if len(refs2) != 2 || refs2[0].(map[string]any)["role"] != "first_frame" || refs2[1].(map[string]any)["role"] != "last_frame" {
 		t.Fatalf("兼容字段组装异常: %v", body2["references"])
-	}
-}
-
-func TestTeamapiDecodeRequestNative(t *testing.T) {
-	plugin, call := teamapiForTest(t)
-
-	// 原生路由：OpenAI 形状直传
-	decoded, err := contract.ValidateDecoded(call("decodeRequest", contract.DecodeContext{
-		Path:   "/v1/videos",
-		Method: "POST",
-		Body:   json.RawMessage(`{"model":"sora-2","prompt":"sky","seconds":12,"aspect_ratio":"9:16","extra":{"seed":7}}`),
-	}), false)
-	if err != nil || decoded.Model != "sora-2" {
-		t.Fatalf("原生解码失败: %+v err=%v", decoded, err)
-	}
-	var body map[string]any
-	_ = json.Unmarshal(decoded.RequestBody, &body)
-	if body["seconds"] != float64(12) || body["aspect_ratio"] != "9:16" {
-		t.Fatalf("OpenAI 形状归一异常: %v", body)
-	}
-	if extra, _ := body["extra"].(map[string]any); extra["seed"] != float64(7) {
-		t.Fatalf("extra 透传异常: %v", body["extra"])
-	}
-
-	if err := hookCallErr(plugin, "decodeRequest", contract.DecodeContext{
-		Path:   "/v1/videos",
-		Method: "POST",
-		Body:   json.RawMessage(`{"prompt":"no model"}`),
-	}); err == nil {
-		t.Fatal("缺 model 应拒绝")
-	}
-	if err := hookCallErr(plugin, "decodeRequest", contract.DecodeContext{
-		Path:   "/v1/videos",
-		Method: "POST",
-		Body:   json.RawMessage(`{"model":"m","prompt":"p"}`),
-		Files:  []contract.FileRef{{Ref: "request_file:image", Field: "image", Filename: "i.png", MimeType: "image/png"}},
-	}); err == nil {
-		t.Fatal("原生路由收到 multipart 文件应拒绝（避免素材被静默丢弃）")
 	}
 }
 
@@ -375,64 +338,5 @@ func TestTeamapiParseQueryResponse(t *testing.T) {
 	}
 	if item := q.Items[0]; !item.Done || item.Error == nil || item.Error.Code != "video_generation_failed" || item.Error.Message != "boom" {
 		t.Fatalf("失败态映射异常: %+v", item)
-	}
-}
-
-func TestTeamapiRender(t *testing.T) {
-	_, call := teamapiForTest(t)
-
-	// renderSubmit：OpenAI Video 对象（queued）
-	rend, err := contract.ValidateRendered(call("renderSubmit", contract.RenderTaskContext{
-		Task: contract.RenderTask{PublicTaskID: "video_pub1", Model: "sora-2"},
-	}))
-	if err != nil {
-		t.Fatalf("renderSubmit 校验失败: %v", err)
-	}
-	var body map[string]any
-	_ = json.Unmarshal(rend.Body, &body)
-	if body["id"] != "video_pub1" || body["object"] != "video" || body["status"] != "queued" || body["progress"] != float64(0) || body["model"] != "sora-2" {
-		t.Fatalf("renderSubmit 形态异常: %v", body)
-	}
-
-	// renderTask：平台状态 → OpenAI 状态词；进度 "42%" → 42
-	rend, err = contract.ValidateRendered(call("renderTask", contract.RenderTaskContext{
-		Task: contract.RenderTask{PublicTaskID: "video_pub1", Model: "m", Status: "IN_PROGRESS", Progress: "42%"},
-	}))
-	if err != nil {
-		t.Fatalf("renderTask 校验失败: %v", err)
-	}
-	_ = json.Unmarshal(rend.Body, &body)
-	if body["status"] != "in_progress" || body["progress"] != float64(42) {
-		t.Fatalf("进行中渲染异常: %v", body)
-	}
-	if _, exists := body["video_url"]; exists {
-		t.Fatalf("未完成不应带 video_url: %v", body)
-	}
-
-	// 成功：video_url ← 统一内容链接
-	rend, err = contract.ValidateRendered(call("renderTask", contract.RenderTaskContext{
-		Task: contract.RenderTask{PublicTaskID: "video_pub1", Model: "m", Status: "SUCCESS", Progress: "100%", ContentURL: "https://this.site/v1/tasks/video_pub1/content?expires=1&signature=s"},
-	}))
-	if err != nil {
-		t.Fatalf("renderTask 校验失败: %v", err)
-	}
-	_ = json.Unmarshal(rend.Body, &body)
-	if body["status"] != "completed" || body["video_url"] != "https://this.site/v1/tasks/video_pub1/content?expires=1&signature=s" {
-		t.Fatalf("完成渲染异常: %v", body)
-	}
-
-	// 失败：error 对象
-	rend, err = contract.ValidateRendered(call("renderTask", contract.RenderTaskContext{
-		Task: contract.RenderTask{PublicTaskID: "video_pub1", Model: "m", Status: "FAILURE", FailReason: "boom"},
-	}))
-	if err != nil {
-		t.Fatalf("renderTask 校验失败: %v", err)
-	}
-	_ = json.Unmarshal(rend.Body, &body)
-	if body["status"] != "failed" {
-		t.Fatalf("失败渲染异常: %v", body)
-	}
-	if errObj, _ := body["error"].(map[string]any); errObj["code"] != "video_generation_failed" || errObj["message"] != "boom" {
-		t.Fatalf("失败 error 形态异常: %v", body["error"])
 	}
 }
