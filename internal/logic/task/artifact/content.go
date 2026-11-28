@@ -59,7 +59,8 @@ func (r *artifactRow) declPath() string {
 }
 
 // loadArtifactRows 任务的产物登记行（task_id + tenant_id 双键限定归属）。
-func loadArtifactRows(ctx context.Context, taskID, tenantID int64) ([]*artifactRow, error) {
+// 变量形态供测试替换（包内既有桩风格）。
+var loadArtifactRows = func(ctx context.Context, taskID, tenantID int64) ([]*artifactRow, error) {
 	var rows []*artifactRow
 	err := g.DB().Model(artifactTable).Ctx(ctx).
 		Where("task_id", taskID).Where("tenant_id", tenantID).
@@ -109,6 +110,11 @@ func Open(ctx context.Context, task *rcommon.AsyncTask, key string) (*rcommon.St
 	row := pickArtifactRow(rows, key)
 	if row == nil {
 		return nil, false, nil
+	}
+	// 保留期已过（对象已清理）：不再回源——inline 的 base64 已清空、上游 URL 大概率
+	// 失效，回源只会得到含混的失败；如实报 410 语义（调用方映射 HTTP Gone）。
+	if row.Status == statusExpired {
+		return nil, true, fmt.Errorf("%w: 产物 %s 已过保留期清理", rcommon.ErrArtifactExpired, row.ArtifactKey)
 	}
 
 	if row.Status == statusStored && row.StoredKey != "" {

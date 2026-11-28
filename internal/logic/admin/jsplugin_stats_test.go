@@ -71,45 +71,26 @@ func TestAggregateJsOpsStatsTasks(t *testing.T) {
 	}
 }
 
-func TestBuildJsOpsStatsModelMap(t *testing.T) {
-	t.Parallel()
-
-	manifests := []*contract.Manifest{
-		{Key: "veo", Name: "Veo", Models: []string{"veo-3.0", "Veo-2.0"}},
-		{Key: "", Name: "坏行", Models: []string{"bad-model"}}, // 空 key 跳过
-		nil,
-	}
-	out := buildJsOpsStatsModelMap(manifests)
-
-	if len(out) != 2 {
-		t.Fatalf("模型映射数 = %d, want 2: %v", len(out), out)
-	}
-	if out["veo-3.0"] != "veo" || out["veo-2.0"] != "veo" {
-		t.Errorf("模型映射应统一小写键: %v", out)
-	}
-}
-
 func TestMergeJsOpsStatsRevenue(t *testing.T) {
 	t.Parallel()
 
-	modelPlugin := map[string]string{
-		"veo-3.0": "veo",
-		"veo-2.0": "veo",
-		"abc-v1":  "abc",
-	}
 	rows := []jsOpsStatsRevenueRow{
-		{ModelName: "veo-3.0", Cost: decimal.NewFromFloat(1.25)},
-		{ModelName: "VEO-2.0", Cost: decimal.NewFromFloat(0.75)},    // 大小写漂移仍命中映射
-		{ModelName: "unknown-model", Cost: decimal.NewFromFloat(9)}, // 未命中映射跳过
+		{Platform: "js:veo", Cost: decimal.NewFromFloat(1.25)},
+		{Platform: "js:veo", Cost: decimal.NewFromFloat(0.75)},
+		{Platform: "js:grsai", Cost: decimal.NewFromFloat(3)}, // 同名模型另一家插件，独立归属
+		{Platform: "sora", Cost: decimal.NewFromFloat(9)},     // 非 JS 平台跳过
+		{Platform: "js:", Cost: decimal.NewFromFloat(9)},      // 空 key 跳过
 	}
-	out := mergeJsOpsStatsRevenue(modelPlugin, rows)
+	out := mergeJsOpsStatsRevenue(rows)
 
-	if len(out) != 1 {
-		t.Fatalf("有营收的插件数 = %d, want 1: %v", len(out), out)
+	if len(out) != 2 {
+		t.Fatalf("有营收的插件数 = %d, want 2: %v", len(out), out)
 	}
-	want := decimal.NewFromFloat(2)
-	if !out["veo"].Equal(want) {
+	if !out["veo"].Equal(decimal.NewFromFloat(2)) {
 		t.Errorf("veo 营收 = %s, want 2", out["veo"].String())
+	}
+	if !out["grsai"].Equal(decimal.NewFromFloat(3)) {
+		t.Errorf("grsai 营收 = %s, want 3", out["grsai"].String())
 	}
 }
 

@@ -235,6 +235,12 @@ func (h *hostUtils) fetch(rt *goja.Runtime, call goja.FunctionCall) goja.Value {
 			req.Header.Set(k, stringOf(v, ""))
 		}
 	}
+	// 同源鉴权：目标与渠道 baseUrl 同 scheme + host 时注入渠道密钥；跨域目标
+	// （meta.allowedHosts 的第三方域）不带任何鉴权——渠道密钥不出渠道自己的域。
+	// 客户端不跟随重定向，密钥不会被转发到其他 host
+	if key, _ := h.ctx.Value(channelKeyKey{}).(string); key != "" && sameOrigin(h.ctx.Value(baseURLKey{}), parsed) {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
 
 	responseType := stringOf(arg["responseType"], "json")
 	if responseType != "json" && responseType != "text" && responseType != "bytes" {
@@ -316,6 +322,31 @@ type baseURLKey struct{}
 // 未注入时相对路径被拒——decode/render 等无渠道上下文的钩子内不可用相对路径。
 func WithBaseURL(ctx context.Context, baseURL string) context.Context {
 	return context.WithValue(ctx, baseURLKey{}, strings.TrimSpace(baseURL))
+}
+
+// channelKeyKey 本次调用所属渠道的密钥（utils.fetch 同源鉴权用）的 context 键。
+type channelKeyKey struct{}
+
+// WithChannelKey 为本次调用注入渠道密钥：utils.fetch 的目标与渠道 baseUrl 同源
+// （scheme + host[:port] 一致）时，基座注入 "Bearer <渠道密钥>"——与主链路
+// build*Request 的默认鉴权同语义。由桥接层在有渠道上下文的钩子调用时注入；
+// decode/render 等无渠道上下文的钩子不注入（其 fetch 不带任何鉴权）。
+func WithChannelKey(ctx context.Context, apiKey string) context.Context {
+	return context.WithValue(ctx, channelKeyKey{}, strings.TrimSpace(apiKey))
+}
+
+// sameOrigin 判断目标是否与渠道 baseUrl 同源（scheme 与 host[:port] 均一致，
+// 大小写不敏感）。baseUrl 缺失或不可解析视为不同源。
+func sameOrigin(base any, target *url.URL) bool {
+	raw, _ := base.(string)
+	if raw == "" || target == nil {
+		return false
+	}
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Host == "" {
+		return false
+	}
+	return strings.EqualFold(u.Scheme, target.Scheme) && strings.EqualFold(u.Host, target.Host)
 }
 
 // hostAllowed 报告 host[:port] 是否命中白名单。无端口的条目匹配任意端口。

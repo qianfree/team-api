@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // JS 插件卡片：列表默认视图。整卡可点开详情，底部操作区阻止冒泡。
-// 版式：左状态色条 → 头部（图标/名称/标识/状态）→ 描述 → 适用模型 → 事实行 → 操作。
+// 版式：左状态色条 → 头部（图标/名称/标识/状态）→ 描述 → 支持的上游模型 → 事实行 → 操作。
 // 事实行承载版本数、计费项、轮询方式、白名单、作者，避免内容因高度限制被裁掉。
 import { computed, toRef } from 'vue'
 import { Button, Popconfirm } from '@arco-design/web-vue'
@@ -23,7 +23,6 @@ const icon = computed(() => resolvePluginIcon(props.plugin))
 
 const models = computed(() => props.plugin.models || [])
 const versionCount = computed(() => (props.plugin.versions || []).length)
-const usageCount = computed(() => (props.plugin.usage_schema || []).length)
 const hostCount = computed(() => (props.plugin.allowed_hosts || []).length)
 
 // 品牌图标经 blob 加载：图标端点要求 Authorization 头，<img :src> 带不上必 401
@@ -63,10 +62,10 @@ const canManage = computed(() => hasPermission('plugin:manage'))
 
     <div
       class="jpc__models"
-      :title="models.length > 3 ? `共 ${models.length} 个适用模型，可区域内滚动查看` : undefined"
+      :title="models.length > 3 ? `共 ${models.length} 个上游模型，可区域内滚动查看` : undefined"
     >
       <span v-for="m in models" :key="m" class="jpc__model" :title="m">{{ m }}</span>
-      <span v-if="!models.length" class="jpc__model jpc__model--all" title="不限制适用模型">全部模型</span>
+      <span v-if="!models.length" class="jpc__model jpc__model--all" title="未声明上游模型">无上游模型</span>
     </div>
 
     <div class="jpc__facts">
@@ -74,7 +73,6 @@ const canManage = computed(() => hasPermission('plugin:manage'))
         {{ plugin.active_version || '无激活版本' }}
       </span>
       <span class="jpc__fact">{{ versionCount }} 个版本</span>
-      <span class="jpc__fact">{{ usageCount }} 项计费</span>
       <span class="jpc__fact">{{ fetchModeLabel(plugin.fetch_mode) }}</span>
       <span v-if="hostCount" class="jpc__fact" :title="plugin.allowed_hosts.join('、')">
         白名单 {{ hostCount }}

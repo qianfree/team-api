@@ -1,8 +1,6 @@
 package jsplugin
 
 import (
-	"strings"
-
 	"github.com/qianfree/team-api/internal/jsplugin/contract"
 )
 
@@ -10,8 +8,8 @@ import (
 //
 // 有效清单 = meta.models（随版本发布的基线）∪ 配置扩展（部署数据，管理后台改）。
 // 合并发生在 materialize：写入 ActivePlugin 的 Manifest 内存视图（副本），DB 版本行
-// 与编译缓存（CompiledPlugin.Manifest）永不改写。冲突防线在配置保存时预检
-// （UpdateConfig → checkModelSetConflict），generation 重建时兜底告警。
+// 与编译缓存（CompiledPlugin.Manifest）永不改写。清单是插件支持的上游模型，
+// 跨插件可重名（平台模型 → 插件的归属由渠道 settings.plugin_key 决定），无独占预检。
 
 // applyConfigModels 把配置扩展并入 manifest 的副本视图。无扩展时原样返回原指针；
 // 有扩展时返回浅拷贝（仅 Models 字段被替换），调用方以返回值为 ActivePlugin.Manifest。
@@ -63,34 +61,4 @@ func effectiveModelSet(m *contract.Manifest, configValues map[string]any) ([]str
 		return nil, err
 	}
 	return mergeModelNames(m.Models, extras), nil
-}
-
-// modelSetParty 预检参与方：插件名 + 有效模型集 + 是否声明同名共享。
-type modelSetParty struct {
-	key    string
-	models []string
-	shared bool
-}
-
-// checkModelSetConflict 模型独占预检（与激活预检 checkManifestConflict 同语义）：
-// 精确同名或仅大小写不同即冲突；双方都声明 sharedModels 时放行（同名多插件的
-// 合法形态，路由归属由渠道 plugin_key 决定）。
-func checkModelSetConflict(self modelSetParty, others []modelSetParty) error {
-	for _, other := range others {
-		sharedOK := self.shared && other.shared
-		for _, ma := range self.models {
-			for _, mb := range other.models {
-				if ma == mb {
-					if !sharedOK {
-						return pluginOpError("模型 %s 已被插件 %s 声明（如需同名多插件经不同渠道服务，双方 manifest 均声明 sharedModels: true）", ma, other.key)
-					}
-					continue
-				}
-				if strings.EqualFold(ma, mb) && !sharedOK {
-					return pluginOpError("模型 %s 与插件 %s 的 %s 仅大小写不同", ma, other.key, mb)
-				}
-			}
-		}
-	}
-	return nil
 }

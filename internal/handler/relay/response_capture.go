@@ -154,7 +154,11 @@ func (w *ResponseCaptureWriter) ResponseCommitted() bool {
 	return w.status != 0 || w.bytesWritten.Load() > 0
 }
 
-// ResponseHeaders 返回响应头快照（调用时从底层 ResponseWriter 提取）
+// ResponseHeaders 返回响应头快照（调用时从底层 ResponseWriter 提取）。
+// 仅允许在 handler 返回前、请求 goroutine 上调用：handler 返回后 ghttp 会在服务端
+// goroutine 执行 Response.Flush，net/http 继续向底层头 map 补写 Date/Content-Length
+// 等，此时其它 goroutine 遍历该 map 会直接 fatal（concurrent map iteration and map
+// write）。审计 goroutine 一律先经 buildTaskSubmitAudit 取好快照，再异步落库。
 func (w *ResponseCaptureWriter) ResponseHeaders() map[string]string {
 	headers := make(map[string]string)
 	for k, vals := range w.ResponseWriter.Header() {

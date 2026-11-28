@@ -108,11 +108,12 @@ func codeProtocolPrompt(active []Skill) string {
 	}
 	var b strings.Builder
 	b.WriteString("【代码输出协议（必须严格遵守）】\n")
-	b.WriteString("1. 本轮产出代码时，最终代码必须完整放在一个四反引号围栏中：开栏行是 ")
+	b.WriteString("1. 提供了代码工具的技能（JS 插件）禁止用围栏输出代码：一律通过工具调用写入（见各技能的工具使用说明）；围栏仅用于讲解代码小片段。\n")
+	b.WriteString("2. 未提供代码工具的技能（计费表达式等），产出代码时必须完整放在一个四反引号围栏中：开栏行是 ")
 	b.WriteString(strings.Join(fences, " 或 "))
 	b.WriteString("，闭栏行是连续四个反引号（无其他内容）。\n")
-	b.WriteString("2. 围栏内必须是完整可用的最终代码：不要 diff、不要片段、不要「省略其余部分」，修复时重新输出完整代码。\n")
-	b.WriteString("3. 围栏内的代码不得出现连续四个及以上的反引号（模板字符串等正常使用一至三个反引号不受影响）；讲解代码片段用普通三反引号围栏。\n")
-	b.WriteString("4. 一条回复最多一个四反引号围栏；解释、说明、风险提示都写在围栏之外。")
+	b.WriteString("3. 围栏内必须是最终代码本身：不要 diff、不要「省略其余部分」；修复时重新输出完整代码。\n")
+	b.WriteString("4. 围栏内的代码不得出现连续四个及以上的反引号（模板字符串等正常使用一至三个反引号不受影响）。\n")
+	b.WriteString("5. 一条回复最多一个四反引号围栏；解释、说明、风险提示都写在围栏之外。")
 	return b.String()
 }

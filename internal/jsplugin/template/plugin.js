@@ -1,5 +1,6 @@
-// golden 插件：契约 v1 的参考实现，同时是引擎单测与 E2E 的夹具。
-// 作者模板：抄这个文件起步，删掉不需要的钩子。
+// golden 作者模板：契约 v1 的参考实现，同时是引擎单测与 E2E 的夹具。
+// 位于 internal/jsplugin/template/（独立 embed，经 TemplateSource 供管理端模板下载
+// 与 AI 助手技能注入）——不随启动 seed 为内置插件实例，可照抄后自由改名上传。
 // 双能力示范：golden_music（音乐，仅原生路由入口）+ golden_video（视频，原生路由
 // 与标准端点双入口——视频插件必须声明 meta.standardVideos 并导出对应解码钩子，
 // 否则模型无法经 /v1/videos 与 /v1/video/generations 提交，调用方只能走 /pjs 原生路由）。
@@ -8,12 +9,20 @@
 //   POST {base}/v1/golden/submit          → {code:"success", data:"<task_id>"}
 //   GET  {base}/v1/golden/fetch?task_id=  → 音乐 {status, data:{audio_url}, clips, tier, error?}
 //                                           视频 {status, data:{video_url}, seconds, size, error?}
+//
+// 契约要点（1.4.0）：
+//   - meta.models = 插件支持的【上游模型名】。平台模型名由渠道模型路由/映射决定，
+//     同一上游模型可被多个插件声明（跨插件可重名），请求归哪个插件由渠道绑定决定。
+//   - 用量只报宿主固定词汇（output_seconds/resolution/output_count/input_image_count/
+//     input_video_seconds/input_audio_seconds/input_tokens/output_tokens/generate_audio），
+//     怎么计价由宿主模型定价决定——插件对价格一无所知。
+//   - 按上游型号的参数校验放 validateRequest（选定渠道后调用，带 ctx.upstreamModel）。
 export const meta = {
   apiVersion: 1,
   key: "golden",
   name: "Golden 示例插件",
-  version: "1.3.0",
-  description: "契约 v1 参考实现：音乐/视频双模型、原生路由 + 标准视频端点双入口、计费事实、产物声明、配置项",
+  version: "1.4.0",
+  description: "契约 v1 参考实现：音乐/视频双模型、原生路由 + 标准视频端点双入口、上游模型校验、宿主用量词汇、产物声明、配置项",
   icon: "text",
   author: "qianfree",
   models: ["golden_music", "golden_video"],
@@ -25,11 +34,6 @@ export const meta = {
   // 标准端点可承接的参考素材角色（references[].role）：网关在调用解码钩子前拦截
   // 未声明角色；缺省仅 first_frame。视频插件按上游能力声明
   referenceRoles: ["first_frame", "last_frame"],
-  usageSchema: [
-    { key: "clips", type: "number", unit: "count", description: "生成歌曲段数（计费按段）" },
-    { key: "seconds", type: "number", unit: "second", description: "生成视频时长（秒，计费按秒）" },
-    { key: "tier", type: "enum", description: "生成档位（展示用，不参与计费）" },
-  ],
   config: [
     { key: "fallback_url", label: "备用上游地址", type: "string", group: "上游", description: "主渠道失败时兜底" },
     { key: "api_key", label: "厂商密钥", type: "string", encrypted: true, group: "凭据" },
@@ -68,9 +72,9 @@ export function decodeRequest(ctx) {
 // buildSubmitRequest / 轮询链与原生路由入口完全复用。返回与 decodeRequest 同形态。
 //
 // 模型名分工（重要）：ctx.model 是客户端请求的【平台模型名】，原样回显即可，不要做
-// 白名单校验——它通常是 meta.models 里的名字，但渠道显式绑定本插件并配了模型映射时
-// 是平台侧别名（不在 meta.models，宿主放行）。发给上游的名字由 buildSubmitRequest
-// 阶段的 ctx.upstreamModel 注入（渠道模型映射）。按型号分支参数时要有默认分支兜住别名。
+// 白名单校验——meta.models 是上游模型清单，平台名由渠道映射决定、可以是任意别名。
+// 上游名在渠道选定后出现（validateRequest / estimateUsage / buildSubmitRequest 的
+// ctx.upstreamModel）；按上游型号的校验放 validateRequest。
 export function decodeVideos(ctx) {
   const raw = ctx.body && typeof ctx.body === "object" && !Array.isArray(ctx.body) ? ctx.body : {};
   const metadata = raw.metadata && typeof raw.metadata === "object" && !Array.isArray(raw.metadata) ? raw.metadata : {};
@@ -112,19 +116,33 @@ export function decodeVideos(ctx) {
   return { kind: "submit", model: model, requestBody: body };
 }
 
+// validateRequest（可选）：渠道选定后、预扣前调用，ctx.upstreamModel 是渠道映射后的
+// 上游模型名（宿主已校验它 ∈ meta.models）。按上游型号的参数约束在此校验——decode
+// 阶段只知道平台模型名。抛错 = 400（未预扣）；返回 {requestBody} 可修正归一请求体。
+export function validateRequest(ctx) {
+  const body = ctx.body || {};
+  const upstream = String(ctx.upstreamModel || ctx.model || "");
+  if (body.action === "VIDEO" && upstream === "golden_music") {
+    throw new Error("upstream model golden_music does not support video generation");
+  }
+  if (body.action !== "VIDEO" && upstream === "golden_video") {
+    throw new Error("upstream model golden_video does not support music generation");
+  }
+  return {};
+}
+
+// estimateUsage 预扣用量估算：只报宿主固定词汇，计价口径由宿主模型定价决定。
 export function estimateUsage(ctx) {
   const body = ctx.body || {};
-  // 视频按秒预扣（时长信号同时进 spec.duration）；音乐按段。
   // 形态判定读归一后的 body（decode 阶段写入的 action），不依赖模型名——模型可能是平台别名
   if (body.action === "VIDEO") {
     let seconds = Number(body.seconds || 4);
     if (!Number.isFinite(seconds) || seconds <= 0) seconds = 4;
-    return { seconds: Math.min(seconds, 60) };
+    return { output_seconds: Math.min(seconds, 60) };
   }
-  // 预扣口径：按请求段数估算（缺省 1），钳制到配置的单次上限
+  // 音乐按段：output_count = 请求段数（缺省 1），钳制到配置的单次上限
   const cap = Number(utils.config.get("max_clips") || 4);
-  const clips = Math.min(Math.max(Number(body.clips || 1), 1), cap);
-  return { clips, tier: String(utils.config.get("tier_mode") || "standard") };
+  return { output_count: Math.min(Math.max(Number(body.clips || 1), 1), cap) };
 }
 
 export function buildSubmitRequest(ctx) {
@@ -191,8 +209,8 @@ export function parseQueryResponse(ctx) {
         done: true,
         taskData: resp,
         usage: isVideo
-          ? { seconds: Number(resp.seconds || 4) }
-          : { clips: Number(resp.clips || 1), tier: String(resp.tier || "standard") },
+          ? { output_seconds: Number(resp.seconds || 4) }
+          : { output_count: Number(resp.clips || 1) },
         artifacts: isVideo
           ? [{ key: "video", source: { type: "url", path: "data.video_url" } }]
           : [{ key: "audio", source: { type: "url", path: "data.audio_url" } }],
@@ -210,7 +228,11 @@ export function parseQueryResponse(ctx) {
       }],
     };
   }
-  return { items: [{ taskId: t.taskId, done: false, taskData: resp, state }] };
+  // 进行中：上游带进度（number 0~100 或 "42%"）时上报，宿主归一化落库并透出给查询端点
+  const item = { taskId: t.taskId, done: false, taskData: resp, state };
+  const progress = Number(resp.progress);
+  if (Number.isFinite(progress) && progress >= 0) item.progress = Math.min(Math.round(progress), 100);
+  return { items: [item] };
 }
 
 // ── 渲染（面向客户端）─────────────────────────────────────

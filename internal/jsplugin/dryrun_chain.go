@@ -119,8 +119,8 @@ func dryRunContractFail(name, hook string, err error) DryRunCheck {
 		Detail: hook + " 返回未通过契约校验：" + SanitizeHookMessage(err.Error())}
 }
 
-// dryRunValidateUsage 校验用量事实（键 ∈ usageSchema、number 型非负数值）。
-func dryRunValidateUsage(usage json.RawMessage, m *contract.Manifest) error {
+// dryRunValidateUsage 校验用量（键 ∈ 宿主固定词汇、类型匹配、数值非负）。
+func dryRunValidateUsage(usage json.RawMessage, _ *contract.Manifest) error {
 	if len(usage) == 0 || string(usage) == "null" {
 		return nil
 	}
@@ -128,7 +128,7 @@ func dryRunValidateUsage(usage json.RawMessage, m *contract.Manifest) error {
 	if err != nil {
 		return fmt.Errorf("usage 不是对象：%w", err)
 	}
-	_, err = contract.ValidateUsageFacts(raw, m)
+	_, err = contract.ValidateHostUsage(raw)
 	return err
 }
 
@@ -139,7 +139,7 @@ func dryRunValidateUsage(usage json.RawMessage, m *contract.Manifest) error {
 // dryRunSampleEstimate 样例执行 estimateUsage（入参取 decode 样例结果），校验用量事实契约。
 func dryRunSampleEstimate(ctx context.Context, pool *PluginPool, m *contract.Manifest, model string, body json.RawMessage, params map[string]string) DryRunCheck {
 	const name, hook = "sample-estimate", "estimateUsage"
-	raw, chk := dryRunCallObject(ctx, pool, name, hook, contract.EstimateUsageContext{Body: body, Model: model, Params: params}, false)
+	raw, chk := dryRunCallObject(ctx, pool, name, hook, contract.EstimateUsageContext{Body: body, Model: model, UpstreamModel: model, Params: params}, false)
 	if chk != nil {
 		return *chk
 	}
@@ -150,14 +150,35 @@ func dryRunSampleEstimate(ctx context.Context, pool *PluginPool, m *contract.Man
 	return DryRunCheck{Name: name, Status: dryRunPass, Detail: "样例用量估算通过：" + string(data)}
 }
 
+// dryRunSampleValidate 样例执行 validateRequest（可选钩子；upstreamModel 取样例模型名）。
+// 返回修正后的请求体（钩子返回 requestBody 时），供下游样例环节使用。
+func dryRunSampleValidate(ctx context.Context, pool *PluginPool, _ *contract.Manifest, model string, body json.RawMessage, params map[string]string) (DryRunCheck, json.RawMessage) {
+	const name, hook = "sample-validate", contract.HookNameValidateRequest
+	raw, chk := dryRunCallObject(ctx, pool, name, hook, contract.ValidateRequestContext{
+		Body: body, Params: params, Model: model, UpstreamModel: model, ChannelBaseURL: "https://dryrun.invalid",
+	}, false)
+	if chk != nil {
+		return *chk, nil
+	}
+	res, err := contract.ValidateValidatedRequest(raw)
+	if err != nil {
+		return dryRunContractFail(name, hook, err), nil
+	}
+	if len(res.RequestBody) > 0 {
+		return DryRunCheck{Name: name, Status: dryRunPass, Detail: "样例请求校验通过（钩子修正了 requestBody）"}, res.RequestBody
+	}
+	return DryRunCheck{Name: name, Status: dryRunPass, Detail: "样例请求校验通过"}, nil
+}
+
 // ---------------------------------------------------------------------------
 // 标准视频端点解码
 // ---------------------------------------------------------------------------
 
 // dryRunSampleStandard 以通用任务体样例执行 standardVideos 解码钩子。逐个模型尝试
 // （多模型插件常只有部分是视频模型，如 golden_music/golden_video），首个通过即 pass；
-// 编程错误/契约违规立即 fail；全部被拒为 warn。
-func dryRunSampleStandard(ctx context.Context, pool *PluginPool, m *contract.Manifest) DryRunCheck {
+// 编程错误/契约违规立即 fail；全部被拒为 warn。通过时返回解码结果（样例链起点，
+// 纯标准端点插件复用该结果驱动提交/轮询样例环节）。
+func dryRunSampleStandard(ctx context.Context, pool *PluginPool, m *contract.Manifest) (DryRunCheck, *contract.DecodeResult) {
 	const name = "standard-endpoint"
 	hook := m.StandardVideos
 	var firstReject *DryRunCheck
@@ -172,27 +193,27 @@ func dryRunSampleStandard(ctx context.Context, pool *PluginPool, m *contract.Man
 		}, false)
 		if chk != nil {
 			if chk.Status == dryRunFail {
-				return *chk
+				return *chk, nil
 			}
 			if firstReject == nil {
 				firstReject = chk
 			}
 			continue
 		}
-		decoded, err := contract.ValidateDecoded(raw, m, false)
+		decoded, err := contract.ValidateDecoded(raw, false)
 		if err != nil {
-			return dryRunContractFail(name, hook, err)
+			return dryRunContractFail(name, hook, err), nil
 		}
 		if decoded.Kind != "submit" {
-			return DryRunCheck{Name: name, Status: dryRunFail, Detail: hook + " 返回 kind 须为 submit（标准端点无查询语义）"}
+			return DryRunCheck{Name: name, Status: dryRunFail, Detail: hook + " 返回 kind 须为 submit（标准端点无查询语义）"}, nil
 		}
 		return DryRunCheck{Name: name, Status: dryRunPass,
-			Detail: fmt.Sprintf("标准视频端点已支持：模型可经 /v1/videos 与 /v1/video/generations 提交（解码钩子 %s，样例 model=%s 通过）", hook, decoded.Model)}
+			Detail: fmt.Sprintf("标准视频端点已支持：模型可经 /v1/videos 与 /v1/video/generations 提交（解码钩子 %s，样例 model=%s 通过）", hook, decoded.Model)}, decoded
 	}
 	if firstReject != nil {
-		return *firstReject
+		return *firstReject, nil
 	}
-	return DryRunCheck{Name: name, Status: dryRunWarn, Detail: hook + " 未执行样例（无声明模型）"}
+	return DryRunCheck{Name: name, Status: dryRunWarn, Detail: hook + " 未执行样例（无声明模型）"}, nil
 }
 
 // ---------------------------------------------------------------------------

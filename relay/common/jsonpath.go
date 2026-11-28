@@ -6,7 +6,9 @@ import "strings"
 // JSON path（"data.videos[0].url"）
 // ---------------------------------------------------------------------------
 
-// GetJSONPath 按点分 + [n] 路径取值。
+// GetJSONPath 按点分 + [n] 路径取值。数组段的纯数字 key 兼容为下标
+// （`results.0.url` ≡ `results[0].url`——AI 生成插件的常见笔误形态，
+// 取不到值会让转存/交付整链静默失败，此处直接兼容掉）。
 func GetJSONPath(data map[string]any, path string) any {
 	cur := any(data)
 	for _, seg := range splitPath(path) {
@@ -18,10 +20,14 @@ func GetJSONPath(data map[string]any, path string) any {
 			}
 			cur = v
 		case []any:
-			if seg.index < 0 || seg.index >= len(node) {
+			idx := seg.index
+			if idx < 0 {
+				idx = seg.numericIndex()
+			}
+			if idx < 0 || idx >= len(node) {
 				return nil
 			}
-			cur = node[seg.index]
+			cur = node[idx]
 		default:
 			return nil
 		}
@@ -30,6 +36,7 @@ func GetJSONPath(data map[string]any, path string) any {
 }
 
 // SetJSONPath 按路径改写值（路径必须已存在——产物声明指向 taskData 已有字段）。
+// 数组段的纯数字 key 同 GetJSONPath 兼容为下标。
 func SetJSONPath(data map[string]any, path string, value any) bool {
 	segs := splitPath(path)
 	if len(segs) == 0 {
@@ -45,10 +52,14 @@ func SetJSONPath(data map[string]any, path string, value any) bool {
 			}
 			parent = v
 		case []any:
-			if segs[i].index < 0 || segs[i].index >= len(node) {
+			idx := segs[i].index
+			if idx < 0 {
+				idx = segs[i].numericIndex()
+			}
+			if idx < 0 || idx >= len(node) {
 				return false
 			}
-			parent = node[segs[i].index]
+			parent = node[idx]
 		default:
 			return false
 		}
@@ -62,10 +73,14 @@ func SetJSONPath(data map[string]any, path string, value any) bool {
 		node[last.key] = value
 		return true
 	case []any:
-		if last.index < 0 || last.index >= len(node) {
+		idx := last.index
+		if idx < 0 {
+			idx = last.numericIndex()
+		}
+		if idx < 0 || idx >= len(node) {
 			return false
 		}
-		node[last.index] = value
+		node[idx] = value
 		return true
 	default:
 		return false
@@ -75,6 +90,23 @@ func SetJSONPath(data map[string]any, path string, value any) bool {
 type pathSeg struct {
 	key   string
 	index int
+}
+
+// numericIndex 段 key 为纯数字时返回其值（否则 -1）：点分形态的数组下标兼容
+// （`results.0.url` 的 "0" 段）。map 上的数字字符串键不受影响——本方法只在
+// 节点为 []any 的分支被调用。
+func (s pathSeg) numericIndex() int {
+	if s.key == "" {
+		return -1
+	}
+	n := 0
+	for _, c := range s.key {
+		if c < '0' || c > '9' {
+			return -1
+		}
+		n = n*10 + int(c-'0')
+	}
+	return n
 }
 
 func splitPath(path string) []pathSeg {

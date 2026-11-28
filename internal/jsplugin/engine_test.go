@@ -12,11 +12,13 @@ import (
 	"github.com/qianfree/team-api/internal/jsplugin/contract"
 )
 
+// goldenSource 读取作者模板（golden 参考实现）源码——已从 builtin/ 移至 template/，
+// 不再随启动 seed 为插件实例，仅作模板与测试夹具。
 func goldenSource(t *testing.T) string {
 	t.Helper()
-	data, err := os.ReadFile("builtin/golden/plugin.js")
+	data, err := os.ReadFile("template/plugin.js")
 	if err != nil {
-		t.Fatalf("读取 golden 插件失败: %v", err)
+		t.Fatalf("读取 golden 模板失败: %v", err)
 	}
 	return string(data)
 }
@@ -95,7 +97,7 @@ func TestGoldenHookFlow(t *testing.T) {
 	}), &decoded); err != nil {
 		t.Fatalf("decodeRequest 返回非对象: %v", err)
 	}
-	res, err := contract.ValidateDecoded(decoded, compiled.Manifest, false)
+	res, err := contract.ValidateDecoded(decoded, false)
 	if err != nil {
 		t.Fatalf("decodeRequest 契约校验失败: %v", err)
 	}
@@ -196,7 +198,7 @@ func TestGoldenStandardVideos(t *testing.T) {
 			`"references":[{"role":"first_frame","url":"https://cdn/f.png"},{"role":"last_frame","url":"https://cdn/l.png"}],` +
 			`"metadata":{"duration":8,"size":"1280x720"}}`),
 	}), &decodedRaw)
-	decoded, err := contract.ValidateDecoded(decodedRaw, compiled.Manifest, false)
+	decoded, err := contract.ValidateDecoded(decodedRaw, false)
 	if err != nil {
 		t.Fatalf("decodeVideos 契约校验失败: %v", err)
 	}
@@ -212,7 +214,7 @@ func TestGoldenStandardVideos(t *testing.T) {
 		Surface: contract.SurfaceVideoGenerations, Path: "/v1/video/generations", Model: "golden_video",
 		Body: json.RawMessage(`{"model":"golden_video","prompt":"a dog","seconds":5,"metadata":{"image":"https://cdn/d.png"}}`),
 	}), &decodedRaw)
-	decoded, err = contract.ValidateDecoded(decodedRaw, compiled.Manifest, false)
+	decoded, err = contract.ValidateDecoded(decodedRaw, false)
 	if err != nil {
 		t.Fatalf("decodeVideos（通用端点形态）契约校验失败: %v", err)
 	}
@@ -226,9 +228,9 @@ func TestGoldenStandardVideos(t *testing.T) {
 	_ = json.Unmarshal(callHook(t, inst, "estimateUsage", contract.EstimateUsageContext{
 		Body: decoded.RequestBody, Model: decoded.Model,
 	}), &estRaw)
-	facts, err := contract.ValidateUsageFacts(estRaw, compiled.Manifest)
-	if err != nil || facts["seconds"] != 5 {
-		t.Fatalf("视频用量估算异常: %v err=%v", facts, err)
+	est, err := contract.ValidateHostUsage(estRaw)
+	if v, _ := est.Number(contract.UsageOutputSeconds); err != nil || v != 5 {
+		t.Fatalf("视频用量估算异常: %+v err=%v", est, err)
 	}
 
 	// buildSubmitRequest 携带映射后的参数

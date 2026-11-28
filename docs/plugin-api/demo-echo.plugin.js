@@ -20,14 +20,10 @@ export const meta = {
 	version: "1.0.0",
 	description: "演示契约 v1 的最小可用插件：提交/查询/渲染/计费事实/配置项/immediate",
 	author: "team-api",
-	models: ["demo_echo"], // 模型名跨插件独占，激活时冲突预检
+	models: ["demo_echo"], // 插件支持的上游模型名（平台模型名由渠道映射决定，跨插件可重名）
 	fetchMode: "per_task",
 	// utils.fetch 的 host 白名单（主提交请求走渠道 baseUrl，无需在此声明）
 	allowedHosts: ["httpbin.org"],
-	// 计费事实声明：number 型键进 u() 公式通道；unit=count 会映射为张数信号
-	usageSchema: [
-		{ key: "words", type: "number", unit: "count", description: "提示词词数（演示计费事实）" },
-	],
 	// 管理端会出现「插件配置」面板（sys_options 存储，改完即热生效）
 	config: [
 		{ key: "prefix", label: "输出前缀", type: "string", default: "[demo]", description: "渲染输出时拼接在前的前缀（演示配置项）" },
@@ -50,11 +46,10 @@ export function decodeRequest(ctx) {
 	return { kind: "submit", model: "demo_echo", requestBody: body };
 }
 
-// estimateUsage（可选）：预扣估算的计费事实，键必须 ∈ usageSchema。
+// estimateUsage（可选）：预扣用量估算，键必须是宿主固定词汇（output_count 等），
+// 计价口径由宿主模型定价决定。本演示每次产出 1 条回声。
 export function estimateUsage(ctx) {
-	const prompt = String((ctx.body || {}).prompt || "hello demo");
-	const words = prompt.split(/\s+/).filter(Boolean).length || 1;
-	return { words };
+	return { output_count: 1 };
 }
 
 // buildSubmitRequest 声明上游请求（宿主代发）。相对 URL 提交时拼渠道 baseUrl。
@@ -88,7 +83,7 @@ export function parseSubmitResponse(ctx) {
 		immediate: {
 			status: "SUCCESS",
 			taskData: { demo: true, prompt_echo: echoed.prompt || null, style: echoed.style || null },
-			usage: { words: String(echoed.prompt || "").split(/\s+/).filter(Boolean).length || 1 },
+			usage: { output_count: 1 },
 		},
 	};
 }

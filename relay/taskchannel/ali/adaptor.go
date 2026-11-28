@@ -26,6 +26,10 @@ func init() {
 // 智能时长下输出长度不可预知，预扣按该上限冻结，结算按上游 usage.output_video_duration 多退少补
 const wan3MaxDurationSeconds = 30.0
 
+// wan3ReferenceVideoMaxSeconds wan3.0 参考视频总时长上限（官方约束：最多 5 段、合计 ≤15s）；
+// 另有「输入视频总时长 + 输出视频时长 ≤30s」
+const wan3ReferenceVideoMaxSeconds = 15.0
+
 // dashScopeVideoRequest DashScope 视频生成请求
 type dashScopeVideoRequest struct {
 	Model      string                `json:"model"`
@@ -211,6 +215,12 @@ func (a *AliAdaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, bod
 				ratios["spec.duration"] = float64(d)
 			}
 		}
+		// wan3.0 输入视频计费：官方按「输入视频 + 输出视频」时长计费（结算上报官方
+		// usage.input_video_duration，见 ParseTaskResult）。带参考视频时输入时长提交后才可知
+		//（URL 素材），预扣按上限冻结；输出已顶满 30s 上限时不产出该键
+		if input := wan3InputVideoSeconds(modelName, req, metadata, ratios); input > 0 {
+			ratios["spec.input_video_seconds"] = input
+		}
 	} else {
 		// 图片数量
 		if n, ok := req["n"].(float64); ok && n > 1 {
@@ -386,6 +396,38 @@ func buildWan3Media(req map[string]any, metadata map[string]any) []dashScopeMedi
 		}
 	}
 	return nil
+}
+
+// hasReferenceVideo media 数组是否含参考视频
+func hasReferenceVideo(media []dashScopeMedia) bool {
+	for _, m := range media {
+		if m.Type == common.RefRoleReferenceVideo {
+			return true
+		}
+	}
+	return false
+}
+
+// wan3InputVideoSeconds wan3.0 带参考视频时的输入视频预扣上限（秒）；非 wan3 型号或不含
+// 参考视频返回 0。是否含参考视频与实际发往上游的 media 同源判定（buildWan3Media）。
+//
+// 上限 = min(参考视频合计上限 15s, 输出上限 30s - 输出时长)，对应官方「输入+输出 ≤30s」
+// 约束；输出时长未上报时只剩 15s 这一条约束。走 spec.input_video_seconds 而非
+// spec.has_input_video：后者固定按 15s 估，输出较长时会超出 30s 总额多冻结。
+func wan3InputVideoSeconds(modelName string, req, metadata, ratios map[string]any) float64 {
+	if !strings.HasPrefix(strings.ToLower(modelName), "wan3.") || !hasReferenceVideo(buildWan3Media(req, metadata)) {
+		return 0
+	}
+	limit := wan3ReferenceVideoMaxSeconds
+	if d, ok := ratios["spec.duration"].(float64); ok && d > 0 {
+		if remain := wan3MaxDurationSeconds - d; remain < limit {
+			limit = remain
+		}
+	}
+	if limit < 0 {
+		limit = 0
+	}
+	return limit
 }
 
 // normalizeWan3Resolution 把 size 值归一为 wan3.0 分辨率档位：
@@ -586,12 +628,15 @@ func (a *AliAdaptor) ParseTaskResult(body []byte) (*common.TaskInfo, error) {
 		if resp.Output.VideoURL != "" {
 			info.ResultURL = resp.Output.VideoURL
 		}
-		// 素材计量（wan3.0 按秒计费）：实际输出秒数 + 实际分辨率，
-		// 供 generic per_second 结算按「实际秒数 × 实际档位单价」多退少补（方案 A）
+		// 素材计量（wan3.0 按秒计费）：实际输出秒数 + 实际分辨率 + 实际输入视频秒数。
+		// 输出秒数/分辨率供 generic per_second 结算按「实际秒数 × 实际档位单价」多退少补（方案 A）；
+		// 输入视频秒数（官方 input_video_duration，无视频输入时为 0）供素材计费方案按
+		//「输入 + 输出」口径结算
 		if resp.Usage.OutputVideoDuration > 0 {
 			info.MaterialUsage = &common.TaskMaterialUsage{
-				OutputSeconds: resp.Usage.OutputVideoDuration,
-				Resolution:    resolutionFromSR(resp.Usage.SR),
+				OutputSeconds:     resp.Usage.OutputVideoDuration,
+				InputVideoSeconds: resp.Usage.InputVideoDuration,
+				Resolution:        resolutionFromSR(resp.Usage.SR),
 			}
 		}
 		// 用量摘要（纯展示，不参与计费）：wan3.0 官方 usage 全量归一（duration 为官方口径总时长）

@@ -138,6 +138,19 @@ const configPluginKey = ref('')
 // 入口与顶栏全局 AI 助手同权限口径（ai_assistant:use）
 const canGenerate = hasPermission('ai_assistant:use')
 const showGenerator = ref(false)
+// 「AI 升级」注入载荷：详情抽屉拉取的现有插件（key/version/source），生成工作台
+// 打开时以此为基线开新会话；关闭工作台即清空，避免下次打开重复注入
+const generatorInject = ref<{ key: string; version: string; source: string } | null>(null)
+
+function onAiUpgrade(payload: { key: string; version: string; source: string }) {
+  generatorInject.value = payload
+  showGenerator.value = true
+}
+
+function onGeneratorVisible(v: boolean) {
+  showGenerator.value = v
+  if (!v) generatorInject.value = null
+}
 // 生成器「用此源码上传」带入的源码：预填上传弹窗，关闭时清空避免下次误带入
 const uploadPresetSource = ref('')
 
@@ -462,10 +475,12 @@ onMounted(fetchData)
       </div>
     </ACard>
 
-    <!-- AI 插件生成工作台：左侧对话（可带附件）/ 右侧源码，apply 把源码带入上传弹窗 -->
+    <!-- AI 插件生成工作台：左侧对话（可带附件）/ 右侧源码，apply 把源码带入上传弹窗；
+         inject 携带详情抽屉「AI 升级」载入的现有插件（基线源码 + 新会话） -->
     <JSPluginGeneratorModal
       :visible="showGenerator"
-      @update:visible="(v: boolean) => (showGenerator = v)"
+      :inject="generatorInject"
+      @update:visible="onGeneratorVisible"
       @apply="onApplySource"
     />
 
@@ -481,6 +496,7 @@ onMounted(fetchData)
       :plugin="detailPlugin"
       @toggle="(v: boolean) => detailPlugin && doEnable(detailPlugin.key, v)"
       @config="detailPlugin && openConfig(detailPlugin.key)"
+      @ai-upgrade="onAiUpgrade"
       @changed="fetchData"
     />
 

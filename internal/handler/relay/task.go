@@ -14,6 +14,7 @@ import (
 	"github.com/gogf/gf/v2/net/ghttp"
 
 	"github.com/qianfree/team-api/internal/dispatchadapter"
+	"github.com/qianfree/team-api/internal/jsplugin"
 	"github.com/qianfree/team-api/internal/logic/billing"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/monitor"
@@ -113,7 +114,7 @@ func HandleTaskSubmit(r *ghttp.Request) {
 	rc.ForwardingTrace = buildTaskForwardingTrace(r.URL.Path, body, channelMeta, capture.StatusCode())
 
 	// 异步记录审计日志
-	go recordTaskSubmitAudit(r, rc, capture, body)
+	go recordTaskSubmitAudit(buildTaskSubmitAudit(r, rc, capture, body))
 }
 
 // HandleTaskFetch 处理异步任务查询（GET /v1/video/generations/:id, GET /suno/fetch/:id）
@@ -230,13 +231,27 @@ func writeTaskChannelSelectionError(r *ghttp.Request, err error) {
 // 任务提交是瞬时动作：选定并物化后立即结束调度会话释放租约；
 // 会话绑定已由调度器在选择时写入，提交结果不额外上报健康（与旧行为一致）。
 func selectTaskChannel(r *ghttp.Request, body []byte) (*relay_common.ChannelMeta, error) {
-	return selectTaskChannelFor(r, body, nil)
+	return selectTaskChannelFor(r, body, standardTaskChannelAccept)
+}
+
+// standardTaskChannelAccept 标准任务端点（/v1/videos、/v1/video/generations、
+// /suno/submit 等）的 JS 渠道候选兜底过滤。目录快照 5s 刷新（另有 pub/sub 失效），
+// 插件刚停用/换版的窗口内目录可能仍含其渠道——选中后 SynthesizeStandardPlan/
+// ValidateRequest 会直接 400 且无渠道级重试（调度会话在选择循环结束时已释放），
+// 把同池的其他可用渠道饿死。此处把「插件未激活 / 未声明 standardVideos」的候选
+// 在选择循环内拦下并换下一候选（与 /pjs 分发器的 accept 过滤同路径，过滤不命中
+// 不计为渠道健康问题——渠道没坏，只是当前不能服务这个入口）。
+func standardTaskChannelAccept(meta *relay_common.ChannelMeta) bool {
+	if relay_constant.ProviderType(meta.ChannelType) != relay_constant.ProviderJSTask {
+		return true
+	}
+	return jsplugin.ChannelServesStandardEndpoint(meta.Settings.PluginKey)
 }
 
 // selectTaskChannelFor 带候选过滤的渠道选择：accept 返回 false 的候选视为不可用，
 // 上报后取下一候选（与物化失败同路径；过滤不命中不计为渠道健康问题——渠道本身
-// 没坏，只是不属于本次调度的目标集合）。/pjs 分发器用它在同名多插件（sharedModels）
-// 场景下把候选约束为本插件的渠道。
+// 没坏，只是不属于本次调度的目标集合）。/pjs 分发器用它把候选约束为本插件的渠道
+// （上游模型跨插件可重名，归属由渠道 plugin_key 决定）。
 func selectTaskChannelFor(r *ghttp.Request, body []byte, accept func(*relay_common.ChannelMeta) bool) (*relay_common.ChannelMeta, error) {
 	// 从请求体提取模型名
 	var req struct {
@@ -364,7 +379,7 @@ func HandleMjSubmit(r *ghttp.Request) {
 	}
 
 	rc.ForwardingTrace = buildTaskForwardingTrace(r.URL.Path, body, channelMeta, capture.StatusCode())
-	go recordTaskSubmitAudit(r, rc, capture, body)
+	go recordTaskSubmitAudit(buildTaskSubmitAudit(r, rc, capture, body))
 }
 
 // HandleAliImageSubmit 处理异步图片生成任务提交（POST /v1/images/generations/async）
@@ -455,7 +470,7 @@ func HandleAliImageSubmit(r *ghttp.Request) {
 	}
 
 	rc.ForwardingTrace = buildTaskForwardingTrace(r.URL.Path, body, channelMeta, capture.StatusCode())
-	go recordTaskSubmitAudit(r, rc, capture, body)
+	go recordTaskSubmitAudit(buildTaskSubmitAudit(r, rc, capture, body))
 }
 
 // registerAsyncTask 注册异步任务到实时监控
@@ -537,9 +552,14 @@ func extractMjTaskID(r *ghttp.Request) string {
 	return ""
 }
 
-// recordTaskSubmitAudit 记录异步任务提交的审计日志
-func recordTaskSubmitAudit(r *ghttp.Request, rc *relay_handler.TaskRelayContext, capture *ResponseCaptureWriter, body []byte) {
-	relayDataProvider.RecordAudit(context.Background(), &relay_common.AuditRecord{
+// buildTaskSubmitAudit 在请求 goroutine 上同步构建任务提交的审计记录。
+// 所有源自 request/response 的字段（r.URL、r.Header、capture 的响应体/状态码/响应头）
+// 必须在 handler 返回前读取：ghttp 在 handler 返回后于服务端 goroutine 执行
+// Response.Flush，net/http 会继续向底层响应头 map 补写 Date/Content-Length 等，
+// 此时审计 goroutine 再读/遍历这些 map 即并发读写，直接 fatal 整个进程
+// （concurrent map iteration and map write，/v1/videos 崩溃的根因）。
+func buildTaskSubmitAudit(r *ghttp.Request, rc *relay_handler.TaskRelayContext, capture *ResponseCaptureWriter, body []byte) *relay_common.AuditRecord {
+	return &relay_common.AuditRecord{
 		TenantID:        rc.TenantID,
 		UserID:          rc.UserID,
 		ApiKeyID:        rc.ApiKeyID,
@@ -561,7 +581,13 @@ func recordTaskSubmitAudit(r *ghttp.Request, rc *relay_handler.TaskRelayContext,
 		TaskID:          rc.TaskID,
 		TaskStatus:      "SUBMITTED",
 		ForwardingTrace: rc.ForwardingTrace,
-	})
+	}
+}
+
+// recordTaskSubmitAudit 异步落库任务提交的审计日志：只消费同步构建好的快照
+// （见 buildTaskSubmitAudit），goroutine 内不触碰 request/response 活对象。
+func recordTaskSubmitAudit(rec *relay_common.AuditRecord) {
+	relayDataProvider.RecordAudit(context.Background(), rec)
 }
 
 // buildTaskForwardingTrace 从渠道选择结果构建转发路径追踪

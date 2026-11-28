@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
-	"time"
 
 	"github.com/qianfree/team-api/internal/jsplugin/contract"
 )
@@ -20,153 +19,87 @@ func TestBuiltinPluginsCompile(t *testing.T) {
 	for _, b := range builtins {
 		keys[b.Key] = b
 	}
-	if _, ok := keys["golden"]; !ok {
-		t.Fatal("缺少内置插件 golden")
-	}
-	if _, ok := keys["sora"]; !ok {
-		t.Fatal("缺少内置插件 sora")
-	}
-	// sora 形态断言：模型/路由/计费单位/标准端点声明
-	sora := keys["sora"]
-	if !sora.Manifest.HasModel("sora-2") {
-		t.Fatalf("sora 模型异常: %v", sora.Manifest.Models)
-	}
-	if len(sora.Manifest.Routes) != 3 {
-		t.Fatalf("sora 路由数异常: %+v", sora.Manifest.Routes)
-	}
-	foundSecond := false
-	for _, f := range sora.Manifest.UsageSchema {
-		if f.Key == "seconds" && f.Unit == "second" {
-			foundSecond = true
+	for _, key := range []string{"alibaba", "doubao", "hailuo", "teamapi"} {
+		if _, ok := keys[key]; !ok {
+			t.Fatalf("缺少内置插件 %s", key)
 		}
 	}
-	if !foundSecond {
-		t.Fatalf("sora usageSchema 缺少 seconds(second) 计费单位: %+v", sora.Manifest.UsageSchema)
-	}
-	if sora.Manifest.StandardVideos != "decodeVideos" {
-		t.Fatalf("sora 应声明 standardVideos: %q", sora.Manifest.StandardVideos)
-	}
-	// golden 形态断言：视频模型 + 标准端点声明（模板范本必须示范双入口）
-	golden := keys["golden"]
-	if !golden.Manifest.HasModel("golden_video") || golden.Manifest.StandardVideos != "decodeVideos" {
-		t.Fatalf("golden 应示范视频模型与 standardVideos 声明: %+v", golden.Manifest)
+	// golden 已改为纯作者模板（template/plugin.js），不再作为内置实例 seed
+	if _, ok := keys["golden"]; ok {
+		t.Fatal("golden 已下线，不应再作为内置插件 seed")
 	}
 }
 
-// TestSoraHookFlow sora 全钩子冒烟（openai_video 协议形态）。
-func TestSoraHookFlow(t *testing.T) {
-	builtins, err := compileBuiltins(NewGojaEngine())
-	if err != nil {
-		t.Fatalf("内置插件编译失败: %v", err)
+// TestRetiredBuiltinKeys 下线清理纯逻辑：仅命中「DB 有 builtin 行、二进制内已不存在」
+// 的 key；在线内置、upload 行、纯上传插件均不触发。
+func TestRetiredBuiltinKeys(t *testing.T) {
+	live := map[string]struct{}{"hailuo": {}, "teamapi": {}}
+	rows := []PluginVersionRow{
+		{PluginKey: "hailuo", Origin: "builtin"},
+		{PluginKey: "golden", Origin: "builtin"},
+		{PluginKey: "golden", Origin: "builtin"},  // 同 key 多行去重
+		{PluginKey: "golden", Origin: "upload"},   // upload 行不参与判定
+		{PluginKey: "reseller", Origin: "upload"}, // 纯上传插件不触发
 	}
-	var sora *CompiledPlugin
-	for _, b := range builtins {
-		if b.Key == "sora" {
-			sora = b
+	got := retiredBuiltinKeys(rows, live)
+	if len(got) != 1 || got[0] != "golden" {
+		t.Fatalf("应仅清理已下线的 golden: %v", got)
+	}
+	if got := retiredBuiltinKeys(nil, live); got != nil {
+		t.Fatalf("无 builtin 行时应返回空: %v", got)
+	}
+}
+
+// TestIsStaleBuiltin 过期内置版本判定纯逻辑（DeleteVersion 放行 / List 标记共用）：
+// 仅 builtin 行且 (key,version) 不在当前二进制清单时为真；在线版本、upload 行
+// （不走本判定，另有守卫）均为假。active 与否不影响判定——过期且激活中的行同样
+// 过期（管理员可直接删，DeleteVersion 走 fallbackActivateBuiltin 回落最新内置版本）。
+func TestIsStaleBuiltin(t *testing.T) {
+	live := map[string]struct{}{"hailuo@1.8.0": {}, "teamapi@1.0.0": {}}
+	cases := []struct {
+		name string
+		row  PluginVersionRow
+		want bool
+	}{
+		{"在线内置版本", PluginVersionRow{PluginKey: "hailuo", Version: "1.8.0", Origin: "builtin"}, false},
+		{"过期内置版本", PluginVersionRow{PluginKey: "hailuo", Version: "1.7.0", Origin: "builtin"}, true},
+		{"过期且激活中的内置版本", PluginVersionRow{PluginKey: "hailuo", Version: "1.6.0", Origin: "builtin", Active: true}, true},
+		{"同版本号的 upload 行不走本判定", PluginVersionRow{PluginKey: "hailuo", Version: "1.8.0", Origin: "upload"}, false},
+		{"纯上传插件", PluginVersionRow{PluginKey: "reseller", Version: "1.0.0", Origin: "upload"}, false},
+		{"下线 key 的内置行", PluginVersionRow{PluginKey: "golden", Version: "0.9.0", Origin: "builtin"}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isStaleBuiltin(tc.row, live); got != tc.want {
+				t.Fatalf("isStaleBuiltin = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestBuiltinPluginsShareModelsAllowed 跨插件同名上游模型为合法形态：内置插件与声明
+// 同名模型的上传插件可同时发布进 generation。
+func TestBuiltinPluginsShareModelsAllowed(t *testing.T) {
+	other := `export const meta = {
+  apiVersion: 1, key: "reseller", name: "Reseller", version: "1.0.0",
+  models: ["MiniMax-H3", "doubao-seedance-2-0-260128"],
+  routes: [{ method: "POST", path: "/submit", type: "submit" }, { method: "GET", path: "/fetch/:task_id", type: "query" }],
+};
+export function decodeRequest(ctx) { return { kind: "submit", model: ctx.body.model, requestBody: ctx.body }; }
+export function buildSubmitRequest(ctx) { return { url: "/submit", body: ctx.body }; }
+export function parseSubmitResponse(ctx) { return { taskId: "t1" }; }
+export function buildQueryRequest(ctx) { return { url: "/fetch" }; }
+export function parseQueryResponse(ctx) { return { items: [{ taskId: ctx.tasks[0].taskId, done: false }] }; }
+`
+	cleanup, err := PublishForTest(readBuiltin(t, "hailuo"), readBuiltin(t, "doubao"), other)
+	if err != nil {
+		t.Fatalf("同名上游模型的多个插件应可同时发布: %v", err)
+	}
+	t.Cleanup(cleanup)
+	for _, key := range []string{"hailuo", "doubao", "reseller"} {
+		if _, ok := CurrentGeneration().Plugin(key); !ok {
+			t.Fatalf("插件 %s 未在 generation 内", key)
 		}
-	}
-	if sora == nil {
-		t.Fatal("sora 不在内置列表")
-	}
-
-	inst, err := NewGojaEngine().NewInstance(sora, InstanceOptions{CallTimeout: 2 * time.Second})
-	if err != nil {
-		t.Fatalf("创建实例失败: %v", err)
-	}
-	defer inst.Close()
-	_ = context.Background()
-
-	call := func(hook string, arg any) map[string]json.RawMessage {
-		t.Helper()
-		args, _ := json.Marshal(arg)
-		out, err := inst.Call(context.Background(), hook, args)
-		if err != nil {
-			t.Fatalf("钩子 %s 失败: %v", hook, err)
-		}
-		raw, err := contract.ParseJSONObject(out)
-		if err != nil {
-			t.Fatalf("钩子 %s 返回非对象: %v", hook, err)
-		}
-		return raw
-	}
-
-	// decode：缺省模型回落 sora-2
-	decoded, err := contract.ValidateDecoded(call("decodeRequest", contract.DecodeContext{
-		Path: "/videos", Method: "POST", Body: json.RawMessage(`{"prompt":"a cat","seconds":12}`),
-	}), sora.Manifest, false)
-	if err != nil {
-		t.Fatalf("decodeRequest 校验失败: %v", err)
-	}
-	if decoded.Model != "sora-2" {
-		t.Fatalf("模型回落异常: %s", decoded.Model)
-	}
-
-	// estimateUsage：按时长估算，尺寸缺省 720x1280
-	estRaw := call("estimateUsage", contract.EstimateUsageContext{Body: decoded.RequestBody, Model: decoded.Model})
-	estFacts, err := contract.ValidateUsageFacts(estRaw, sora.Manifest)
-	if err != nil {
-		t.Fatalf("estimateUsage 校验失败: %v", err)
-	}
-	if estFacts["seconds"] != 12 {
-		t.Fatalf("时长估算异常（期望 12）: %v", estFacts)
-	}
-
-	// buildSubmitRequest：透传归一 body + 上游模型名
-	built, err := contract.ValidateBuiltRequest(call("buildSubmitRequest", contract.BuildSubmitContext{
-		Body: decoded.RequestBody, Model: decoded.Model, ChannelBaseURL: "https://up.example.com",
-	}))
-	if err != nil {
-		t.Fatalf("buildSubmitRequest 校验失败: %v", err)
-	}
-	if built.URL != "/v1/videos" {
-		t.Fatalf("提交 URL 异常: %s", built.URL)
-	}
-	var submitBody map[string]any
-	_ = json.Unmarshal(built.Body, &submitBody)
-	if submitBody["seconds"] != float64(12) || submitBody["model"] != "sora-2" {
-		t.Fatalf("提交 body 异常: %v", submitBody)
-	}
-
-	// parseSubmitResponse
-	sub, err := contract.ValidateSubmitted(call("parseSubmitResponse", contract.ParseSubmitContext{
-		Status: 200, ResponseBody: json.RawMessage(`{"id":"video_abc","status":"queued"}`),
-	}))
-	if err != nil || sub.TaskID != "video_abc" {
-		t.Fatalf("parseSubmitResponse 异常: %+v err=%v", sub, err)
-	}
-
-	// parseQueryResponse（completed）：usage + artifacts（鉴权相对端点）
-	taskRef := contract.QueryTaskRef{TaskID: "video_abc", TaskData: sub.TaskData, State: sub.State}
-	q, err := contract.ValidateQueried(call("parseQueryResponse", contract.ParseQueryContext{
-		Status: 200, Tasks: []contract.QueryTaskRef{taskRef},
-		ResponseBody: json.RawMessage(`{"id":"video_abc","status":"completed","progress":100,"seconds":6,"video":{"url":"https://up.example.com/v.mp4","size_mb":12}}`),
-	}), []contract.QueryTaskRef{taskRef})
-	if err != nil {
-		t.Fatalf("parseQueryResponse 校验失败: %v", err)
-	}
-	item := q.Items[0]
-	if !item.Done || len(item.Artifacts) != 1 || item.Artifacts[0].Source.Path != "_content_url" {
-		t.Fatalf("终态 item 异常: %+v", item)
-	}
-	usageFacts, err := contract.ValidateUsageFacts(mustRawMap(t, item.Usage), sora.Manifest)
-	if err != nil || usageFacts["seconds"] != 6 {
-		t.Fatalf("终态 usage 异常: %v err=%v", usageFacts, err)
-	}
-
-	// renderTask：openai_video 形态（SUCCESS → completed）
-	rend, err := contract.ValidateRendered(call("renderTask", contract.RenderTaskContext{
-		Task: contract.RenderTask{
-			PublicTaskID: "task_pub1", TaskID: "video_abc", Model: "sora-2",
-			Status: "SUCCESS", Data: item.TaskData,
-		},
-	}))
-	if err != nil {
-		t.Fatalf("renderTask 校验失败: %v", err)
-	}
-	var body map[string]any
-	_ = json.Unmarshal(rend.Body, &body)
-	if body["status"] != "completed" || body["id"] != "video_abc" {
-		t.Fatalf("renderTask 输出异常: %v", body)
 	}
 }
 
@@ -179,35 +112,32 @@ func mustRawMap(t *testing.T, raw json.RawMessage) map[string]json.RawMessage {
 	return m
 }
 
-// TestSoraStandardVideos sora 标准视频端点解码（meta.standardVideos）：
-// /v1/videos 归一后的通用任务体（metadata.duration 形态）与 /v1/video/generations
-// 原样 body（顶层 seconds 形态）均映射为原生 requestBody，下游 buildSubmitRequest
-// 无感复用（秒数/尺寸正确进入上游请求）。
-func TestSoraStandardVideos(t *testing.T) {
-	builtins, err := compileBuiltins(NewGojaEngine())
+// mustHostUsage 解析并校验宿主固定词汇用量（键非法即失败）。
+func mustHostUsage(t *testing.T, raw json.RawMessage) *contract.HostUsage {
+	t.Helper()
+	u, err := contract.ValidateHostUsage(mustRawMap(t, raw))
 	if err != nil {
-		t.Fatalf("内置插件编译失败: %v", err)
+		t.Fatalf("用量不符合宿主固定词汇: %v (%s)", err, raw)
 	}
-	var sora *CompiledPlugin
-	for _, b := range builtins {
-		if b.Key == "sora" {
-			sora = b
-		}
-	}
-	if sora == nil {
-		t.Fatal("sora 不在内置列表")
-	}
+	return u
+}
 
-	inst, err := NewGojaEngine().NewInstance(sora, InstanceOptions{CallTimeout: 2 * time.Second})
+// mustHostUsageObj 同 mustHostUsage，入参为已解析对象（钩子返回值）。
+func mustHostUsageObj(t *testing.T, raw map[string]json.RawMessage) *contract.HostUsage {
+	t.Helper()
+	u, err := contract.ValidateHostUsage(raw)
 	if err != nil {
-		t.Fatalf("创建实例失败: %v", err)
+		t.Fatalf("用量不符合宿主固定词汇: %v", err)
 	}
-	defer inst.Close()
+	return u
+}
 
-	call := func(hook string, arg any) map[string]json.RawMessage {
+// hookCaller 返回调用指定激活插件钩子的测试闭包（失败即 Fatal）。
+func hookCaller(t *testing.T, plugin *ActivePlugin) func(hook string, arg any) map[string]json.RawMessage {
+	return func(hook string, arg any) map[string]json.RawMessage {
 		t.Helper()
 		args, _ := json.Marshal(arg)
-		out, err := inst.Call(context.Background(), hook, args)
+		out, err := plugin.Pool.Call(context.Background(), hook, args)
 		if err != nil {
 			t.Fatalf("钩子 %s 失败: %v", hook, err)
 		}
@@ -217,53 +147,11 @@ func TestSoraStandardVideos(t *testing.T) {
 		}
 		return raw
 	}
+}
 
-	// /v1/videos 形态：metadata.duration / metadata.size（胶水层归一产物）
-	decoded, err := contract.ValidateDecoded(call("decodeVideos", contract.StandardEntryContext{
-		Surface: contract.SurfaceOpenAIVideos, Path: "/v1/videos", Model: "sora-2",
-		Body: json.RawMessage(`{"model":"sora-2","prompt":"a cat","seconds":"8","metadata":{"duration":8,"size":"1920x1080"}}`),
-	}), sora.Manifest, false)
-	if err != nil {
-		t.Fatalf("decodeVideos 校验失败: %v", err)
-	}
-	var reqBody map[string]any
-	_ = json.Unmarshal(decoded.RequestBody, &reqBody)
-	if reqBody["seconds"] != float64(8) || reqBody["size"] != "1920x1080" {
-		t.Fatalf("metadata 映射异常: %v", reqBody)
-	}
-
-	// /v1/video/generations 形态：顶层 seconds、无 metadata
-	decoded2, err := contract.ValidateDecoded(call("decodeVideos", contract.StandardEntryContext{
-		Surface: contract.SurfaceVideoGenerations, Path: "/v1/video/generations", Model: "sora-2",
-		Body: json.RawMessage(`{"model":"sora-2","prompt":"a dog","seconds":5}`),
-	}), sora.Manifest, false)
-	if err != nil {
-		t.Fatalf("decodeVideos（通用端点形态）校验失败: %v", err)
-	}
-	var reqBody2 map[string]any
-	_ = json.Unmarshal(decoded2.RequestBody, &reqBody2)
-	if reqBody2["seconds"] != float64(5) {
-		t.Fatalf("顶层 seconds 映射异常: %v", reqBody2)
-	}
-
-	// 下游 buildSubmitRequest 无感复用：映射后的 body 进入上游请求
-	built, err := contract.ValidateBuiltRequest(call("buildSubmitRequest", contract.BuildSubmitContext{
-		Body: decoded.RequestBody, Model: decoded.Model, ChannelBaseURL: "https://up.example.com",
-	}))
-	if err != nil {
-		t.Fatalf("buildSubmitRequest 校验失败: %v", err)
-	}
-	var submitBody map[string]any
-	_ = json.Unmarshal(built.Body, &submitBody)
-	if submitBody["seconds"] != float64(8) || submitBody["size"] != "1920x1080" || submitBody["prompt"] != "a cat" {
-		t.Fatalf("上游请求应携带映射后的参数: %v", submitBody)
-	}
-
-	// 缺 prompt：标准端点同样拒绝
-	if _, err := inst.Call(context.Background(), "decodeVideos", mustJSON(t, contract.StandardEntryContext{
-		Surface: contract.SurfaceOpenAIVideos, Path: "/v1/videos", Model: "sora-2",
-		Body: json.RawMessage(`{"model":"sora-2"}`),
-	})); err == nil {
-		t.Fatal("缺 prompt 应抛错")
-	}
+// hookCallErr 调用钩子并返回错误（断言拒绝路径用）。
+func hookCallErr(plugin *ActivePlugin, hook string, arg any) error {
+	args, _ := json.Marshal(arg)
+	_, err := plugin.Pool.Call(context.Background(), hook, args)
+	return err
 }

@@ -373,7 +373,7 @@ type (
 		// 静态 lint（见 jsplugin.DryRun）。不落库、不发布 generation、不发真实 HTTP，
 		// 所有失败都体现在检查项里，接口本身始终成功返回。
 		JSPluginDryRun(_ context.Context, req *v1.JSPluginDryRunReq) (*v1.JSPluginDryRunRes, error)
-		// JSPluginTemplate 模板下载：内置 golden 参考实现源码（作者抄它起步，删掉不需要的钩子）。
+		// JSPluginTemplate 模板下载：golden 参考实现模板源码（作者抄它起步，删掉不需要的钩子；非内置实例）。
 		JSPluginTemplate(_ context.Context, _ *v1.JSPluginTemplateReq) (*v1.JSPluginTemplateRes, error)
 		JSPluginActivate(ctx context.Context, req *v1.JSPluginActivateReq) (*v1.JSPluginActivateRes, error)
 		JSPluginEnable(ctx context.Context, req *v1.JSPluginEnableReq) (*v1.JSPluginEnableRes, error)

@@ -12,17 +12,27 @@ import (
 //   - 同 key+version 的 upload 行不被触碰（上传优先）
 //   - builtin 行源码变化（版本升级）时刷新，enabled/active 状态保留在原行
 //   - 新版本号以 inactive 入库，由管理员显式激活（升级不改变运行行为）
+//   - 历次升级遗留的过期内置版本行（不在二进制内）由管理员在版本历史中选择性
+//     手动删除（List 标记 stale、DeleteVersion 放行），不做自动清理
+//   - 二进制内已下线的内置 key（如 golden 已改为纯模板），启动时清理其 builtin 行
 //
-// 内置行不可删除；删除激活中的上传版本后，同 key 回落激活最新内置版本。
+// 内置行中仅过期内置版本可在管理端删除（当前二进制版本删了会在下次 seed 复活）；
+// 删除激活中的上传版本后，同 key 回落激活最新内置版本。
 //
 //go:embed all:builtin
 var builtinFS embed.FS
+
+// 作者起步模板（golden 参考实现源码）：不随启动 seed 为插件实例，仅供管理端
+// 模板下载端点与 AI 助手技能注入（internal/logic/aiassistant/skills）引用。
+//
+//go:embed template/plugin.js
+var templateFS embed.FS
 
 // TemplateSource 返回插件作者起步模板：golden 参考实现的源码全文（管理端
 // 模板下载端点用，作者抄它起步、删掉不需要的钩子）。embed 静态资源读取失败
 // 属编译期问题（该文件随二进制分发），此时返回空串由调用方按空源码呈现。
 func TemplateSource() string {
-	data, err := fs.ReadFile(builtinFS, "builtin/golden/plugin.js")
+	data, err := fs.ReadFile(templateFS, "template/plugin.js")
 	if err != nil {
 		return ""
 	}

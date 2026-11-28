@@ -20,10 +20,10 @@ import (
 //   - lint-module-state   静态：模块作用域可变状态（实例跨租户复用，命中 = warn）
 //   - hooks               钩子齐备性（必选钩子缺失 = fail；渲染钩子缺失 = warn 走默认透传）
 //   - standard-endpoint   标准视频端点（声明缺钩子 = fail；声明则以通用任务体样例执行；疑似视频插件未声明 = warn）
-//   - conflict            与当前在服务插件的跨插件模型冲突预检（复用激活时的规则）
 //   - sample-decode       样例请求执行 decode 钩子并校验返回契约
 //   - sample-build        样例执行 buildSubmitRequest 并校验返回契约
-//   - sample-estimate     样例执行 estimateUsage，校验用量键 ∈ usageSchema
+//   - sample-validate     样例执行 validateRequest（可选钩子）并校验返回契约
+//   - sample-estimate     样例执行 estimateUsage，校验用量键 ∈ 宿主固定词汇
 //   - sample-parse-submit 构造受理响应执行 parseSubmitResponse 并校验返回契约
 //   - sample-query        轮询链 buildQueryRequest + parseQueryResponse（构造处理中响应）
 //   - sample-render       构造进行中任务执行渲染钩子
@@ -112,7 +112,6 @@ func DryRun(source string) *DryRunReport {
 			Status: dryRunFail,
 			Detail: "临时实例创建失败（顶层执行崩溃/超时）：" + instErr.Error(),
 		})
-		report.Checks = append(report.Checks, dryRunConflict(m))
 		return report
 	}
 	defer inst.Close()
@@ -122,25 +121,46 @@ func DryRun(source string) *DryRunReport {
 	has := inst.HasHook
 
 	report.Checks = append(report.Checks, dryRunHookCompleteness(m, has))
-	report.Checks = append(report.Checks, dryRunStandardEndpoint(ctx, pool, m, has))
-	report.Checks = append(report.Checks, dryRunConflict(m))
+	stdChk, stdDecoded := dryRunStandardEndpoint(ctx, pool, m, has)
+	report.Checks = append(report.Checks, stdChk)
 
-	// 样例执行：缺钩子的环节直接跳过（hooks 项已 fail，不重复报）
+	// 样例执行：缺钩子的环节直接跳过（hooks 项已 fail，不重复报）。
+	// 解码起点二选一：原生路由 decode（有 submit/dynamic 路由），或标准端点
+	// standardVideos 解码（纯标准端点插件——routes 省略时的唯一提交入口；解码
+	// 样例已在 standard-endpoint 项执行，此处复用结果驱动下游环节）。
 	var taskData json.RawMessage
-	if route, ok := dryRunFirstDecodeRoute(m); ok {
+	route, hasDecodeRoute := dryRunFirstDecodeRoute(m)
+	var decoded *contract.DecodeResult
+	if hasDecodeRoute {
 		decodeHook := route.ResolveDecode()
-		var decoded *contract.DecodeResult
 		if has(decodeHook) {
 			var chk DryRunCheck
 			chk, decoded = dryRunSampleDecode(ctx, pool, route, m, decodeHook)
 			report.Checks = append(report.Checks, chk)
 		}
+	} else if stdDecoded != nil {
+		route = contract.Route{Method: "POST", Path: "/v1/videos", Type: contract.RouteTypeSubmit}
+		decoded = stdDecoded
+	}
+	if hasDecodeRoute || decoded != nil {
 		// 下游环节的入参：decode 样例通过时用其结果，否则回退最小样例体
 		model, body := m.Models[0], dryRunSampleBody(m.Models[0])
 		if decoded != nil && decoded.Kind == "submit" {
 			model, body = decoded.Model, decoded.RequestBody
 		}
 		_, params := dryRunSamplePath(route)
+		if has(contract.HookNameValidateRequest) {
+			chk, fixed := dryRunSampleValidate(ctx, pool, m, model, body, params)
+			report.Checks = append(report.Checks, chk)
+			if fixed != nil {
+				body = fixed
+				if decoded != nil {
+					d := *decoded
+					d.RequestBody = fixed
+					decoded = &d
+				}
+			}
+		}
 		if has("buildSubmitRequest") {
 			report.Checks = append(report.Checks, dryRunSampleBuild(ctx, pool, m, decoded))
 		}
@@ -172,6 +192,9 @@ func DryRun(source string) *DryRunReport {
 //     buildSubmitRequest + parseSubmitResponse 必选——分发器与任务桥直接 Pool.Call，缺失即 502
 //   - 存在任一 submit/dynamic 路由（能产生任务）：轮询链 buildQueryRequest +
 //     parseQueryResponse 必选——任务终态只能靠轮询抵达（immediate 同步终态是少数形态）
+//   - 纯标准端点插件（无 submit/dynamic 路由但声明 standardVideos）：标准端点提交
+//     走同一提交链/轮询链，必选钩子不豁免；standardVideos 解码钩子由
+//     standard-endpoint 检查项把关（声明未导出即 fail）
 //   - render 钩子（别名/缺省 renderSubmit/renderTask/renderTasks）可选：未导出则
 //     响应走默认透传（见 jsdispatcher），缺失只提示
 func dryRunHookCompleteness(m *contract.Manifest, has func(string) bool) DryRunCheck {
@@ -220,7 +243,12 @@ func dryRunHookCompleteness(m *contract.Manifest, has func(string) bool) DryRunC
 			opt(route.ResolveRender(contract.HookNameRenderTask), route.Method+" "+route.Path)
 		}
 	}
-	if hasSubmitRoute {
+	// 纯标准端点插件（routes 省略）：标准端点提交同样要走提交链，必选钩子不豁免
+	if !hasSubmitRoute && m.StandardVideos != "" {
+		req("buildSubmitRequest", "标准端点提交链")
+		req("parseSubmitResponse", "标准端点提交链")
+	}
+	if hasSubmitRoute || m.StandardVideos != "" {
 		req("buildQueryRequest", "轮询链")
 		req("parseQueryResponse", "轮询链")
 	}
@@ -253,49 +281,25 @@ func dryRunHookCompleteness(m *contract.Manifest, has func(string) bool) DryRunC
 // dryRunStandardEndpoint 标准视频端点能力检查（视频插件的常见缺陷：未声明
 // meta.standardVideos，模型无法经 /v1/videos 与 /v1/video/generations 提交）：
 //   - 声明 standardVideos 但钩子未导出 → fail：标准端点提交时调用必失败（声明即承诺）
-//   - 未声明且 usageSchema 含 unit=second 字段 → warn：按秒计费疑似视频插件缺标准
-//     端点声明（音乐等按秒计费的非视频插件可忽略本提示）
+//   - 未声明且 referenceRoles 含视频类角色 → warn：疑似视频插件缺标准端点声明
 //   - 其余 → pass
-func dryRunStandardEndpoint(ctx context.Context, pool *PluginPool, m *contract.Manifest, has func(string) bool) DryRunCheck {
+//
+// 第二返回值为解码样例结果（通过时非 nil）——纯标准端点插件的样例链以此为起点。
+func dryRunStandardEndpoint(ctx context.Context, pool *PluginPool, m *contract.Manifest, has func(string) bool) (DryRunCheck, *contract.DecodeResult) {
 	if m.StandardVideos != "" {
 		if !has(m.StandardVideos) {
 			return DryRunCheck{Name: "standard-endpoint", Status: dryRunFail,
-				Detail: fmt.Sprintf("meta.standardVideos 声明为 %q 但插件未导出该钩子（标准端点提交必失败）", m.StandardVideos)}
+				Detail: fmt.Sprintf("meta.standardVideos 声明为 %q 但插件未导出该钩子（标准端点提交必失败）", m.StandardVideos)}, nil
 		}
 		// 声明且导出：以通用任务体样例实际执行解码钩子
 		return dryRunSampleStandard(ctx, pool, m)
 	}
-	for _, f := range m.UsageSchema {
-		if f.Unit == "second" {
-			return DryRunCheck{Name: "standard-endpoint", Status: dryRunWarn,
-				Detail: fmt.Sprintf("未声明 meta.standardVideos：若为视频生成插件，模型将无法经 /v1/videos 与 /v1/video/generations 提交（仅 /pjs 原生路由）；usageSchema.%s 按秒计费，疑似视频插件，请确认", f.Key)}
-		}
+	if len(m.ReferenceRoles) > 0 {
+		return DryRunCheck{Name: "standard-endpoint", Status: dryRunWarn,
+			Detail: "声明了 referenceRoles 但未声明 meta.standardVideos：referenceRoles 只对标准视频端点生效，模型将无法经 /v1/videos 与 /v1/video/generations 提交（仅 /pjs 原生路由），请确认"}, nil
 	}
 	return DryRunCheck{Name: "standard-endpoint", Status: dryRunPass,
-		Detail: "无需标准视频端点支持（未声明 standardVideos 且无按秒计费字段）"}
-}
-
-// ---------------------------------------------------------------------------
-// 跨插件冲突预检
-// ---------------------------------------------------------------------------
-
-// dryRunConflict 与当前 generation 内其他插件比模型名（复用 Activate 事务内的
-// checkManifestConflict 同一规则；路由按 /pjs/{key} 命名空间隔离，不做跨插件预检）。
-// 命中即 fail——激活会被拒绝，提前告知。
-// 只比对在服务插件：禁用插件的冲突由激活时的事务内预检兜底，试运行不读 DB。
-func dryRunConflict(m *contract.Manifest) DryRunCheck {
-	others := 0
-	for _, p := range CurrentGeneration().Plugins() {
-		if p.Key == m.Key {
-			continue // 同 key 换版本是替换语义，不构成自我冲突
-		}
-		others++
-		if err := checkManifestConflict(m.Key, m, p.Key, p.Manifest); err != nil {
-			return DryRunCheck{Name: "conflict", Status: dryRunFail, Detail: "激活将被拒绝：" + err.Error()}
-		}
-	}
-	return DryRunCheck{Name: "conflict", Status: dryRunPass,
-		Detail: fmt.Sprintf("与当前 %d 个在服务插件无路由/模型冲突", others)}
+		Detail: "未声明 standardVideos（仅 /pjs 原生路由入口）"}, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -326,8 +330,8 @@ func dryRunSamplePath(route contract.Route) (string, map[string]string) {
 	return strings.Join(segs, "/"), params
 }
 
-// dryRunSampleBody 构造最小样例请求体：带首个声明模型（decode 返回 submit 时
-// ValidateDecoded 要求 model ∈ meta.models，带上它能命中多数插件的模型回显）。
+// dryRunSampleBody 构造最小样例请求体：带首个声明的上游模型名（无渠道映射时
+// 平台名即上游名，带上它能命中多数插件按型号分支的逻辑）。
 func dryRunSampleBody(model string) json.RawMessage {
 	data, _ := json.Marshal(map[string]any{"model": model})
 	return data
@@ -356,7 +360,7 @@ func dryRunSampleDecode(ctx context.Context, pool *PluginPool, route contract.Ro
 		return DryRunCheck{Name: "sample-decode", Status: dryRunFail,
 			Detail: decodeHook + " 返回不是 JSON 对象：" + SanitizeHookMessage(err.Error())}, nil
 	}
-	decoded, err := contract.ValidateDecoded(raw, m, route.Type == contract.RouteTypeDynamic)
+	decoded, err := contract.ValidateDecoded(raw, route.Type == contract.RouteTypeDynamic)
 	if err != nil {
 		return DryRunCheck{Name: "sample-decode", Status: dryRunFail,
 			Detail: decodeHook + " 返回未通过契约校验：" + SanitizeHookMessage(err.Error())}, nil

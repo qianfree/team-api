@@ -102,7 +102,16 @@ func HandleSyncImageSubmit(r *ghttp.Request, body []byte, rc *relay_handler.Task
 			writeSyncImageError(w, http.StatusBadRequest, relay_common.ErrBillingFormulaEval.Error())
 			return
 		}
-		writeSyncImageError(w, http.StatusInternalServerError, "estimate cost failed: "+err.Error())
+		// 未配价模型 fail-closed：与任务提交管线同文案的请求错误
+		if errors.Is(err, relay_common.ErrModelPricingNotConfigured) {
+			g.Log().Errorf(ctx, "sync_image: model pricing not configured, model=%s, err=%v", modelName, err)
+			writeSyncImageError(w, http.StatusBadRequest, "model pricing not configured: "+modelName)
+			return
+		}
+		// 其余（取价故障、方案未注册等定价异常）是内部错误：完整错误链只进日志，
+		// 不向客户端泄露内部细节
+		g.Log().Errorf(ctx, "sync_image: estimate cost failed, model=%s, err=%v", modelName, err)
+		writeSyncImageError(w, http.StatusInternalServerError, "billing temporarily unavailable")
 		return
 	}
 

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
+	"github.com/shopspring/decimal"
 
 	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/logic/monitor"
@@ -620,6 +621,8 @@ func applyTaskPollResult(
 	dbgSess *common.DebugSession,
 	dbgAttempt *common.DebugAttempt,
 ) {
+	// 非终态且本轮未上报进度：保持上一轮落库值（详见 backfillPollProgress）
+	backfillPollProgress(taskInfo, task)
 	// 状态变化判定 + 调试记录提交（CAS 更新 task.Status 之前，task 行内即上一次轮询值）
 	if pollStateChanged(taskInfo, task) {
 		dbgAttempt.MarkFinal(nil)
@@ -686,26 +689,7 @@ func applyTaskPollResult(
 		usageLogDeferred := false
 		if task.PreDeductAmount.GreaterThan(billing.Zero) && !task.BillingSettled {
 			taskBilling := billing.NewTaskBillingProvider()
-			actualCost := task.PreDeductAmount
-
-			// 优先用上游返回的 ActualCost
-			if taskInfo.ActualCost > 0 {
-				actualCost = billing.NewFromFloat(taskInfo.ActualCost)
-			} else if taskInfo.MaterialUsage != nil {
-				// 素材计费方案：按官方 usage 计量（输入视频时长/图片张数/输出秒数）重算。
-				// 链接素材的时长提交时不可知，此为最终计费依据；模型未配置素材方案时 ok=false 保持预扣
-				if materialCost, ok, mErr := taskBilling.RecalculateByMaterials(ctx, task.TenantID, task.ModelName, pd.BillingContext.Ratios, taskInfo.MaterialUsage, task.CreatedAt); mErr != nil {
-					g.Log().Warningf(ctx, "poll: recalculate by materials task %s: %v", task.PublicTaskID, mErr)
-				} else if ok {
-					actualCost = materialCost
-				}
-			} else if taskInfo.TotalTokens > 0 && pd.BillingContext.Ratios != nil {
-				// 用上游 total_tokens + 保存的 ratios 重算（count 不参与重算乘法，
-				// 快照侧由 collectTaskBillingFacts 按计费模式统一剔除，见其注释）
-				if tokenCost, err := taskBilling.RecalculateByTokens(ctx, task.TenantID, task.ModelName, taskInfo.TotalTokens, pd.BillingContext.Ratios, task.CreatedAt); err == nil && tokenCost.GreaterThan(billing.Zero) {
-					actualCost = tokenCost
-				}
-			}
+			actualCost := resolveSuccessCost(ctx, taskBilling, task, pd.BillingContext.Ratios, taskInfo)
 
 			task.ActualCost = actualCost
 			// 结算前先持久化重算出的实际费用：结算失败、「结算成功但已结算标记落库失败」两个
@@ -794,6 +778,44 @@ func applyTaskPollResult(
 		// 更新审计记录（任务终态与计费解耦，始终立即落）
 		recordTaskCompletionAudit(task, "FAILURE", string(body), respHeaders)
 	}
+}
+
+// taskCostRecalculator resolveSuccessCost 依赖的重算能力（common.TaskBillingProvider 的子集，
+// 便于单测注入桩）。
+type taskCostRecalculator interface {
+	RecalculateByMaterials(ctx context.Context, tenantID int64, modelName string, ratios map[string]any, usage *common.TaskMaterialUsage, billAt time.Time) (decimal.Decimal, bool, error)
+	RecalculateByTokens(ctx context.Context, tenantID int64, modelName string, totalTokens int, ratios map[string]any, billAt time.Time) (decimal.Decimal, error)
+}
+
+// resolveSuccessCost 成功终态的实际费用，按可信度依次取用，都未命中保持预扣额：
+//  1. 上游直接报价（taskInfo.ActualCost；当前适配器均不填）；
+//  2. 素材计量重算——按官方 usage 计量（输入视频时长/图片张数/输出秒数）重算，链接素材的
+//     时长提交时不可知，此为最终计费依据。仅模型配置了计费方案 / 按秒 / 公式时适用（ok=true）；
+//  3. token 重算——用上游 total_tokens + 保存的 ratios 重算（count 不参与重算乘法，快照侧由
+//     collectTaskBillingFacts 按计费模式统一剔除，见其注释）。
+//
+// 第 2、3 步不互斥：素材重算不适用或失败时继续尝试 token 重算。JS 任务插件只要上报了用量
+// 就带 MaterialUsage（哪怕只报 token 计量），此前「有 MaterialUsage 即短路」让 token 计价
+// 模型的 token 重算从未执行，按预扣额成交。
+func resolveSuccessCost(ctx context.Context, recalculator taskCostRecalculator, task *common.AsyncTask, ratios map[string]any, taskInfo *common.TaskInfo) decimal.Decimal {
+	if taskInfo.ActualCost > 0 {
+		return billing.NewFromFloat(taskInfo.ActualCost)
+	}
+	if taskInfo.MaterialUsage != nil {
+		materialCost, ok, err := recalculator.RecalculateByMaterials(ctx, task.TenantID, task.ModelName, ratios, taskInfo.MaterialUsage, task.CreatedAt)
+		switch {
+		case err != nil:
+			g.Log().Warningf(ctx, "poll: recalculate by materials task %s: %v", task.PublicTaskID, err)
+		case ok:
+			return materialCost
+		}
+	}
+	if taskInfo.TotalTokens > 0 && ratios != nil {
+		if tokenCost, err := recalculator.RecalculateByTokens(ctx, task.TenantID, task.ModelName, taskInfo.TotalTokens, ratios, task.CreatedAt); err == nil && tokenCost.GreaterThan(billing.Zero) {
+			return tokenCost
+		}
+	}
+	return task.PreDeductAmount
 }
 
 // FinalizeTaskImmediate 同步即完成任务的立即终态化（jsbridge parseSubmitResponse
@@ -1110,4 +1132,32 @@ func pollDebugLogEnabled(settings json.RawMessage, task *common.AsyncTask) bool 
 // 独立成纯函数以便回归测试；在 CAS 更新 task 之前调用，task 内即上一次轮询持久化的值
 func pollStateChanged(taskInfo *common.TaskInfo, task *common.AsyncTask) bool {
 	return string(taskInfo.Status) != task.Status || taskInfo.Progress != task.Progress
+}
+
+// noReportInProgressProgress 从未上报进度的任务进入 IN_PROGRESS 后的兜底展示进度：
+// 恒 0% 直到终态会被用户误读为任务卡死
+const noReportInProgressProgress = "30%"
+
+// backfillPollProgress 非终态且本轮未上报进度（旧插件/上游无进度信息）时的回填：
+// 上一轮已有非零进度则保持（插件曾上报后停报，不让进度回跳）；从未上报（提交落库
+// 的 "0%" 或历史空值行）在 IN_PROGRESS 期给非零兜底（见常量注释），早期状态保持
+// 0%。空值直落会让查询端点的 progress 字段随轮询消失（提交 0% → 处理中无字段 →
+// 终态 100%）；终态不回填，失败任务保持空进度的既有语义。独立成纯函数以便回归测试
+func backfillPollProgress(taskInfo *common.TaskInfo, task *common.AsyncTask) {
+	if taskInfo.Status.IsTerminal() || taskInfo.Progress != "" {
+		return
+	}
+	if task.Progress != "" && task.Progress != "0%" {
+		taskInfo.Progress = task.Progress
+		return
+	}
+	if taskInfo.Status == common.TaskStatusInProgress {
+		taskInfo.Progress = noReportInProgressProgress
+		return
+	}
+	if task.Progress != "" {
+		taskInfo.Progress = task.Progress
+	} else {
+		taskInfo.Progress = "0%"
+	}
 }

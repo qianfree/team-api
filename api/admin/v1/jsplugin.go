@@ -18,7 +18,8 @@ type JSPluginListReq struct {
 type JSPluginVersionItem struct {
 	ID        int64           `json:"id"`
 	Version   string          `json:"version"`
-	Origin    string          `json:"origin"` // builtin=内置（不可删除）| upload
+	Origin    string          `json:"origin"` // builtin=内置（当前二进制版本不可删除）| upload
+	Stale     bool            `json:"stale"`  // 过期内置版本：不在当前程序二进制内，可手动删除且不会随重启复活
 	Active    bool            `json:"active"`
 	Enabled   bool            `json:"enabled"`
 	Remark    string          `json:"remark"`
@@ -38,20 +39,11 @@ type JSPluginItem struct {
 	ActiveVersion string                `json:"active_version"`
 	Enabled       bool                  `json:"enabled"`
 	InService     bool                  `json:"in_service"`
-	Models        []string              `json:"models"`
+	Models        []string              `json:"models"` // 插件支持的上游模型（meta.models 基线）
 	FetchMode     string                `json:"fetch_mode"`
 	AllowedHosts  []string              `json:"allowed_hosts"`
-	UsageSchema   []JSPluginUsageField  `json:"usage_schema"`
 	Manifest      json.RawMessage       `json:"manifest"`
 	Versions      []JSPluginVersionItem `json:"versions"`
-}
-
-// JSPluginUsageField 计费单位声明（定价公式 u() 速查参考）。
-type JSPluginUsageField struct {
-	Key         string `json:"key"`
-	Type        string `json:"type"` // number（可计费）| enum
-	Unit        string `json:"unit,omitempty"`
-	Description string `json:"description,omitempty"`
 }
 
 type JSPluginListRes struct {
@@ -78,7 +70,7 @@ type JSPluginDryRunReq struct {
 
 // JSPluginDryRunCheck 试运行单项检查结果
 type JSPluginDryRunCheck struct {
-	Name   string `json:"name"`   // compile | hooks | conflict | sample-decode | sample-build | lint-fetch-url
+	Name   string `json:"name"`   // compile | lint-host-api | lint-module-state | hooks | standard-endpoint | sample-decode | sample-validate | sample-build | sample-estimate | sample-parse-submit | sample-query | sample-render
 	Status string `json:"status"` // pass=通过 | warn=提示 | fail=缺陷
 	Detail string `json:"detail"` // 中文说明
 }

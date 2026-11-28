@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -152,6 +153,9 @@ func (e *GojaEngine) Compile(source string) (*CompiledPlugin, error) {
 	metaJSON, err := stringifyValue(probe, metaVal)
 	if err != nil {
 		return nil, gerror.Wrap(err, "meta 序列化失败")
+	}
+	if err := contract.CheckRemovedFields(metaJSON); err != nil {
+		return nil, gerror.Wrap(err, "manifest 校验失败")
 	}
 	var m contract.Manifest
 	if err := json.Unmarshal(metaJSON, &m); err != nil {
@@ -376,13 +380,16 @@ func stringifyValue(rt *goja.Runtime, v goja.Value) (json.RawMessage, error) {
 	return json.RawMessage(s), nil
 }
 
-// sanitizeJSMessage 清理引擎错误前缀，得到可透出的消息。
+// gojaLocationSuffixRe goja 异常消息末尾的短栈位置后缀，形如
+// " at <函数名> (<文件>:<行>:<列>(<pc>))"（函数名可缺省，文件缺省为 <eval>）。
+// 只在消息末尾匹配——此前按首个 " at " 截断，会把插件自己 throw 的
+// "must be at least 5 seconds" 这类文案截掉后半句。
+var gojaLocationSuffixRe = regexp.MustCompile(` at (?:[^\s(]+ \()?[^()\s]+:\d+:\d+\(\d+\)\)?$`)
+
+// sanitizeJSMessage 剥掉引擎异常消息末尾的位置后缀，得到可透出的消息；
+// 插件 throw 的文案原样保留。
 func sanitizeJSMessage(msg string) string {
-	// goja 异常形如 "ReferenceError: xxx at npm (<eval>:1:1)" —— 保留首段
-	if idx := strings.Index(msg, " at "); idx > 0 {
-		msg = msg[:idx]
-	}
-	return msg
+	return gojaLocationSuffixRe.ReplaceAllString(msg, "")
 }
 
 // normalizeHosts 归一白名单：小写、去重复。

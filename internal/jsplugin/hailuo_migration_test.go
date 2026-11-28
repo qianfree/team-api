@@ -23,8 +23,8 @@ func TestMigratedHailuoManifest(t *testing.T) {
 	if m.Key != "hailuo" || len(m.Models) != 13 || len(m.Routes) != 3 {
 		t.Fatalf("manifest 异常: models=%d routes=%d", len(m.Models), len(m.Routes))
 	}
-	if m.UsageFieldByKey("input_video_seconds") == nil {
-		t.Fatalf("usageSchema 异常: %+v", m.UsageSchema)
+	if !m.SupportsUpstreamModel("MiniMax-H3") || !m.SupportsUpstreamModel("MiniMax-Hailuo-2.3") {
+		t.Fatalf("上游模型清单异常: %v", m.Models)
 	}
 }
 
@@ -36,33 +36,25 @@ func TestMigratedHailuoV1Flow(t *testing.T) {
 	t.Cleanup(cleanup)
 	plugin, _ := CurrentGeneration().Plugin("hailuo")
 
-	call := func(hook string, arg any) map[string]json.RawMessage {
-		t.Helper()
-		args, _ := json.Marshal(arg)
-		out, err := plugin.Pool.Call(context.Background(), hook, args)
-		if err != nil {
-			t.Fatalf("钩子 %s 失败: %v", hook, err)
-		}
-		raw, err := contract.ParseJSONObject(out)
-		if err != nil {
-			t.Fatalf("钩子 %s 返回非对象: %v", hook, err)
-		}
-		return raw
-	}
+	call := hookCaller(t, plugin)
 
 	decoded, err := contract.ValidateDecoded(call("createTask", contract.DecodeContext{
 		Path: "/v1/video_generation", Method: "POST",
 		Body: json.RawMessage(`{"model":"MiniMax-Hailuo-2.3","prompt":"ocean","duration":6,"resolution":"768P"}`),
-	}), plugin.Manifest, false)
+	}), false)
 	if err != nil || decoded.Model != "MiniMax-Hailuo-2.3" {
 		t.Fatalf("v1 解码失败: %+v err=%v", decoded, err)
 	}
 
-	facts, err := contract.ValidateUsageFacts(
-		call("estimateUsage", contract.EstimateUsageContext{Body: decoded.RequestBody, Model: decoded.Model}),
-		plugin.Manifest)
-	if err != nil || facts["seconds"] != 6 {
-		t.Fatalf("v1 估算异常: %v err=%v", facts, err)
+	if err := hookCallErr(plugin, "validateRequest", contract.ValidateRequestContext{
+		Body: decoded.RequestBody, Model: decoded.Model, UpstreamModel: "MiniMax-H3",
+	}); err == nil {
+		t.Fatal("/v1 路由映射到 H3 上游应被拒绝")
+	}
+	call("validateRequest", contract.ValidateRequestContext{Body: decoded.RequestBody, Model: decoded.Model, UpstreamModel: "MiniMax-Hailuo-2.3"})
+	est := mustHostUsageObj(t, call("estimateUsage", contract.EstimateUsageContext{Body: decoded.RequestBody, Model: decoded.Model, UpstreamModel: "MiniMax-Hailuo-2.3"}))
+	if v, _ := est.Number(contract.UsageOutputSeconds); v != 6 {
+		t.Fatalf("v1 估算异常: %+v", est)
 	}
 
 	built, err := contract.ValidateBuiltRequest(call("buildSubmitRequest", contract.BuildSubmitContext{
@@ -73,7 +65,7 @@ func TestMigratedHailuoV1Flow(t *testing.T) {
 	}
 
 	sub, err := contract.ValidateSubmitted(call("parseSubmitResponse", contract.ParseSubmitContext{
-		Status: 200, Model: decoded.Model,
+		Status: 200, Model: decoded.Model, Body: decoded.RequestBody,
 		ResponseBody: json.RawMessage(`{"base_resp":{"status_code":0},"task_id":"hl-42","status":"Queueing"}`),
 	}))
 	if err != nil || sub.TaskID != "hl-42" {
@@ -105,33 +97,27 @@ func TestMigratedHailuoH3Flow(t *testing.T) {
 	t.Cleanup(cleanup)
 	plugin, _ := CurrentGeneration().Plugin("hailuo")
 
-	call := func(hook string, arg any) map[string]json.RawMessage {
-		t.Helper()
-		args, _ := json.Marshal(arg)
-		out, err := plugin.Pool.Call(context.Background(), hook, args)
-		if err != nil {
-			t.Fatalf("钩子 %s 失败: %v", hook, err)
-		}
-		raw, err := contract.ParseJSONObject(out)
-		if err != nil {
-			t.Fatalf("钩子 %s 返回非对象: %v", hook, err)
-		}
-		return raw
-	}
+	call := hookCaller(t, plugin)
 
 	decoded, err := contract.ValidateDecoded(call("createH3Task", contract.DecodeContext{
 		Path: "/v2/video_generation", Method: "POST",
 		Body: json.RawMessage(`{"model":"MiniMax-H3","content":[{"type":"text","text":"dance"},{"type":"image_url","url":"https://img.example.com/a.png"}],"resolution":"768P","duration":5}`),
-	}), plugin.Manifest, false)
+	}), false)
 	if err != nil || decoded.Model != "MiniMax-H3" {
 		t.Fatalf("H3 解码失败: %+v err=%v", decoded, err)
 	}
 
-	facts, err := contract.ValidateUsageFacts(
-		call("estimateUsage", contract.EstimateUsageContext{Body: decoded.RequestBody, Model: decoded.Model}),
-		plugin.Manifest)
-	if err != nil || facts["seconds"] != 5 || facts["input_images"] != 1 {
-		t.Fatalf("H3 估算异常: %v err=%v", facts, err)
+	if err := hookCallErr(plugin, "validateRequest", contract.ValidateRequestContext{
+		Body: decoded.RequestBody, Model: decoded.Model, UpstreamModel: "MiniMax-Hailuo-2.3",
+	}); err == nil {
+		t.Fatal("/v2 路由映射到非 H3 上游应被拒绝")
+	}
+	est := mustHostUsageObj(t, call("estimateUsage", contract.EstimateUsageContext{Body: decoded.RequestBody, Model: decoded.Model, UpstreamModel: "MiniMax-H3"}))
+	if v, _ := est.Number(contract.UsageOutputSeconds); v != 5 {
+		t.Fatalf("H3 估算异常: %+v", est)
+	}
+	if v, _ := est.Number(contract.UsageInputImageCount); v != 1 {
+		t.Fatalf("H3 估算图片数异常: %+v", est)
 	}
 
 	built, err := contract.ValidateBuiltRequest(call("buildSubmitRequest", contract.BuildSubmitContext{
@@ -142,7 +128,7 @@ func TestMigratedHailuoH3Flow(t *testing.T) {
 	}
 
 	sub, err := contract.ValidateSubmitted(call("parseSubmitResponse", contract.ParseSubmitContext{
-		Status: 200, Model: decoded.Model,
+		Status: 200, Model: decoded.Model, Body: decoded.RequestBody,
 		ResponseBody: json.RawMessage(`{"task_id":"h3-77","status":"queued"}`),
 	}))
 	if err != nil || sub.TaskID != "h3-77" {
@@ -168,10 +154,13 @@ func TestMigratedHailuoH3Flow(t *testing.T) {
 	if !item.Done || len(item.Artifacts) != 1 {
 		t.Fatalf("H3 终态 item 异常: %+v", item)
 	}
-	termFacts, err := contract.ValidateUsageFacts(mustRawMap(t, item.Usage), plugin.Manifest)
-	// 官方 VideoTaskUsage 字段名 input_image_count / input_seconds → 插件事实键 input_images / input_video_seconds
-	if err != nil || termFacts["seconds"] != 5 || termFacts["input_images"] != 1 || termFacts["input_video_seconds"] != 3 {
-		t.Fatalf("H3 终态用量异常: %v err=%v", termFacts, err)
+	// 官方 VideoTaskUsage 字段名 input_image_count / input_seconds → 宿主词汇 input_image_count / input_video_seconds
+	term := mustHostUsage(t, item.Usage)
+	out, _ := term.Number(contract.UsageOutputSeconds)
+	imgs, _ := term.Number(contract.UsageInputImageCount)
+	vids, _ := term.Number(contract.UsageInputVideoSeconds)
+	if out != 5 || imgs != 1 || vids != 3 || term.Resolution != "768P" {
+		t.Fatalf("H3 终态用量异常: %+v", term)
 	}
 	var td map[string]any
 	_ = json.Unmarshal(item.TaskData, &td)
@@ -265,27 +254,27 @@ func TestMigratedHailuoStandardVideos(t *testing.T) {
 	t.Cleanup(cleanup)
 	plugin, _ := CurrentGeneration().Plugin("hailuo")
 
-	call := func(hook string, arg any) map[string]json.RawMessage {
+	call := hookCaller(t, plugin)
+
+	finalize := func(platform, upstream, body string) json.RawMessage {
 		t.Helper()
-		args, _ := json.Marshal(arg)
-		out, err := plugin.Pool.Call(context.Background(), hook, args)
+		decoded, err := contract.ValidateDecoded(call("decodeVideos", contract.StandardEntryContext{
+			Surface: contract.SurfaceOpenAIVideos, Path: "/v1/videos", Model: platform, Body: json.RawMessage(body),
+		}), false)
 		if err != nil {
-			t.Fatalf("钩子 %s 失败: %v", hook, err)
+			t.Fatalf("标准解码失败: %v", err)
 		}
-		raw, err := contract.ParseJSONObject(out)
-		if err != nil {
-			t.Fatalf("钩子 %s 返回非对象: %v", hook, err)
+		res, err := contract.ValidateValidatedRequest(call("validateRequest", contract.ValidateRequestContext{
+			Body: decoded.RequestBody, Model: decoded.Model, UpstreamModel: upstream,
+		}))
+		if err != nil || len(res.RequestBody) == 0 {
+			t.Fatalf("validateRequest 应定稿请求体: %+v err=%v", res, err)
 		}
-		return raw
+		return res.RequestBody
 	}
 
-	decoded, err := contract.ValidateDecoded(call("decodeVideos", contract.StandardEntryContext{
-		Surface: contract.SurfaceOpenAIVideos, Path: "/v1/videos", Model: "MiniMax-Hailuo-2.3",
-		Body: json.RawMessage(`{"model":"MiniMax-Hailuo-2.3","prompt":"sea","seconds":6,"metadata":{"duration":6,"size":"768P","image":"https://img.example.com/a.png"}}`),
-	}), plugin.Manifest, false)
-	if err != nil {
-		t.Fatalf("v1 标准解码失败: %v", err)
-	}
+	v1Body := finalize("video-std", "MiniMax-Hailuo-2.3",
+		`{"model":"video-std","prompt":"sea","seconds":6,"metadata":{"duration":6,"size":"768P","image":"https://img.example.com/a.png"}}`)
 	var v1 struct {
 		VendorBody struct {
 			Prompt          string `json:"prompt"`
@@ -294,19 +283,14 @@ func TestMigratedHailuoStandardVideos(t *testing.T) {
 			FirstFrameImage string `json:"first_frame_image"`
 		} `json:"vendorBody"`
 	}
-	_ = json.Unmarshal(decoded.RequestBody, &v1)
+	_ = json.Unmarshal(v1Body, &v1)
 	if v1.VendorBody.Prompt != "sea" || v1.VendorBody.Resolution != "768P" ||
 		v1.VendorBody.Duration != 6 || v1.VendorBody.FirstFrameImage == "" {
-		t.Fatalf("v1 vendorBody 映射异常: %s", decoded.RequestBody)
+		t.Fatalf("v1 vendorBody 映射异常: %s", v1Body)
 	}
 
-	decodedH3, err := contract.ValidateDecoded(call("decodeVideos", contract.StandardEntryContext{
-		Surface: contract.SurfaceVideoGenerations, Path: "/v1/video/generations", Model: "MiniMax-H3",
-		Body: json.RawMessage(`{"model":"MiniMax-H3","prompt":"dance","seconds":5,"metadata":{"duration":5,"ratio":"16:9","image":"https://img.example.com/b.png"}}`),
-	}), plugin.Manifest, false)
-	if err != nil {
-		t.Fatalf("H3 标准解码失败: %v", err)
-	}
+	h3Body := finalize("video-std", "MiniMax-H3",
+		`{"model":"video-std","prompt":"dance","seconds":5,"metadata":{"duration":5,"ratio":"16:9","image":"https://img.example.com/b.png"}}`)
 	var h3 struct {
 		VendorBody struct {
 			Content []struct {
@@ -321,11 +305,11 @@ func TestMigratedHailuoStandardVideos(t *testing.T) {
 			Ratio      string `json:"ratio"`
 		} `json:"vendorBody"`
 	}
-	_ = json.Unmarshal(decodedH3.RequestBody, &h3)
+	_ = json.Unmarshal(h3Body, &h3)
 	if len(h3.VendorBody.Content) != 2 || h3.VendorBody.Content[0].Type != "text" ||
 		h3.VendorBody.Content[1].ImageURL == nil || h3.VendorBody.Content[1].Role != "first_frame" ||
 		h3.VendorBody.Resolution != "768P" || h3.VendorBody.Duration != 5 || h3.VendorBody.Ratio != "16:9" {
-		t.Fatalf("H3 vendorBody 映射异常: %s", decodedH3.RequestBody)
+		t.Fatalf("H3 vendorBody 映射异常: %s", h3Body)
 	}
 }
 
@@ -353,11 +337,45 @@ func TestMigratedHailuoStandardVideosReferences(t *testing.T) {
 		if err != nil {
 			return "", nil, err
 		}
-		decoded, err := contract.ValidateDecoded(raw, plugin.Manifest, false)
+		decoded, err := contract.ValidateDecoded(raw, false)
 		if err != nil {
 			return "", nil, err
 		}
-		return decoded.Model, decoded.RequestBody, nil
+		// 上游型号 = 请求模型名（未映射渠道）：validateRequest 按型号定稿
+		vout, err := plugin.Pool.Call(context.Background(), "validateRequest", mustJSON(t, contract.ValidateRequestContext{
+			Body: decoded.RequestBody, Model: decoded.Model, UpstreamModel: model,
+		}))
+		if err != nil {
+			return "", nil, err
+		}
+		vraw, err := contract.ParseJSONObject(vout)
+		if err != nil {
+			return "", nil, err
+		}
+		res, err := contract.ValidateValidatedRequest(vraw)
+		if err != nil {
+			return "", nil, err
+		}
+		// 上游请求体的 model 由 buildSubmitRequest 按上游名写入
+		built, err := plugin.Pool.Call(context.Background(), "buildSubmitRequest", mustJSON(t, contract.BuildSubmitContext{
+			Body: res.RequestBody, Model: decoded.Model, UpstreamModel: model,
+		}))
+		if err != nil {
+			return "", nil, err
+		}
+		braw, _ := contract.ParseJSONObject(built)
+		var sent struct {
+			Body json.RawMessage `json:"body"`
+		}
+		b, _ := json.Marshal(braw)
+		_ = json.Unmarshal(b, &sent)
+		var merged map[string]any
+		_ = json.Unmarshal(res.RequestBody, &merged)
+		var sentBody map[string]any
+		_ = json.Unmarshal(sent.Body, &sentBody)
+		merged["model"] = sentBody["model"]
+		out2, _ := json.Marshal(merged)
+		return decoded.Model, out2, nil
 	}
 	type vendorShape struct {
 		Model      string `json:"model"`
@@ -448,10 +466,7 @@ func TestMigratedHailuoStandardVideosReferences(t *testing.T) {
 		}
 	}
 	// Max 时长下限 5 秒（H3 为 4）
-	if _, err := plugin.Pool.Call(context.Background(), "decodeVideos", mustJSON(t, contract.StandardEntryContext{
-		Surface: contract.SurfaceOpenAIVideos, Path: "/v1/videos", Model: "MiniMax-H3-Max",
-		Body: json.RawMessage(`{"model":"MiniMax-H3-Max","prompt":"x","seconds":"4"}`),
-	})); err == nil {
+	if _, _, err := decode("MiniMax-H3-Max", `,"seconds":"4"`); err == nil {
 		t.Error("H3-Max 4 秒应拒绝")
 	}
 	// Lite 显式比例后通过

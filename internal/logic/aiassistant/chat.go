@@ -30,23 +30,36 @@ func SanitizeAndBuild(cfg *Config, client []ChatMessage, skillKeys []string) ([]
 
 	history := make([]ChatMessage, 0, len(client))
 	for _, m := range client {
-		if m.Role != "user" && m.Role != "assistant" {
-			continue // system 等角色一律丢弃
+		switch m.Role {
+		case "user", "assistant":
+			if m.Content == "" && len(m.ToolCalls) == 0 {
+				continue // 空消息（如被中断的生成）不参与
+			}
+			history = append(history, m)
+		case "tool":
+			// 工具结果消息：只能由本服务端驱动的 agent loop 状态机构造（前端状态机
+			// 重建历史）。伪造工具结果只会污染调用方自己的会话质量，不触达平台数据；
+			// 此处做形态校验与长度限制即可
+			if m.ToolCallID == "" || m.Content == "" {
+				continue
+			}
+			history = append(history, m)
+		default:
+			// system 等其他角色一律丢弃（系统提示词只能来自服务端配置）
 		}
-		if m.Content == "" {
-			continue // 空消息（如被中断的生成）不参与
-		}
-		history = append(history, m)
 	}
 	if len(history) == 0 {
 		return nil, gerror.New("没有可用的对话消息")
 	}
-	if history[len(history)-1].Role != "user" {
+	if last := history[len(history)-1]; last.Role != "user" && last.Role != "tool" {
 		return nil, gerror.New("最后一条消息必须是用户消息")
 	}
 	for _, m := range history {
 		if len(m.Content) > MaxMessageBytes {
 			return nil, gerror.Newf("单条消息过长（上限 %d KB）", MaxMessageBytes>>10)
+		}
+		if len(m.ToolCallID) > 128 {
+			return nil, gerror.New("工具调用 ID 过长")
 		}
 	}
 	if len(history) > cfg.HistoryLimit {

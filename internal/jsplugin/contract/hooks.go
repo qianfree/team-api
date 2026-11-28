@@ -2,8 +2,9 @@ package contract
 
 import (
 	"encoding/json"
-	"fmt"
+	"math"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/gogf/gf/v2/errors/gerror"
@@ -28,7 +29,7 @@ type DecodeContext struct {
 	Method  string            `json:"method"`            // HTTP 方法
 	Params  map[string]string `json:"params,omitempty"`  // 路径参数（:action 等）
 	Body    json.RawMessage   `json:"body,omitempty"`    // 客户端请求体（JSON 原文；multipart 时为字段合并对象）
-	Headers map[string]string `json:"headers,omitempty"` // 客户端请求头（Authorization 已剔除）
+	Headers map[string]string `json:"headers,omitempty"` // 客户端请求头（首值；Authorization / Cookie 已剔除）
 	// Files multipart 上传的文件引用（FileReference）：ref 为请求级不透明句柄，
 	// 字节永不进 JS——插件在 buildSubmitRequest 的 body 里以 {__fileRef, encoding,
 	// maxBytes?} 占位符引用，宿主发送前内联编码。同名字段多文件时 ref 带 #index。
@@ -144,14 +145,14 @@ type RenderTask struct {
 // 分发器改走批量查询渲染，不进提交流。
 type DecodeResult struct {
 	Kind        string          `json:"kind"`        // submit | query
-	Model       string          `json:"model"`       // submit：声明于 meta.models 的平台模型名
+	Model       string          `json:"model"`       // submit：平台模型名（客户端请求名原样回显；不校验 meta.models——它是上游模型清单）
 	RequestBody json.RawMessage `json:"requestBody"` // submit：归一后的请求体（喂给 buildSubmitRequest）
 	TaskIDs     []string        `json:"taskIds"`     // query：待查公开任务 ID 列表（dynamic 路由）
 }
 
 // ValidateDecoded 校验 decodeRequest 返回。dynamicRoute 标记当前路由类型为 dynamic
 // （kind=query 仅此类型允许）。
-func ValidateDecoded(raw map[string]json.RawMessage, m *Manifest, dynamicRoute bool) (*DecodeResult, error) {
+func ValidateDecoded(raw map[string]json.RawMessage, dynamicRoute bool) (*DecodeResult, error) {
 	if err := rejectUnknownFields(raw, "kind", "model", "requestBody", "taskIds"); err != nil {
 		return nil, err
 	}
@@ -161,8 +162,8 @@ func ValidateDecoded(raw map[string]json.RawMessage, m *Manifest, dynamicRoute b
 	}
 	switch r.Kind {
 	case "submit":
-		if !m.HasModel(r.Model) {
-			return nil, gerror.Newf("model %q 未在 meta.models 中声明", r.Model)
+		if strings.TrimSpace(r.Model) == "" {
+			return nil, gerror.New("model 不能为空（kind=submit 必须给出平台模型名）")
 		}
 		if len(r.RequestBody) == 0 {
 			r.RequestBody = json.RawMessage("{}")
@@ -304,11 +305,14 @@ type ArtifactDecl struct {
 type QueryItem struct {
 	TaskID    string          `json:"taskId"`              // 对应 BuildQueryContext.Tasks 的回带
 	Done      bool            `json:"done"`                // 终态判定
+	Progress  json.RawMessage `json:"progress,omitempty"`  // 非终态可选：进度（number 0~100 或 "42%"），校验后读 ProgressPct
 	TaskData  json.RawMessage `json:"taskData,omitempty"`  // 最新上游快照（每轮整体覆盖）
 	State     json.RawMessage `json:"state,omitempty"`     // 省略=保持
-	Usage     json.RawMessage `json:"usage,omitempty"`     // 终态用量事实（键 ∈ usageSchema）
+	Usage     json.RawMessage `json:"usage,omitempty"`     // 终态用量（键 ∈ 宿主固定用量词汇 HostUsageKeys）
 	Artifacts []ArtifactDecl  `json:"artifacts,omitempty"` // 终态产物声明
 	Error     *TaskHookError  `json:"error,omitempty"`     // 任务级失败；done=true 且有 error → FAILURE
+	// ProgressPct progress 归一化结果（"42%" 形态；未上报为空）。落库/渲染读它，不读原始 Progress
+	ProgressPct string `json:"-"`
 }
 
 // QueryResult parseQueryResponse 返回。
@@ -346,6 +350,13 @@ func ValidateQueried(raw map[string]json.RawMessage, want []QueryTaskRef) (*Quer
 		if len(item.State) > MaxPassthroughBytes {
 			return nil, gerror.Newf("items[%d].state 超过 %d 字节上限", i, MaxPassthroughBytes)
 		}
+		if len(item.Progress) > 0 {
+			pct, err := normalizeProgress(item.Progress)
+			if err != nil {
+				return nil, gerror.Wrapf(err, "items[%d].progress", i)
+			}
+			item.ProgressPct = pct
+		}
 		if item.Error != nil && strings.TrimSpace(item.Error.Message) == "" {
 			item.Error.Message = "unknown task error"
 		}
@@ -361,6 +372,33 @@ func ValidateQueried(raw map[string]json.RawMessage, want []QueryTaskRef) (*Quer
 // artifactKeyPattern 产物 key 形态：字母数字开头，允许连字符/下划线（对齐 DB 列宽 128；
 // 常见取值形如 "audio-0"、"cover-1"、"video"）。
 var artifactKeyPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$`)
+
+// normalizeProgress 校验并归一化插件上报的进度：接受 number 0~100 或 "42%"/"42"
+// 字符串，输出宿主统一的 "42%" 形态。非法值按契约错误拒绝（干跑/测试期即暴露，
+// 不让坏值静默流进轮询链路）。
+func normalizeProgress(raw json.RawMessage) (string, error) {
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return "", gerror.Newf("须为 number 0~100 或百分比字符串: %s", raw)
+	}
+	var n float64
+	switch t := v.(type) {
+	case float64:
+		n = t
+	case string:
+		f, err := strconv.ParseFloat(strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(t), "%")), 64)
+		if err != nil {
+			return "", gerror.Newf("%q 不是有效进度", t)
+		}
+		n = f
+	default:
+		return "", gerror.Newf("须为 number 0~100 或百分比字符串: %s", raw)
+	}
+	if n < 0 || n > 100 {
+		return "", gerror.Newf("%v 超出 0~100 范围", n)
+	}
+	return strconv.Itoa(int(math.Round(n))) + "%", nil
+}
 
 // validate 校验单条产物声明。
 func (a *ArtifactDecl) validate() error {
@@ -388,56 +426,52 @@ func (a *ArtifactDecl) validate() error {
 
 // EstimateUsageContext estimateUsage 入参。
 type EstimateUsageContext struct {
-	Body   json.RawMessage   `json:"body"`  // 归一后的请求体
-	Model  string            `json:"model"` // 平台标准模型名
-	Params map[string]string `json:"params,omitempty"`
+	Body          json.RawMessage   `json:"body"`                    // 归一后的请求体（validateRequest 修正后）
+	Model         string            `json:"model"`                   // 平台模型名
+	UpstreamModel string            `json:"upstreamModel,omitempty"` // 渠道映射后的上游模型名
+	Params        map[string]string `json:"params,omitempty"`
 }
 
-// UsageFacts 用量事实：键必须 ∈ usageSchema 声明。number 型进计费（u() 通道，
-// unit=second/count 额外映射为时长/张数信号），enum 型仅随快照记录。
-type UsageFacts map[string]any
+// ---------------------------------------------------------------------------
+// validateRequest（可选）：选定渠道后、预扣前按上游模型校验/修正请求
+// ---------------------------------------------------------------------------
 
-// ValidateUsageFacts 校验用量事实：键已声明、number 型取值可转 float、非负。
-// 返回过滤后的数值事实（enum 值剔除）。
-func ValidateUsageFacts(raw map[string]json.RawMessage, m *Manifest) (map[string]float64, error) {
-	out := make(map[string]float64, len(raw))
-	for key, valueJSON := range raw {
-		field := m.UsageFieldByKey(key)
-		if field == nil {
-			return nil, gerror.Newf("usage.%s 未在 usageSchema 中声明", key)
-		}
-		if field.Type != "number" {
-			continue // enum/boolean 值合法但不计费（信息性）
-		}
-		var v any
-		if err := json.Unmarshal(valueJSON, &v); err != nil {
-			return nil, gerror.Newf("usage.%s 不是合法 JSON 值", key)
-		}
-		num, ok := toFloat(v)
-		if !ok {
-			return nil, gerror.Newf("usage.%s 不是数值（number 型事实必须可转数字）", key)
-		}
-		if num < 0 {
-			return nil, gerror.Newf("usage.%s 为负数", key)
-		}
-		out[key] = num
-	}
-	return out, nil
+// HookNameValidateRequest 可选的上游模型级请求校验钩子名。
+const HookNameValidateRequest = "validateRequest"
+
+// ValidateRequestContext validateRequest 入参。decode 阶段只知道平台模型名，
+// 本钩子在渠道选定后调用，带上游模型名——按上游型号的参数约束（时长/分辨率/
+// 素材数量等）在此校验；抛错 = 请求不可接受（400，未预扣）。
+type ValidateRequestContext struct {
+	Body           json.RawMessage   `json:"body"` // 归一后的请求体（decode 返回的 requestBody）
+	Params         map[string]string `json:"params,omitempty"`
+	Model          string            `json:"model"`         // 平台模型名
+	UpstreamModel  string            `json:"upstreamModel"` // 渠道映射后的上游模型名（∈ 插件有效 models）
+	ChannelBaseURL string            `json:"channelBaseUrl,omitempty"`
 }
 
-func toFloat(v any) (float64, bool) {
-	switch n := v.(type) {
-	case float64:
-		return n, true
-	case string:
-		var f float64
-		if _, err := fmt.Sscanf(n, "%g", &f); err != nil {
-			return 0, false
-		}
-		return f, true
-	default:
-		return 0, false
+// ValidateRequestResult validateRequest 返回：requestBody 非空时替换归一请求体
+// （下游 estimateUsage/buildSubmitRequest/parseSubmitResponse 看到修正后的值）。
+type ValidateRequestResult struct {
+	RequestBody json.RawMessage `json:"requestBody,omitempty"`
+}
+
+// ValidateValidatedRequest 校验 validateRequest 返回（空对象/undefined 合法 = 原样放行）。
+func ValidateValidatedRequest(raw map[string]json.RawMessage) (*ValidateRequestResult, error) {
+	if err := rejectUnknownFields(raw, "requestBody"); err != nil {
+		return nil, err
 	}
+	var r ValidateRequestResult
+	if err := strictUnmarshal(raw, &r); err != nil {
+		return nil, err
+	}
+	if string(r.RequestBody) == "null" {
+		r.RequestBody = nil
+	}
+	if len(r.RequestBody) > MaxRequestPassthroughBytes {
+		return nil, gerror.Newf("requestBody 超过 %d 字节上限", MaxRequestPassthroughBytes)
+	}
+	return &r, nil
 }
 
 // RenderResult renderSubmit / renderTask 返回。

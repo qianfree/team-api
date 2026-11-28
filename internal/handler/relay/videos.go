@@ -111,7 +111,7 @@ func HandleVideoCreate(r *ghttp.Request) {
 	}
 
 	rc.ForwardingTrace = buildTaskForwardingTrace(r.URL.Path, taskBody, channelMeta, capture.StatusCode())
-	go recordTaskSubmitAudit(r, rc, capture, taskBody)
+	go recordTaskSubmitAudit(buildTaskSubmitAudit(r, rc, capture, taskBody))
 }
 
 // HandleVideoRetrieve 处理 GET /v1/videos/{video_id}（查询视频任务）

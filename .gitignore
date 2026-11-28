@@ -60,3 +60,6 @@ docs/promo/
 # AI生成文档
 docs/prototype/
 docs/prototypes/
+
+# 本地降级存储（LocalStorageProvider 默认 ./data/files，未配 OSS 时产物/导出落此）
+data/

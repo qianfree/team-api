@@ -195,6 +195,9 @@ var (
 				//（Redis 未配置时不启动，单实例部署无广播需求）
 				jsplugin.DefaultRegistry().StartInvalidateSubscriber()
 			}
+			// 调度目录的 JS 插件激活预检：绑定了未激活插件的渠道不进候选
+			//（否则会抢占调度、选中后提交链报「插件未激活」且无重试）
+			dispatchadapter.SetJSPluginActiveResolver(jsplugin.PluginActive)
 
 			// Global middleware
 			s.Use(middleware.Recovery)
@@ -505,6 +508,10 @@ func registerCronJobs(cs *common.CronScheduler) {
 	})
 	cs.Register("file_retention_check", "文件保留检查", "0 5 * * *", func(ctx context.Context) error {
 		return admin.CheckFileRetention(ctx)
+	})
+	cs.Register("js_artifact_cleanup", "JS插件产物保留期清理", "0 6 * * *", func(ctx context.Context) error {
+		_, err := artifact.CleanupExpiredArtifacts(ctx)
+		return err
 	})
 	cs.Register("task_timeout_check", "任务超时检查", "*/10 * * * *", func(ctx context.Context) error {
 		return admin.MarkStuckTasksFailed(ctx)

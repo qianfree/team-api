@@ -60,8 +60,10 @@ func defaultConfig() *Config {
 
 // 代码生成场景的输出预算。真实内置插件（400 行 / 21KB ≈ 6–8k tokens）在默认
 // max_tokens=4096 下必然被截断，因此技能激活时按以下下限/上限收紧参数。
+// 32768：覆盖几百行插件单轮一次写完（减少 agent 续轮——每轮续轮推理模型都要
+// 重新思考）；上游不接受时由 handler 的 max_tokens 回退机制降回配置值重试。
 const (
-	CodeGenMaxTokens   = 16384 // 代码模式 max_tokens 下限（管理员配得更大则沿用）
+	CodeGenMaxTokens   = 32768 // 代码模式 max_tokens 下限（管理员配得更大则沿用）
 	CodeGenTemperature = 0.2   // 代码模式温度上限（管理员配得更低则沿用）
 )
 

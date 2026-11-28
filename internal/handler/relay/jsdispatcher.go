@@ -18,6 +18,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
 
+	"github.com/qianfree/team-api/internal/dispatchadapter"
 	"github.com/qianfree/team-api/internal/jsplugin"
 	"github.com/qianfree/team-api/internal/jsplugin/contract"
 	"github.com/qianfree/team-api/internal/logic/monitor"
@@ -175,8 +176,13 @@ func handleJSTaskSubmit(r *ghttp.Request, plugin *jsplugin.ActivePlugin, route c
 		}
 	}
 
-	// 2) 模型注入 body 副本（selectTaskChannel/extractModelName 从 body.model 读）
-	body2, err := injectModelField(body, decoded.Model)
+	// 2) 模型注入 body 副本（selectTaskChannel/extractModelName 从 body.model 读）。
+	// 解码钩子回显的模型名是插件的上游名（如 minimax-h3），而调度目录按
+	// chn_abilities.model_name（平台名，如 MiniMax-H3）索引，mdl 权限/租户启用/计费
+	// 取价也都以平台名为键——先经目录反查归一，渠道做了「平台名→上游名」映射后
+	// 按上游名调度会查无候选。上游名本身也是平台名（未映射渠道同名）时保持原样。
+	dispatchModel := normalizeDispatchModel(r.Context(), decoded.Model)
+	body2, err := injectModelField(body, dispatchModel)
 	if err != nil {
 		writeJSError(r, http.StatusBadRequest, "request body is not a JSON object")
 		return
@@ -209,12 +215,19 @@ func handleJSTaskSubmit(r *ghttp.Request, plugin *jsplugin.ActivePlugin, route c
 		KeyUsedQuota:    r.GetCtxVar(middleware.CtxKeyApiKeyUsedQuota).Float64(),
 	}
 
-	// 4) 渠道选择：候选约束为本插件的 JS 渠道——同名多插件（sharedModels）场景下，
-	// 同一模型可能有多家插件的渠道，调度在候选层过滤而非选中后 400（顺带消灭了
-	// 选中他家渠道时报晦涩绑定错误的旧路径）
+	// 4) 渠道选择：候选约束为本插件的 JS 渠道，且渠道上游模型（映射后）在插件有效
+	// models 内——同一平台模型可由多家插件服务（模型名跨插件可重名），调度在候选层
+	// 过滤而非选中后 400。jsbridge ValidateRequest 对两个入口再做权威校验
 	channelMeta, err := selectTaskChannelFor(r, body2, func(meta *relay_common.ChannelMeta) bool {
-		return relay_constant.ProviderType(meta.ChannelType) == relay_constant.ProviderJSTask &&
-			meta.Settings.PluginKey == plugin.Key
+		if relay_constant.ProviderType(meta.ChannelType) != relay_constant.ProviderJSTask ||
+			meta.Settings.PluginKey != plugin.Key {
+			return false
+		}
+		upstream := meta.UpstreamModelName
+		if upstream == "" {
+			upstream = decoded.Model
+		}
+		return plugin.Manifest.SupportsUpstreamModel(upstream)
 	})
 	if err != nil {
 		writeTaskChannelSelectionError(r, err)
@@ -228,7 +241,7 @@ func handleJSTaskSubmit(r *ghttp.Request, plugin *jsplugin.ActivePlugin, route c
 	capture := NewResponseCaptureWriter(hold)
 	rc.Writer = capture
 
-	registerAsyncTask(rc.RequestID, rc.TenantID, rc.UserID, rc.ProjectID, decoded.Model, channelMeta, nativePath)
+	registerAsyncTask(rc.RequestID, rc.TenantID, rc.UserID, rc.ProjectID, dispatchModel, channelMeta, nativePath)
 
 	relay_handler.HandleTaskSubmit(
 		ctx, body2, nativePath, r.Header,
@@ -241,7 +254,7 @@ func handleJSTaskSubmit(r *ghttp.Request, plugin *jsplugin.ActivePlugin, route c
 		monitor.UnregisterRequest(rc.RequestID)
 	}
 	rc.ForwardingTrace = buildTaskForwardingTrace(nativePath, body2, channelMeta, capture.StatusCode())
-	go recordTaskSubmitAudit(r, rc, capture, body2)
+	go recordTaskSubmitAudit(buildTaskSubmitAudit(r, rc, capture, body2))
 
 	// 同步即完成（parseSubmitResponse 返回 immediate，经解码计划透传）：
 	// 提交成功立即终态化——结算/用量/审计/产物与轮询终态同口径（免轮询直达）
@@ -260,8 +273,9 @@ func handleJSTaskSubmit(r *ghttp.Request, plugin *jsplugin.ActivePlugin, route c
 	}
 
 	// 提交成功且插件导出渲染钩子 → 钩子输出替换标准响应；否则透传扣住的标准输出
+	// （渲染上下文的 Model 用归一后的平台名，与任务落库/查询侧 renderTask 同口径）
 	if rc.TaskID != "" && plugin.HasHook(renderHook) {
-		if rendered := callSubmitRenderer(r.Context(), plugin, renderHook, rc.TaskID, decoded.Model, taskStatus, contentURL); rendered != nil {
+		if rendered := callSubmitRenderer(r.Context(), plugin, renderHook, rc.TaskID, dispatchModel, taskStatus, contentURL); rendered != nil {
 			// 状态码与内容须一次写入：WriteStatus 不带内容会把状态文本（如 "OK"）写进响应体
 			r.Response.WriteStatus(rendered.Status, []byte(rendered.Body))
 			hold.discard()
@@ -301,15 +315,9 @@ func finalizeImmediateTask(ctx context.Context, plan *jsplugin.SubmitPlan, plugi
 	} else {
 		info.Data = t.Data
 	}
-	// 用量事实——与桥的终态映射同口径（时长信号经 OutputSecondsFact 确定性映射）
-	if len(im.Usage) > 0 {
-		if usageRaw, uErr := contract.ParseJSONObject(im.Usage); uErr == nil {
-			if facts, fErr := contract.ValidateUsageFacts(usageRaw, plugin.Manifest); fErr == nil && len(facts) > 0 {
-				usage := &relay_common.TaskMaterialUsage{Facts: facts}
-				usage.OutputSeconds = plugin.Manifest.OutputSecondsFact(facts)
-				info.MaterialUsage = usage
-			}
-		}
+	// 用量（宿主固定词汇）——与桥的终态映射同口径（jsplugin.ApplySettleUsage）
+	if u, uErr := jsplugin.ParseHostUsage(im.Usage); uErr == nil && u != nil {
+		jsplugin.ApplySettleUsage(info, u)
 	}
 	for _, decl := range im.Artifacts {
 		info.Artifacts = append(info.Artifacts, relay_common.TaskArtifact{
@@ -445,11 +453,12 @@ func parseUploadFiles(r *ghttp.Request) (map[string]jsplugin.FilePayload, []cont
 // buildDecodeContext 组装解码上下文（multipart 时 body 为字段合并对象 + files 引用）。
 func buildDecodeContext(r *ghttp.Request, plugin *jsplugin.ActivePlugin, route contract.Route, params map[string]string, nativePath string, body []byte, decodeFiles []contract.FileRef) (contract.DecodeContext, bool) {
 	ctx := contract.DecodeContext{
-		Path:   nativePath,
-		Method: strings.ToUpper(r.Method),
-		Params: params,
-		Body:   json.RawMessage(body),
-		Files:  decodeFiles,
+		Path:    nativePath,
+		Method:  strings.ToUpper(r.Method),
+		Params:  params,
+		Body:    json.RawMessage(body),
+		Headers: clientHeaders(r.Header),
+		Files:   decodeFiles,
 	}
 	if len(decodeFiles) > 0 {
 		// multipart：body 字段（JSON 原文）+ 其余文本字段合并为对象
@@ -490,6 +499,19 @@ func buildDecodeContext(r *ghttp.Request, plugin *jsplugin.ActivePlugin, route c
 	return ctx, true
 }
 
+// clientHeaders 客户端请求头 → 解码契约的 headers（每个头取首值）。凭据类头不进插件：
+// Authorization 是网关 API Key（契约约定剔除），Cookie 可能携带管理端会话。
+func clientHeaders(header http.Header) map[string]string {
+	headers := make(map[string]string, len(header))
+	for k, vs := range header {
+		if len(vs) == 0 || strings.EqualFold(k, "Authorization") || strings.EqualFold(k, "Cookie") {
+			continue
+		}
+		headers[k] = vs[0]
+	}
+	return headers
+}
+
 // callDecodeHook 调用解码钩子（别名优先）并校验返回；错误时已写出响应。
 func callDecodeHook(r *ghttp.Request, plugin *jsplugin.ActivePlugin, route contract.Route, decodeCtx contract.DecodeContext) (*contract.DecodeResult, bool) {
 	decodeHook := route.ResolveDecode()
@@ -504,7 +526,7 @@ func callDecodeHook(r *ghttp.Request, plugin *jsplugin.ActivePlugin, route contr
 		writeJSError(r, http.StatusBadGateway, decodeHook+": "+err.Error())
 		return nil, false
 	}
-	decoded, err := contract.ValidateDecoded(raw, plugin.Manifest, route.Type == contract.RouteTypeDynamic)
+	decoded, err := contract.ValidateDecoded(raw, route.Type == contract.RouteTypeDynamic)
 	if err != nil {
 		writeJSError(r, http.StatusBadRequest, decodeHook+": "+err.Error())
 		return nil, false
@@ -632,6 +654,26 @@ func injectModelField(body []byte, model string) ([]byte, error) {
 	modelJSON, _ := json.Marshal(model)
 	m["model"] = modelJSON
 	return json.Marshal(m)
+}
+
+// normalizeDispatchModel 把插件回显的上游模型名归一成平台模型名：
+//   - 上游名本身就是某渠道的平台名（未映射渠道同名服务）→ 原样返回，不影响既有命中；
+//   - 否则经目录 upstream→平台名 反查（多个平台名时取字典序首个，保证确定性）；
+//   - 反查不到（无映射渠道）→ 原样返回，后续按原行为失败并报错。
+//
+// 调度引擎惰性组装，此处先经 Coordinator 触发确保目录可用（提交链紧接着也会组装）。
+func normalizeDispatchModel(ctx context.Context, upstream string) string {
+	cat := dispatchadapter.CatalogFromCoordinator(ctx)
+	if cat == nil {
+		return upstream
+	}
+	if len(cat.Snapshot(ctx, 0, upstream, nil)) > 0 {
+		return upstream
+	}
+	if names := cat.PlatformNamesByUpstream(upstream); len(names) > 0 {
+		return names[0]
+	}
+	return upstream
 }
 
 // extractUpstreamTaskID 从 PrivateData 提取上游任务 ID（渲染上下文用）。

@@ -21,12 +21,6 @@ func (s *sAdmin) JSPluginList(ctx context.Context, _ *v1.JSPluginListReq) (*v1.J
 	}
 	out := make([]v1.JSPluginItem, 0, len(summaries))
 	for _, sm := range summaries {
-		usageSchema := make([]v1.JSPluginUsageField, 0, len(sm.UsageSchema))
-		for _, f := range sm.UsageSchema {
-			usageSchema = append(usageSchema, v1.JSPluginUsageField{
-				Key: f.Key, Type: f.Type, Unit: f.Unit, Description: f.Description,
-			})
-		}
 		item := v1.JSPluginItem{
 			Key:           sm.Key,
 			Name:          sm.Name,
@@ -42,7 +36,6 @@ func (s *sAdmin) JSPluginList(ctx context.Context, _ *v1.JSPluginListReq) (*v1.J
 			Models:        sm.Models,
 			FetchMode:     sm.FetchMode,
 			AllowedHosts:  sm.AllowedHosts,
-			UsageSchema:   usageSchema,
 			Manifest:      sm.Manifest,
 			Versions:      make([]v1.JSPluginVersionItem, 0, len(sm.Versions)),
 		}
@@ -55,6 +48,7 @@ func (s *sAdmin) JSPluginList(ctx context.Context, _ *v1.JSPluginListReq) (*v1.J
 				ID:        ver.Id,
 				Version:   ver.Version,
 				Origin:    ver.Origin,
+				Stale:     ver.Stale,
 				Active:    ver.Active,
 				Enabled:   ver.Enabled,
 				Remark:    ver.Remark,
@@ -75,7 +69,7 @@ func (s *sAdmin) JSPluginUpload(ctx context.Context, req *v1.JSPluginUploadReq) 
 	return &v1.JSPluginUploadRes{Manifest: data}, nil
 }
 
-// JSPluginDryRun 上传前试运行：编译 / 钩子齐备性 / 跨插件冲突预检 / 样例执行 /
+// JSPluginDryRun 上传前试运行：编译 / 钩子齐备性 / 样例执行 /
 // 静态 lint（见 jsplugin.DryRun）。不落库、不发布 generation、不发真实 HTTP，
 // 所有失败都体现在检查项里，接口本身始终成功返回。
 func (s *sAdmin) JSPluginDryRun(_ context.Context, req *v1.JSPluginDryRunReq) (*v1.JSPluginDryRunRes, error) {
@@ -104,7 +98,7 @@ func (s *sAdmin) JSPluginDryRun(_ context.Context, req *v1.JSPluginDryRunReq) (*
 	return res, nil
 }
 
-// JSPluginTemplate 模板下载：内置 golden 参考实现源码（作者抄它起步，删掉不需要的钩子）。
+// JSPluginTemplate 模板下载：golden 参考实现模板源码（作者抄它起步，删掉不需要的钩子；非内置实例）。
 func (s *sAdmin) JSPluginTemplate(_ context.Context, _ *v1.JSPluginTemplateReq) (*v1.JSPluginTemplateRes, error) {
 	return &v1.JSPluginTemplateRes{Source: jsplugin.TemplateSource(), FileName: "plugin.template.js"}, nil
 }

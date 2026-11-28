@@ -42,7 +42,7 @@ export interface VideoReferenceItem {
 export interface CompiledVideo {
 	/** 发给 /v1/videos 的提示词（标记已换成文字标签） */
 	prompt: string
-	/** 全部素材经 references[] 发出（单图→first_frame 首帧；多素材→reference_* 多模态参考） */
+	/** 全部素材经 references[] 以 reference_* 参考形式发出（图片不走 first_frame 首帧角色） */
 	references: VideoReferenceItem[]
 	/** 未随请求发出的素材（视频：上传通道不可用/失败，上游普遍不收 base64） */
 	deferred: Attachment[]
@@ -120,11 +120,10 @@ export function compileChatParts(text: string, attachments: Attachment[]): Compi
 /**
  * compileVideoPrompt 把「正文 + 附件」编译成 /v1/videos 请求载荷。
  *
- * 参考素材统一经 references[] 发出（协议层首帧与 reference_* 互斥，不可混发）：
- * - 恰好一张图且无音频/视频 → 首帧模式：role first_frame（全模型兼容，含只认首帧的模型）；
- * - 多图 / 含音频 / 含视频 → 参考模式：role reference_image / reference_audio /
- *   reference_video（仅支持多模态参考的模型承接——Seedance 2.x / wan3.0 / MiniMax H3；
- *   只认首帧的模型会收到明确 400）。
+ * 参考素材统一经 references[] 发出，图片一律走参考模式 role reference_image —— 不做
+ * 「单图自动转首帧 first_frame」：首帧与参考图是上游两种不同语义（MiniMax H3 / grsai 等
+ * 上游的首尾帧必须成对提供且与参考图互斥，单图转首帧会触发其成对校验报错），用户上传的
+ * 就是参考图，应保持参考语义。仅支持首帧图生视频的模型会收到明确 400，属预期行为。
  *
  * 素材引用形态（fileIds 参数）：
  * - 经 /v1/files 上传成功的附件以 file_id 引用（网关解析为对象存储签名 URL 发上游）；
@@ -149,13 +148,9 @@ export function compileVideoPrompt(
 	}
 
 	const references: VideoReferenceItem[] = []
-	if (sentVideos.length === 0 && images.length === 1 && audios.length === 0) {
-		references.push({ role: 'first_frame', ...refOf(images[0]) })
-	} else {
-		for (const img of images) references.push({ role: 'reference_image', ...refOf(img) })
-		for (const au of audios) references.push({ role: 'reference_audio', ...refOf(au) })
-		for (const vd of sentVideos) references.push({ role: 'reference_video', ...refOf(vd) })
-	}
+	for (const img of images) references.push({ role: 'reference_image', ...refOf(img) })
+	for (const au of audios) references.push({ role: 'reference_audio', ...refOf(au) })
+	for (const vd of sentVideos) references.push({ role: 'reference_video', ...refOf(vd) })
 	return { prompt: stripMentions(text), references, deferred }
 }
 

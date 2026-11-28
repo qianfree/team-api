@@ -166,3 +166,25 @@ func TestTaskChannelSelectionError_ApiKeyModelDenied(t *testing.T) {
 		t.Fatalf("message = %q, want API Key model denial message", message)
 	}
 }
+
+// TestStandardTaskChannelAccept 标准端点 JS 渠道候选兜底过滤：
+// 测试进程内 generation 为空（无激活插件），JS 渠道一律不放行；
+// 非 JS 渠道不受影响。「插件激活 + 声明 standardVideos 放行」的正向分支
+// 由 jsplugin 包的 ChannelServesStandardEndpoint 测试覆盖。
+func TestStandardTaskChannelAccept(t *testing.T) {
+	jsMeta := &relay_common.ChannelMeta{
+		ChannelType: 43,
+		Settings:    relay_common.ChannelSettings{PluginKey: "grsai"},
+	}
+	if standardTaskChannelAccept(jsMeta) {
+		t.Fatal("generation 内不存在对应插件时，JS 渠道候选应被过滤")
+	}
+	jsUnbound := &relay_common.ChannelMeta{ChannelType: 43}
+	if standardTaskChannelAccept(jsUnbound) {
+		t.Fatal("未绑定插件的 JS 渠道候选应被过滤")
+	}
+	normal := &relay_common.ChannelMeta{ChannelType: 29}
+	if !standardTaskChannelAccept(normal) {
+		t.Fatal("非 JS 渠道不应被标准端点过滤拦截")
+	}
+}

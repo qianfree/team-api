@@ -19,6 +19,17 @@
 //    （wan2.7-t2v-2026-04-25 → wan2.7-t2v）。
 // ④ fileRef：视频参考图与图像输入的 url 位置支持 fileRef 占位。
 // ⑤ renderSubmit/renderImage/renderTask：DashScope 信封形态的 {status, body} 渲染。
+// ⑥ 1.7.0：契约升级——meta.models 为支持的上游模型（平台名由渠道映射决定，跨插件
+//    可重名）；用量改报宿主固定词汇：output_seconds / input_video_seconds（wan3.0 官方
+//    usage 双段分别上报，不再由插件相加——是否合并计价由宿主模型定价决定）/
+//    resolution / generate_audio / output_count；按型号的校验（视频/图像类型、分辨率
+//    档位）移到 validateRequest（ctx.upstreamModel），decode 只按路由与体形分流。
+// ⑦ 预扣含输入视频：wan3.0 系官方计费时长 = 输入视频 + 输出视频，预估带参考视频时按
+//    上限报 input_video_seconds（合计 ≤15s 且「输入+输出≤30s」），终态以官方 usage 为准。
+// ⑧ 1.8.0：扩展模型——meta.modelsFromConfig=extra_models，上游新型号（新万相/千问图像）
+//    经配置登记即并入有效清单，无需更新插件；未收录型号走宽容路径：不校验分辨率档位
+//    （新型号可能有新档），首帧按 wan3.x media 形态落位、音频开关透传，参数合法性由
+//    上游校验；计费回落默认档（WAN_DEFAULT_PROFILE，与 wan3.0 同规格）。
 const WAN_MODELS = {
   "wan3.0-video": { resolutions: ["480P", "720P", "1080P"], defaultResolution: "1080P", maxDuration: 30 },
   "wan3.0-video-prime": { resolutions: ["480P", "720P", "1080P"], defaultResolution: "1080P", maxDuration: 30 },
@@ -37,7 +48,15 @@ const WAN_MODELS = {
   "wan2.2-kf2v-flash": { resolutions: ["480P", "720P", "1080P"], defaultResolution: "720P", maxDuration: 5 },
   "wan2.2-s2v": { resolutions: ["480P", "720P"], defaultResolution: "480P", maxDuration: 10 },
 };
+// 扩展型号（不在 WAN_MODELS 内，经 extra_models 配置登记）的默认档位：与 wan3.0 同规格，
+// 仅用于计费预估与首帧落位——分辨率档位不校验（新型号可能有新档），由上游判定
+const WAN_DEFAULT_PROFILE = { resolutions: ["480P", "720P", "1080P"], defaultResolution: "1080P", maxDuration: 30 };
 const WAN_AUDIO_VIDEO_MODELS = ["wan3.0-video", "wan3.0-video-prime"];
+// 官方计费时长 = 输入视频 + 输出视频的型号（查询 usage 双段回报）：预估与终态共用本清单，
+// 保证两个时点对「输入视频是否计费」的判定一致
+const WAN_INPUT_VIDEO_MODELS = ["wan3.0-video", "wan3.0-video-prime"];
+// 参考视频总时长上限（官方约束：最多 5 段、合计 ≤15s）；另有视频输入时「输入+输出 ≤30s」
+const WAN_REFERENCE_VIDEO_MAX_SECONDS = 15;
 // 同步图像（multimodal-generation，immediate）；其余图像系（t2i/legacy 等）异步任务
 const SYNC_IMAGE_MODELS = ["qwen-image", "qwen-image-plus", "qwen-image-max", "qwen-image-2.0", "qwen-image-2.0-pro", "qwen-image-3.0", "qwen-image-3.0-pro", "qwen-image-edit", "qwen-image-edit-plus", "qwen-image-edit-max", "z-image-turbo"];
 const ASYNC_IMAGE_MODELS = ["wan2.7-image-pro", "wan2.7-image", "wan2.6-image", "wan2.6-t2i", "wan2.5-t2i-preview", "wan2.2-t2i-flash", "wan2.2-t2i-plus", "wanx2.1-t2i-turbo", "wanx2.1-t2i-plus", "wanx2.0-t2i-turbo", "wan2.5-i2i-preview", "wanx2.1-imageedit"];
@@ -56,6 +75,8 @@ function baseModel(model) {
 function isVideoModel(model) { return Boolean(WAN_MODELS[baseModel(model)]); }
 function isSyncImage(model) { return SYNC_IMAGE_MODELS.includes(trimmed(model)); }
 function isAsyncImage(model) { return ASYNC_IMAGE_MODELS.includes(trimmed(model)); }
+// 型号档位：内置型号查表，扩展型号回落默认档（分辨率档位校验跳过——见 validateRequest）
+function wanProfile(model) { return WAN_MODELS[baseModel(model)] || WAN_DEFAULT_PROFILE; }
 
 function videoService(model) {
   const base = baseModel(model);
@@ -71,7 +92,7 @@ export const meta = {
     en: "Alibaba Cloud Bailian image and video generation (Wan, Qwen-Image, Z-Image)",
     zh: "阿里云百炼图片与视频生成（万相、千问图像、Z-Image）",
   },
-  version: "1.6.0",
+  version: "2.0.0",
   author: "qianfree",
   channelTypes: [79],
   models: Object.keys(WAN_MODELS)
@@ -80,12 +101,15 @@ export const meta = {
     .concat(ASYNC_IMAGE_MODELS),
   fetchMode: "per_task",
   standardVideos: "decodeVideos",
-  usageSchema: {
-    seconds: { type: "number", unit: "second", description: { en: "Video generation unit price", zh: "视频生成单价" } },
-    resolution: { enum: ["480P", "720P", "1080P"], description: { en: "Output video resolution", zh: "输出视频分辨率" } },
-    audio: { type: "boolean", description: { en: "Audio generated", zh: "是否生成音频" } },
-    image_count: { type: "number", unit: "count", description: { en: "Delivered image count", zh: "交付图片数" } },
-  },
+  // 扩展模型：上游新型号（新万相/千问图像）无需更新插件——配置登记即并入有效清单，
+  // 配合渠道模型映射使用；未收录型号按默认档透传（不校验分辨率档位），由上游校验
+  modelsFromConfig: "extra_models",
+  config: [
+    {
+      key: "extra_models", label: "扩展上游模型", type: "text", group: "模型",
+      description: "每行一个百炼上游模型名（如新发布的万相/千问图像型号），保存后并入本插件支持的上游模型清单（渠道模型映射配合使用）；未收录型号不校验分辨率档位，参数合法性由上游校验",
+    },
+  ],
   routes: [
     { method: "POST", path: "/api/v1/services/aigc/video-generation/video-synthesis", type: "submit", decode: "createTask", render: "renderSubmit" },
     { method: "POST", path: "/api/v1/services/aigc/image2video/video-synthesis", type: "submit", decode: "createTask", render: "renderSubmit" },
@@ -97,34 +121,32 @@ export const meta = {
 
 // ── 解码 ──────────────────────────────────────────────────
 
+// 解码只按路由与体形分流，不按型号校验：body.model / ctx.model 是平台模型名（可能是
+// 渠道映射别名），上游型号约束在 validateRequest（ctx.upstreamModel）校验。
 export function createTask(ctx) {
   const body = ctx.body && typeof ctx.body === "object" && !Array.isArray(ctx.body) ? ctx.body : {};
   const model = trimmed(body.model);
   if (!model) throw new Error("model is required");
-  if (!isVideoModel(model)) throw new Error(model + " is not a Wan video model");
-  const profile = WAN_MODELS[baseModel(model)];
-  const params = plainObject(body.parameters);
-  if (params.resolution !== undefined && !profile.resolutions.includes(trimmed(params.resolution).toUpperCase())) {
-    throw new Error(model + " resolution must be one of " + profile.resolutions.join(", "));
-  }
-  return { kind: "submit", model: model, requestBody: { model: model, vendorBody: body } };
+  return { kind: "submit", model: model, requestBody: { vendorBody: body } };
 }
 
+// createImage 同步（multimodal-generation）与异步（text2image）两条图像路由共用：
+// 同步/异步由请求路由决定（_sync），validateRequest 再核对上游型号与路由一致
 export function createImage(ctx) {
   const body = ctx.body && typeof ctx.body === "object" && !Array.isArray(ctx.body) ? ctx.body : {};
   const model = trimmed(body.model);
   if (!model) throw new Error("model is required");
-  if (!isSyncImage(model) && !isAsyncImage(model)) throw new Error(model + " is not a Bailian image model");
   const params = plainObject(body.parameters);
   if (params.stream === true || params.enable_interleave === true) {
     throw new Error("stream/interleave is not supported; use the non-streaming API");
   }
-  return { kind: "submit", model: model, requestBody: { model: model, vendorBody: body, _image: true, _sync: isSyncImage(model) } };
+  const sync = String(ctx.path || "").includes("multimodal");
+  return { kind: "submit", model: model, requestBody: { vendorBody: body, _image: true, _sync: sync } };
 }
 
 // decodeVideos 标准视频端点解码（meta.standardVideos 指向）：通用任务体 → DashScope
-// vendorBody（input/parameters 双段）。prompt → input.prompt；参考图（images[0]/
-// metadata.image）→ wan3.0 input.media 数组 / wan2.x input.img_url；seconds/
+// vendorBody（input/parameters 双段）。prompt → input.prompt；首帧（兼容字段 images[0]/
+// metadata.image）→ wan3.x input.media 首帧 / wan2.x input.img_url；seconds/
 // metadata.duration → parameters.duration；metadata.resolution 大写归一按档位校验
 // （与 createTask 同规则）；ratio（metadata.ratio/aspect_ratio）透传；音频开关
 // metadata.generate_audio（bool）优先、回落 metadata.sound（"on"/"off"）。
@@ -134,41 +156,69 @@ export function decodeVideos(ctx) {
   const metadata = plainObject(raw.metadata);
   const model = trimmed(ctx.model || raw.model);
   if (!model) throw new Error("model is required");
-  if (!isVideoModel(model)) throw new Error(model + " is not a Wan video model");
   if (!trimmed(raw.prompt)) throw new Error("prompt is required");
-  const profile = WAN_MODELS[baseModel(model)];
-  if (!profile) throw new Error(model + " is not a Wan video model");
 
+  // 首帧字段形态（wan3.x input.media / wan2.x input.img_url）依赖上游型号，
+  // decode 先记在 _image，validateRequest 按 ctx.upstreamModel 落位
   const input = { prompt: String(raw.prompt) };
   const image = Array.isArray(raw.images) && raw.images.length && typeof raw.images[0] === "string" ? raw.images[0].trim() : trimmed(metadata.image);
-  if (image) {
-    if (baseModel(model).startsWith("wan3.")) input.media = [{ type: "image", url: image }];
-    else input.img_url = image;
-  }
 
   const parameters = {};
   const seconds = raw.seconds != null ? raw.seconds : metadata.duration;
   const n = typeof seconds === "string" && seconds.trim() !== "" ? Number(seconds) : seconds;
   if (Number.isFinite(n) && n > 0) parameters.duration = Math.round(n);
   const resolution = trimmed(metadata.resolution).toUpperCase();
-  if (resolution) {
-    if (!profile.resolutions.includes(resolution)) {
-      throw new Error(model + " resolution must be one of " + profile.resolutions.join(", "));
-    }
-    parameters.resolution = resolution;
-  }
+  if (resolution) parameters.resolution = resolution;
   const ratio = trimmed(metadata.ratio) || trimmed(metadata.aspect_ratio);
   if (ratio) parameters.ratio = ratio;
-  if (WAN_AUDIO_VIDEO_MODELS.includes(baseModel(model))) {
-    const audio = metadata.generate_audio != null
-      ? metadata.generate_audio
-      : (trimmed(metadata.sound) ? trimmed(metadata.sound) === "on" : null);
-    if (audio != null) parameters.audio = audio;
-  }
+  const audio = metadata.generate_audio != null
+    ? metadata.generate_audio
+    : (trimmed(metadata.sound) ? trimmed(metadata.sound) === "on" : null);
 
   const vendorBody = { input: input };
   if (Object.keys(parameters).length) vendorBody.parameters = parameters;
-  return { kind: "submit", model: model, requestBody: { model: model, vendorBody: vendorBody } };
+  const requestBody = { vendorBody: vendorBody, _std: true };
+  if (image) requestBody._image_ref = image;
+  if (audio != null) requestBody._audio = audio;
+  return { kind: "submit", model: model, requestBody: requestBody };
+}
+
+// validateRequest 渠道选定后按上游型号校验并定稿：
+//   - 图像路由：已知型号须为对应形态（同步 multimodal / 异步 text2image）的百炼图像
+//     模型；扩展型号（不在内置清单，经 extra_models 登记）不校验，由上游判定
+//   - 视频：已知图像型号拒绝；扩展型号放行。分辨率档位仅对已知型号校验（扩展型号
+//     可能有新档）；标准端点的首帧按型号落位（wan3.x input.media 首帧 / wan2.x
+//     input.img_url，扩展型号按 wan3.x 形态），音频开关 wan3.0 系与扩展型号透传
+export function validateRequest(ctx) {
+  const req = plainObject(ctx.body);
+  const upstream = trimmed(ctx.upstreamModel || ctx.model);
+  if (req._image) {
+    if (req._sync && (isAsyncImage(upstream) || isVideoModel(upstream))) throw new Error(upstream + " is not a Bailian synchronous image model (multimodal-generation)");
+    if (!req._sync && (isSyncImage(upstream) || isVideoModel(upstream))) throw new Error(upstream + " is not a Bailian asynchronous image model (text2image)");
+    return {};
+  }
+  if (isSyncImage(upstream) || isAsyncImage(upstream)) throw new Error(upstream + " is an image model; video endpoints are not supported");
+  const base = baseModel(upstream);
+  const profile = WAN_MODELS[base];
+  const vendor = plainObject(req.vendorBody);
+  const params = plainObject(vendor.parameters);
+  if (profile && params.resolution !== undefined && !profile.resolutions.includes(trimmed(params.resolution).toUpperCase())) {
+    throw new Error(upstream + " resolution must be one of " + profile.resolutions.join(", "));
+  }
+  if (!req._std) return { requestBody: Object.assign({}, req, { _upstream: upstream }) };
+  // 标准端点：按型号定稿首帧与音频开关。兼容字段 images[0]/metadata.image 只承载 first_frame
+  // 角色的素材（宿主归一保证，其余角色本插件未声明承接），wan3.x 用官方 media 类型 first_frame
+  // （扩展型号按 wan3.x 形态落位——现役代际约定）
+  const input = Object.assign({}, plainObject(vendor.input));
+  if (req._image_ref) {
+    if (!profile || base.startsWith("wan3.")) input.media = [{ type: "first_frame", url: req._image_ref }];
+    else input.img_url = req._image_ref;
+  }
+  const parameters = Object.assign({}, params);
+  if ((WAN_AUDIO_VIDEO_MODELS.includes(base) || !profile) && req._audio != null) parameters.audio = req._audio;
+  const finalBody = { input: input };
+  if (Object.keys(parameters).length) finalBody.parameters = parameters;
+  return { requestBody: { vendorBody: finalBody, _upstream: upstream } };
 }
 
 // ── 计费 ──────────────────────────────────────────────────
@@ -178,20 +228,33 @@ export function estimateUsage(ctx) {
   if (req._image) {
     const params = plainObject(plainObject(req.vendorBody).parameters);
     const n = Number(params.n);
-    return { image_count: Number.isFinite(n) && n > 0 ? Math.min(n, 40) : 1 };
+    return { output_count: Number.isFinite(n) && n > 0 ? Math.min(n, 40) : 1 };
   }
-  const model = ctx.model;
-  const profile = WAN_MODELS[baseModel(model)];
+  const model = trimmed(ctx.upstreamModel || ctx.model);
+  const base = baseModel(model);
+  const profile = wanProfile(model);
   const params = plainObject(plainObject(req.vendorBody).parameters);
   let seconds = Number(params.duration);
   if (!Number.isFinite(seconds) || seconds <= 0) seconds = profile.maxDuration; // -1（自选）保留最长
-  const base = baseModel(model);
-  const facts = {
-    seconds: Math.min(seconds, profile.maxDuration),
+  const usage = {
+    output_seconds: Math.min(seconds, profile.maxDuration),
     resolution: profile.resolutions.includes(trimmed(params.resolution).toUpperCase()) ? trimmed(params.resolution).toUpperCase() : profile.defaultResolution,
   };
-  if (WAN_AUDIO_VIDEO_MODELS.includes(base)) facts.audio = params.audio !== false;
-  return facts;
+  if (WAN_AUDIO_VIDEO_MODELS.includes(base)) usage.generate_audio = params.audio !== false;
+  if (WAN_INPUT_VIDEO_MODELS.includes(base)) {
+    // 官方按「输入视频 + 输出视频」计费：参考视频以 URL 提交、时长此时不可知，按上限预扣
+    //（合计 ≤15s 且「输入+输出≤30s」，取较紧者），终态按官方 usage.input_video_duration
+    // 多退少补。无参考视频恒报 0，与终态上报的键集合一致
+    usage.input_video_seconds = hasReferenceVideo(plainObject(plainObject(req.vendorBody).input))
+      ? Math.max(0, Math.min(WAN_REFERENCE_VIDEO_MAX_SECONDS, profile.maxDuration - usage.output_seconds))
+      : 0;
+  }
+  return usage;
+}
+
+// hasReferenceVideo 请求是否带参考视频（官方 media 类型 reference_video）
+function hasReferenceVideo(input) {
+  return Array.isArray(input.media) && input.media.some(function (m) { return Boolean(m) && m.type === "reference_video"; });
 }
 
 // ── 提交链 ────────────────────────────────────────────────
@@ -201,6 +264,7 @@ export function buildSubmitRequest(ctx) {
   const model = ctx.upstreamModel || ctx.model;
   if (req._image) {
     const vendor = plainObject(req.vendorBody);
+    // 同步/异步取路由口径（_sync），不按平台模型名推断
     if (req._sync) {
       return { url: "/api/v1/services/aigc/multimodal-generation/generation", method: "POST", body: Object.assign({}, vendor, { model: model }) };
     }
@@ -252,7 +316,7 @@ export function parseSubmitResponse(ctx) {
     if (!images.length) {
       return { taskId: placeholder, taskData: body, immediate: { status: "FAILURE", failReason: "image generation returned no images" } };
     }
-    const im = { status: "SUCCESS", taskData: body, usage: { image_count: images.length } };
+    const im = { status: "SUCCESS", taskData: body, usage: { output_count: images.length } };
     if (images[0].image) im.artifacts = [{ key: "image-1", source: { type: "url", path: "_image_urls[0]" } }];
     if (images.length) {
       im.taskData = Object.assign({}, body, { _image_urls: images.map(function (p) { return p.image; }) });
@@ -261,7 +325,9 @@ export function parseSubmitResponse(ctx) {
   }
   if (body.code) throw new Error(body.code + ": " + (body.message || ""));
   if (!plainObject(body.output).task_id) throw new Error("task_id is empty");
-  return { taskId: String(body.output.task_id), taskData: Object.assign({}, body, { _model: ctx.model || "" }) };
+  // 轮询期按上游型号分支（wan3.0 usage 双段）：记下上游模型名（平台名可能是映射别名）
+  const upstream = trimmed(plainObject(ctx.body)._upstream) || trimmed(ctx.model);
+  return { taskId: String(body.output.task_id), taskData: Object.assign({}, body, { _model: upstream }) };
 }
 
 // ── 轮询链（视频 + 异步图像共用 /api/v1/tasks/{id}）────────────
@@ -283,20 +349,20 @@ export function parseQueryResponse(ctx) {
     const usage = plainObject(body.usage);
     const facts = {};
     const tdModel = plainObject(t.taskData);
-    const model = baseModel(trimmed(ctx.model) || trimmed(tdModel._model) || trimmed(tdModel.model));
-    if (model === "wan3.0-video" || model === "wan3.0-video-prime") {
-      // wan3.0：计费时长 = 输入 + 输出（官方 usage 双段）
+    const model = baseModel(trimmed(tdModel._model) || trimmed(tdModel.model) || trimmed(ctx.model));
+    if (WAN_INPUT_VIDEO_MODELS.includes(model)) {
+      // wan3.0：官方 usage 双段（输出时长 + 输入参考视频时长）分别上报，合并计价归宿主定价
       const inputSeconds = Number(usage.input_video_duration);
       const outputSeconds = Number(usage.output_video_duration != null ? usage.output_video_duration : usage.duration);
-      if (Number.isFinite(inputSeconds) && Number.isFinite(outputSeconds)) facts.seconds = inputSeconds + outputSeconds;
-      else if (Number.isFinite(outputSeconds)) facts.seconds = outputSeconds;
+      if (Number.isFinite(outputSeconds) && outputSeconds > 0) facts.output_seconds = outputSeconds;
+      if (Number.isFinite(inputSeconds) && inputSeconds >= 0) facts.input_video_seconds = inputSeconds;
     } else {
       const seconds = Number(usage.duration != null ? usage.duration : usage.output_video_duration);
-      if (Number.isFinite(seconds) && seconds > 0) facts.seconds = seconds;
+      if (Number.isFinite(seconds) && seconds > 0) facts.output_seconds = seconds;
     }
     const resolution = trimmed(usage.SR || output.resolution).toUpperCase();
     if (["480P", "720P", "1080P"].includes(resolution)) facts.resolution = resolution;
-    if (WAN_AUDIO_VIDEO_MODELS.includes(model) && typeof usage.audio === "boolean") facts.audio = usage.audio;
+    if (WAN_AUDIO_VIDEO_MODELS.includes(model) && typeof usage.audio === "boolean") facts.generate_audio = usage.audio;
 
     const done = { taskId: t.taskId, done: true, usage: facts, taskData: body };
     // 产物：视频 URL / 异步图像 results[].url
@@ -306,7 +372,7 @@ export function parseQueryResponse(ctx) {
     const imgURLs = results.map(function (r) { return trimmed(plainObject(r).url); }).filter(Boolean);
     if (imgURLs.length) {
       done.artifacts = (done.artifacts || []).concat([{ key: "image-1", source: { type: "url", path: "_image_urls[0]" } }]);
-      facts.image_count = imgURLs.length;
+      facts.output_count = imgURLs.length;
     }
     if (vurl) done.taskData = Object.assign({}, body, { _video_url: vurl, _image_urls: imgURLs });
     else if (imgURLs.length) done.taskData = Object.assign({}, body, { _image_urls: imgURLs });

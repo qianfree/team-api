@@ -66,7 +66,7 @@ func mockVendor(t *testing.T, pollCount *int) *httptest.Server {
 		}
 		*pollCount++
 		if *pollCount < 2 {
-			_ = json.NewEncoder(w).Encode(map[string]any{"status": "processing"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "processing", "progress": 37})
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -167,6 +167,9 @@ func TestPollFlow(t *testing.T) {
 	if result.Status != common.TaskStatusInProgress {
 		t.Fatalf("首轮应 IN_PROGRESS，得到 %v", result.Status)
 	}
+	if result.Progress != "37%" {
+		t.Fatalf("首轮应携带插件上报的进度 37%%，得到 %q", result.Progress)
+	}
 
 	// 第二轮：success（mock 第二次起返回终态）
 	resp2, err := adaptor.FetchTask(context.Background(), vendor.URL, "sk-test", taskData)
@@ -181,6 +184,9 @@ func TestPollFlow(t *testing.T) {
 	}
 	if result2.Status != common.TaskStatusSuccess {
 		t.Fatalf("次轮应 SUCCESS，得到 %v", result2.Status)
+	}
+	if result2.Progress != "100%" {
+		t.Fatalf("终态进度应为 100%%，得到 %q", result2.Progress)
 	}
 	if !jsonContains(string(result2.Data), "audio_url") {
 		t.Fatalf("终态 taskData 缺少 audio_url: %s", result2.Data)

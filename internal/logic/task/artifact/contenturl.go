@@ -22,7 +22,11 @@ import (
 // 统一内容链接：{base}/v1/tasks/{public_task_id}/content[/{artifact_key}]?expires=&signature=
 // HMAC-SHA256 签名（密钥由 crypto.encryptionKey 经域分离派生），免 API Key 直接打开
 // （浏览器 / <video> 标签 / 下游拉取），有效期由 task_content_url_ttl_minutes 控制。
-// 每次渲染任务都签发新链接，链接形态与产物是否转存 OSS 无关。
+// 每次渲染任务都签发新链接。
+//
+// 交付链接（video_url / 插件渲染产物字段）优先返回已转存产物的对象存储预签名直链
+// （见 deliveryContentURL），字节不过平台、播放器可 Range 直连；未转存 / local 存储 /
+// 签名失败时回落本处签名链接，由平台回源代理供给。
 
 const (
 	contentURLPrefix     = "/v1/tasks/"
@@ -152,6 +156,34 @@ func ResolveDelivery(ctx context.Context, task *rcommon.AsyncTask) rcommon.TaskD
 	return view
 }
 
+// storedArtifactDirectURL 已转存产物的对象存储预签名直链：交付链接优先指向它，字节
+// 不过平台（客户端直连 OSS/S3/COS，播放器可 Range 拖动），同时卸载平台带宽与回源耗时。
+// 不可直连时返回空串（调用方回落平台签名链接）：未转存 / local 存储（无预签名语义）/
+// 存储服务获取或签名失败（含 S3 预签名 7 天上限等 TTL 越界场景）。
+func storedArtifactDirectURL(ctx context.Context, row *artifactRow) string {
+	if row == nil || row.Status != statusStored || row.StoredKey == "" {
+		return ""
+	}
+	fs, err := acquireFileSvc(ctx)
+	if err != nil {
+		return ""
+	}
+	link, err := fs.Provider().PresignedURL(ctx, row.StoredKey, contentTTLFn(ctx))
+	if err != nil || link == "" {
+		return ""
+	}
+	return link
+}
+
+// deliveryContentURL 交付链接：优先对象存储预签名直链，不可直连时回落平台签名链接
+// （/v1/tasks/{id}/content，由平台回源代理，兜底形态与是否转存无关）。
+func deliveryContentURL(ctx context.Context, task *rcommon.AsyncTask, row *artifactRow) string {
+	if direct := storedArtifactDirectURL(ctx, row); direct != "" {
+		return direct
+	}
+	return SignContentURL(ctx, task.PublicTaskID, "")
+}
+
 func resolveDelivery(ctx context.Context, task *rcommon.AsyncTask) (rcommon.TaskDelivery, []*artifactRow) {
 	if task == nil || task.Status != string(rcommon.TaskStatusSuccess) {
 		return rcommon.TaskDelivery{}, nil
@@ -171,11 +203,12 @@ func resolveDelivery(ctx context.Context, task *rcommon.AsyncTask) (rcommon.Task
 	if len(rows) == 0 && task.ResultURL == "" {
 		return rcommon.TaskDelivery{}, rows
 	}
-	return rcommon.TaskDelivery{ContentURL: SignContentURL(ctx, task.PublicTaskID, "")}, rows
+	return rcommon.TaskDelivery{ContentURL: deliveryContentURL(ctx, task, pickArtifactRow(rows, ""))}, rows
 }
 
-// RenderData 插件渲染视图：成功任务的登记产物声明路径替换为统一内容链接（不落库），
-// 插件 renderTask 读原字段（如 _video_url）即自动呈现统一链接；同时返回交付视图。
+// RenderData 插件渲染视图：成功任务的登记产物声明路径替换为交付链接（不落库；优先
+// 对象存储预签名直链，未转存时为平台签名回源代理链接），插件 renderTask 读原字段
+// （如 _video_url）即自动呈现；同时返回交付视图。
 // 转存途中（Pending）把声明路径置空——不向客户端泄出上游直链，调用方按进行中呈现。
 func RenderData(ctx context.Context, task *rcommon.AsyncTask) (json.RawMessage, rcommon.TaskDelivery) {
 	if task == nil {
@@ -200,7 +233,12 @@ func RenderData(ctx context.Context, task *rcommon.AsyncTask) (json.RawMessage, 
 		if !view.Pending {
 			link = view.ContentURL
 			if row != primary {
-				link = SignContentURL(ctx, task.PublicTaskID, row.ArtifactKey)
+				// 副产物同样优先对象存储预签名直链，回落带 artifact_key 的平台链接
+				if direct := storedArtifactDirectURL(ctx, row); direct != "" {
+					link = direct
+				} else {
+					link = SignContentURL(ctx, task.PublicTaskID, row.ArtifactKey)
+				}
 			}
 		}
 		if rcommon.SetJSONPath(data, path, link) {

@@ -17,15 +17,30 @@ export type FetchMode = "batch" | "per_task";
 /** 本地化文案：字符串或 {zh, en, ...} 对象（zh 优先，回退 en） */
 export type LocalizedString = string | { [lang: string]: string };
 
-/** usageSchema 单位声明：插件管「用了多少」（estimateUsage / items[].usage 出事实），基座管「多少钱」（公式 u() 定价） */
-export interface UsageField {
-  /** 事实键，公式经 u("key") 引用；小写字母开头的字母/数字/下划线 */
-  key: string;
-  type: "number" | "enum" | "boolean";
-  /** 仅 number 型可用：second=时长信号 / count=张数信号 / 空=仅 u() */
-  unit?: "second" | "count";
-  /** 定价页展示语义 */
-  description?: string;
+/**
+ * 宿主固定用量词汇（estimateUsage 预扣估算与终态 usage 上报的键集）。
+ * 计价口径由宿主模型定价决定，插件只回答「用了多少」；未知键整体拒绝。
+ * 上游消费/积分等成本信息不上报（与平台计费无关）。
+ */
+export interface HostUsage {
+  /** 生成时长（秒）：per_second 秒数信号 + 公式 u() */
+  output_seconds?: number;
+  /** 输出分辨率（"720p"/"1280x720"/"4K" 等，宿主归一为 480P/720P/768P/1080P/2K/4K 矩阵档） */
+  resolution?: string;
+  /** 产出数量（图片张数/歌曲段数）：count 信号 + u() */
+  output_count?: number;
+  /** 输入图片数（含首尾帧） */
+  input_image_count?: number;
+  /** 输入参考视频时长（秒）。提交时未知按上限估算，终态按官方 usage 覆盖 */
+  input_video_seconds?: number;
+  /** 输入参考音频时长（秒） */
+  input_audio_seconds?: number;
+  /** 输入 token 数（按 token 计价的上游） */
+  input_tokens?: number;
+  /** 输出 token 数 */
+  output_tokens?: number;
+  /** 是否生成音频（公式 u() 取 1/0，可作定价维度） */
+  generate_audio?: boolean;
 }
 
 /** 插件配置项声明（管理端动态表单渲染，加密字段掩码存储） */
@@ -58,16 +73,24 @@ export interface Meta {
   author?: string | { name: string; url?: string };
   /** https 绝对地址（展示用） */
   website?: string;
-  /** 接管的模型（平台标准名），至少一个 */
+  /**
+   * 插件支持的上游模型名（至少一个）。平台模型名由渠道模型路由/映射决定，
+   * 与插件无关；渠道映射出的上游名须在本清单（∪ modelsFromConfig 扩展）内。
+   * 跨插件同名上游模型是正常形态（同一模型由多家供应商提供），归属由渠道
+   * plugin_key 决定。
+   */
   models: string[];
   /** 轮询模式，缺省 per_task */
   fetchMode?: FetchMode;
-  /** 插件原生路由（挂在 /pjs/{key} 下），至少一条 */
-  routes: Route[];
+  /**
+   * 插件原生路由（挂在 /pjs/{key} 下）。与 standardVideos 至少声明其一：
+   * 纯标准端点插件（仅经 /v1/videos、/v1/video/generations 提交，不暴露
+   * /pjs 原生入口）可整体省略 routes，连同 decodeRequest / renderSubmit /
+   * renderTask 等原生路由专属钩子——标准端点的响应由平台渲染。
+   */
+  routes?: Route[];
   /** utils.fetch 额外允许的 host[:port]（渠道 baseUrl host 始终允许） */
   allowedHosts?: string[];
-  /** 计费用量单位声明（number 型键自动注册为公式 u() 变量） */
-  usageSchema?: UsageField[];
   /** 插件配置项（管理端动态表单；utils.config.get 读取，加密字段已解密注入） */
   config?: ConfigField[];
   /**
@@ -77,19 +100,17 @@ export interface Meta {
    */
   standardVideos?: string;
   /**
-   * 扩展模型承载配置键（可选）：该 config 键的值（换行/逗号分隔或 JSON 数组，
-   * 去重后 ≤100 个）运行时并入服务清单（有效清单 = models ∪ 配置扩展）。
-   * 上游新增模型在管理后台改配置即可；冲突在配置保存时预检。指向的键须在
-   * config 中声明、类型为 text/string/json、不允许加密。
+   * 标准端点可承接的参考素材角色（references[].role），缺省仅 first_frame；
+   * 宿主在调用解码钩子前拦截未声明的角色（不静默丢弃）。
+   */
+  referenceRoles?: string[];
+  /**
+   * 扩展上游模型承载配置键（可选）：该 config 键的值（换行/逗号分隔或 JSON 数组，
+   * 去重后 ≤100 个）运行时并入支持清单（有效清单 = models ∪ 配置扩展）。
+   * 上游新增模型在管理后台改配置即可。指向的键须在 config 中声明、类型为
+   * text/string/json、不允许加密。
    */
   modelsFromConfig?: string;
-  /**
-   * 同名模型共享声明（可选）：与其他同样声明 sharedModels 的插件同名声明模型时
-   * 预检放行——同名多插件经各自渠道服务（路由归属由渠道 plugin_key 决定）。
-   * 任一方未声明时同名冲突仍拒绝。同名模型的定价公式须覆盖全部声明插件的
-   * 计量键（u() 缺失取 0）。
-   */
-  sharedModels?: boolean;
   /** 展示图标："text" / "text:<label ≤4字符>" 文字头像，或图标名；不允许 data:/http 链接 */
   icon?: string;
 }
@@ -109,7 +130,10 @@ export interface Route {
 export interface FetchResponse {
   status: number;
   headers: Record<string, string>;
-  /** responseType="json" 且响应为 JSON → 对象；"text" → string；"bytes" → ArrayBuffer */
+  /**
+   * responseType="json"（缺省）且响应头 Content-Type 含 json → 对象，否则 → string；
+   * "text" → string；"bytes" → ArrayBuffer
+   */
   body: any;
 }
 
@@ -120,6 +144,9 @@ export interface Utils {
    * build*Request 同语义；decode/render 等无渠道上下文的钩子内被拒）或绝对 URL
    * （host 须在白名单内：渠道 baseUrl host ∪ meta.allowedHosts）；
    * ≤4 次/钩子、15s/次、30s/批、1MiB/响应；不跟随重定向。
+   * 鉴权：目标与渠道 baseUrl 同源（scheme + host 相同，相对路径天然同源）时由基座
+   * 注入 "Bearer <渠道密钥>"；跨域请求不带任何鉴权；插件自设的 Authorization 一律被剔除
+   * （与 build*Request 的可覆盖语义不同）。
    */
   fetch(request: {
     url: string;
@@ -160,6 +187,7 @@ export interface DecodeContext {
   method: string;
   params?: Record<string, string>;
   body?: any;
+  /** 客户端请求头的首值（Authorization / Cookie 已剔除） */
   headers?: Record<string, string>;
   /** multipart 上传的文件引用（字节不进 JS；body 内以占位符引用） */
   files?: Array<{ref: string; field: string; filename: string; mimeType: string; size: number}>;
@@ -185,14 +213,14 @@ export interface StandardEntryContext {
   path: string;
   /** 通用任务体 */
   body: any;
-  /** 请求声明的模型名（已解析到本插件） */
+  /** 请求声明的平台模型名（可能是渠道映射别名，原样回显） */
   model: string;
 }
 
 /** decodeRequest 返回（submit 意图，必选） */
 export interface DecodeResult {
   kind: "submit";
-  /** 必须在 meta.models 中声明 */
+  /** 平台模型名，原样回显（不校验 meta.models——那是上游模型清单），非空即可 */
   model: string;
   /** 原生请求体，序列化后 ≤50MiB（容纳 base64 内嵌参考图） */
   requestBody?: any;
@@ -202,6 +230,23 @@ export interface DecodeResult {
 export interface DecodeQueryResult {
   kind: "query";
   taskIds: string[];
+}
+
+/** validateRequest 入参（渠道选定后、预扣前，带上游模型名） */
+export interface ValidateRequestContext {
+  /** 归一后的请求体（decode 返回的 requestBody） */
+  body: any;
+  params?: Record<string, string>;
+  /** 平台模型名 */
+  model: string;
+  /** 渠道映射后的上游模型名（宿主已校验 ∈ 插件有效清单 models ∪ modelsFromConfig） */
+  upstreamModel: string;
+  channelBaseUrl?: string;
+}
+
+/** validateRequest 返回：requestBody 非空时替换归一请求体（空对象/undefined = 原样放行） */
+export interface ValidateRequestResult {
+  requestBody?: any;
 }
 
 /** buildSubmitRequest 入参 */
@@ -242,7 +287,7 @@ export interface ParseSubmitContext {
   params?: Record<string, string>;
   model?: string;
   responseBody?: any;
-  /** 归一后的提交请求体（decode 返回的 requestBody）：响应不含 action 线索时（如标准端点入站）由此推断提交形态 */
+  /** 归一后的提交请求体（validateRequest 修正后的 requestBody）：响应不含 action 线索时（如标准端点入站）由此推断提交形态 */
   body?: any;
 }
 
@@ -268,7 +313,7 @@ export interface ParseSubmitResult {
   immediate?: {
     status: "SUCCESS" | "FAILURE";
     taskData?: any;
-    usage?: Record<string, number | string>;
+    usage?: HostUsage;
     artifacts?: ArtifactDecl[];
     failReason?: string;
   };
@@ -278,12 +323,15 @@ export interface ParseSubmitResult {
   state?: any;
 }
 
-// ── 计费事实（可选钩子）──────────────────────────────────
+// ── 计费（可选钩子）──────────────────────────────────────
 
-/** estimateUsage 入参（提交预扣的用量估算；失败回落默认价，不阻断提交） */
+/** estimateUsage 入参（提交预扣的用量估算；抛错或返回非法用量会拒绝提交，不再回落默认价） */
 export interface EstimateUsageContext {
+  /** 归一后的请求体（validateRequest 修正后） */
   body: any;
   model: string;
+  /** 渠道映射后的上游模型名（按上游型号分支计量时使用） */
+  upstreamModel?: string;
   params?: Record<string, string>;
 }
 
@@ -319,10 +367,12 @@ export interface QueryItem {
   taskId: string;
   /** 终态判定 */
   done: boolean;
+  /** 非终态可选：进度（number 0~100 或 "42%"），基座归一化落库并在查询端点/renderTask 透出；未上报保持上一轮值 */
+  progress?: number | string;
   taskData?: any;
   state?: any;
-  /** 终态用量事实（键 ∈ meta.usageSchema；结算按官方计量多退少补） */
-  usage?: Record<string, number | string>;
+  /** 终态官方用量（键 ∈ 宿主固定词汇 HostUsage；结算按官方计量多退少补） */
+  usage?: HostUsage;
   /** 终态产物声明（只指路，宿主转存） */
   artifacts?: ArtifactDecl[];
   /** 任务级失败（不炸整批）；done=true 且有 error → FAILURE */
@@ -382,12 +432,18 @@ export interface TaskPlugin {
    * decodeRequest 的 submit 意图相同。
    */
   decodeVideos?(ctx: StandardEntryContext): DecodeResult;
+  /**
+   * 按上游型号校验/修正（可选）：渠道选定后、预扣前调用，ctx.upstreamModel 为
+   * 渠道映射后的上游模型名——按型号的参数约束（档位/时长/素材数量）在此校验，
+   * 可返回 {requestBody} 替换归一请求体。抛错 = 请求不可接受（400，未预扣）。
+   */
+  validateRequest?(ctx: ValidateRequestContext): ValidateRequestResult | void;
   buildSubmitRequest(ctx: BuildSubmitContext): BuildRequestResult;
   parseSubmitResponse(ctx: ParseSubmitContext): ParseSubmitResult;
   buildQueryRequest(ctx: BuildQueryContext): BuildRequestResult;
   parseQueryResponse(ctx: ParseQueryContext): QueryResult;
-  /** 预扣用量估算（声明 usageSchema 的插件建议导出） */
-  estimateUsage?(ctx: EstimateUsageContext): Record<string, number | string>;
+  /** 预扣用量估算（键 ∈ 宿主固定词汇 HostUsage） */
+  estimateUsage?(ctx: EstimateUsageContext): HostUsage;
   renderSubmit?(ctx: RenderTaskContext): RenderResult;
   renderTask?(ctx: RenderTaskContext): RenderResult;
   /** dynamic 路由批量查询渲染（缺省钩子名） */

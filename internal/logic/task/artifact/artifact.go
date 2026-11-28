@@ -47,7 +47,8 @@ const (
 
 	statusPending = "pending"
 	statusStored  = "stored"
-	statusDirect  = "direct" // 插件关闭转存：仅登记声明，内容链接回源代理
+	statusDirect  = "direct"  // 插件关闭转存：仅登记声明，内容链接回源代理
+	statusExpired = "expired" // 保留期已过：对象已清理，内容链接 410（cleanup.go 标记）
 )
 
 // storageEnabled 插件产物转存开关（宿主内置配置项 artifact_storage；测试可替换）。
@@ -329,7 +330,7 @@ func transferOne(ctx context.Context, fs *lcommon.FileService, job *transferJob,
 		v := rcommon.GetJSONPath(data, art.SourcePath)
 		rawURL, ok := v.(string)
 		if !ok || rawURL == "" {
-			return false, fmt.Errorf("url 路径 %s 取值非字符串", art.SourcePath)
+			return false, fmt.Errorf("url 路径 %s 在 taskData 中取不到值（检查产物声明的取值路径是否与上游响应结构一致；数组元素用形如 results[0].url 的下标）", art.SourcePath)
 		}
 		target, rErr := resolveSource(ctx, job.ChannelID, rawURL, art.SourceAuth)
 		if rErr != nil {

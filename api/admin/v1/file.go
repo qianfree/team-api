@@ -94,12 +94,13 @@ type FileDeleteReq struct {
 
 type FileDeleteRes struct{}
 
-// FileCleanupReq 手动触发一次保留期清理（导出 + 图片）。
+// FileCleanupReq 手动触发一次保留期清理（导出 + 图片 + JS 插件产物）。
 type FileCleanupReq struct {
 	g.Meta `path:"/files/cleanup" method:"post" mime:"json" tags:"管理后台-文件管理" summary:"手动清理过期文件"`
 }
 
 type FileCleanupRes struct {
-	ExportsDeleted int `json:"exports_deleted"`
-	ImagesDeleted  int `json:"images_deleted"`
+	ExportsDeleted   int `json:"exports_deleted"`
+	ImagesDeleted    int `json:"images_deleted"`
+	ArtifactsDeleted int `json:"artifacts_deleted"`
 }

@@ -5,8 +5,8 @@ import {
   IconRefresh,
   IconSettings,
   IconClose,
-  IconSend,
-  IconPause,
+  IconArrowUp,
+  IconCode,
   IconLeft,
   IconRobot,
   IconCopy,
@@ -21,6 +21,8 @@ import { sanitizeHtml } from '@/utils/sanitize'
 import { hasPermission } from '@/utils/permission'
 import { useAuthStore } from '@/stores/auth'
 import { usePublicSettings } from '@/composables/usePublicSettings'
+import hljs from 'highlight.js/lib/core'
+import javascript from 'highlight.js/lib/languages/javascript'
 import {
   useAiAssistantChat,
   SKILL_OPTIONS,
@@ -29,9 +31,13 @@ import {
   type ValidateReport,
 } from './useAiAssistantChat'
 
+// 按需注册（core + javascript；token 配色在 main.css 的双主题里定义）
+hljs.registerLanguage('javascript', javascript)
+
 /**
  * 全局 AI 助手浮动窗口：非模态（无遮罩，不挡页面操作），拖标题栏任意移动、
- * 右下角缩放，位置尺寸按管理员持久化；移动端回落为底部面板（免拖拽）。
+ * 四边/四角 8 向缩放，位置尺寸按管理员持久化；移动端回落为底部面板（免拖拽）。
+ * 输入区为单卡片：textarea 在上，技能胶囊贴左下、发送按钮贴右下。
  * 内含对话（技能注入 + 代码专用通道 + 校验报告 + 半自动修复）与助手配置面板
  * （独立端点 /admin/ai-assistant/*，同 ai_analysis 模式）。
  */
@@ -129,8 +135,36 @@ function renderMarkdown(text: string): string {
   return sanitizeHtml(marked.parse(text) as string)
 }
 
+/** 工具调用的展示名（agent 循环里的 write/append/edit/validate） */
+function toolLabel(name: string): string {
+  switch (name) {
+    case 'write_code': return '写入代码'
+    case 'append_code': return '追加代码'
+    case 'edit_code': return '修改代码'
+    case 'validate_code': return '校验'
+    default: return name || '工具调用'
+  }
+}
+
+/** 代码卡内容：js 源码高亮（hljs 输出已转义，v-html 安全）；formula 保持纯文本。
+ *  非 v-html 场景的兜底输出须手动转义（AI 产出可能含 <、&） */
+function highlightedCode(part: MessagePart): string {
+  const esc = part.content.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  if (part.lang === 'formula' || !part.content) return esc
+  try {
+    return hljs.highlight(part.content, { language: 'javascript', ignoreIllegals: true }).value
+  } catch {
+    return esc
+  }
+}
+
+/** 历史会话里的已下线技能仍要显示可读名（新建会话不再提供入口） */
+const LEGACY_SKILL_LABELS: Record<string, string> = {
+  js_plugin: 'JS 插件',
+}
+
 function skillLabel(key: string): string {
-  return SKILL_OPTIONS.find((o) => o.key === key)?.label || key
+  return SKILL_OPTIONS.find((o) => o.key === key)?.label || LEGACY_SKILL_LABELS[key] || key
 }
 
 /** 续写被截断的代码：增量并回原代码段，结束后自动重新校验 */
@@ -340,23 +374,47 @@ function onDragEnd() {
   persistRect()
 }
 
-// 缩放：右下角手柄
-let resizeStart: { px: number; py: number; rect: WinRect } | null = null
+// 缩放：四边 + 四角共 8 个手柄，对边固定（往左/上拉时同步移动 left/top）
+type ResizeDir = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
+const RESIZE_DIRS: ResizeDir[] = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']
 
-function onResizeStart(e: PointerEvent) {
+let resizeStart: { px: number; py: number; rect: WinRect; dir: ResizeDir } | null = null
+
+function onResizeStart(e: PointerEvent, dir: ResizeDir) {
   if (isMobile.value) return
-  resizeStart = { px: e.clientX, py: e.clientY, rect: { ...winRect.value } }
+  resizeStart = { px: e.clientX, py: e.clientY, rect: { ...winRect.value }, dir }
   resizing.value = true
   ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
 }
 
 function onResizeMove(e: PointerEvent) {
-  if (!resizeStart) return
-  winRect.value = clampRect({
-    ...resizeStart.rect,
-    w: resizeStart.rect.w + (e.clientX - resizeStart.px),
-    h: resizeStart.rect.h + (e.clientY - resizeStart.py),
-  })
+  const s = resizeStart
+  if (!s) return
+  const dx = e.clientX - s.px
+  const dy = e.clientY - s.py
+  const r = { ...s.rect }
+  const dir = s.dir
+
+  if (dir.includes('e')) {
+    const maxW = Math.max(MIN_W, window.innerWidth - s.rect.x)
+    r.w = Math.min(Math.max(s.rect.w + dx, MIN_W), maxW)
+  }
+  if (dir.includes('s')) {
+    const maxH = Math.max(MIN_H, window.innerHeight - s.rect.y)
+    r.h = Math.min(Math.max(s.rect.h + dy, MIN_H), maxH)
+  }
+  if (dir.includes('w')) {
+    const right = s.rect.x + s.rect.w
+    r.w = Math.min(Math.max(s.rect.w - dx, MIN_W), Math.max(MIN_W, right))
+    r.x = right - r.w
+  }
+  if (dir.includes('n')) {
+    const bottom = s.rect.y + s.rect.h
+    r.h = Math.min(Math.max(s.rect.h - dy, MIN_H), Math.max(MIN_H, bottom))
+    r.y = bottom - r.h
+  }
+
+  winRect.value = clampRect(r)
 }
 
 function onResizeEnd() {
@@ -502,7 +560,7 @@ watch(activeView, (v) => {
 
 <template>
   <teleport to="body">
-    <div v-if="visible" class="ai-win" :class="{ 'ai-win--dragging': dragging || resizing }" :style="winStyle">
+    <div v-if="visible" class="ai-win" :class="{ 'ai-win--dragging': dragging, 'ai-win--resizing': resizing }" :style="winStyle">
       <!-- 头部：拖动区 -->
       <div
         class="ai-head"
@@ -624,7 +682,7 @@ watch(activeView, (v) => {
                 </div>
               </div>
               <p class="cfg-hint">
-                激活技能生成代码时，输出上限自动抬到 16,384、温度降到 0.2（你的配置更严格时以你的为准）；
+                激活技能生成代码时，输出上限自动抬到 32,768、温度降到 0.2（你的配置更严格时以你的为准，上游不接受时自动回退）；
                 单次输出被截断时，可在工作台点「续写剩余部分」接着写，续写会合并进同一版本。
               </p>
             </section>
@@ -705,7 +763,7 @@ watch(activeView, (v) => {
             <template v-else>
               <p class="ai-empty__title">有什么可以帮你？</p>
               <p class="ai-empty__desc">
-                运营问答、文案起草、排障思路都可以问；激活下方技能还能生成计费表达式与 JS 插件代码，并自动走上线同款校验。
+                运营问答、文案起草、排障思路都可以问；激活「计费表达式」技能，可按管理端同口径生成并自动校验。
               </p>
               <div class="ai-empty__asks">
                 <button v-for="q in QUICK_ASKS" :key="q" type="button" class="ai-ask" @click="quickAsk(q)">
@@ -761,10 +819,12 @@ watch(activeView, (v) => {
                       <IconCopy />
                     </button>
                   </div>
-                  <pre v-show="!partCollapsed(msg, idx)" class="ai-code__pre"><code>{{ part.content }}</code></pre>
-                  <!-- 被 max_tokens 截断：明确告知 + 一键续写 -->
-                  <div v-if="part.truncated" class="ai-trunc">
-                    <span class="ai-trunc__text">输出达到长度上限，代码不完整</span>
+                  <pre v-show="!partCollapsed(msg, idx)" class="ai-code__pre"><code :class="part.lang === 'formula' ? '' : 'hljs'" v-html="highlightedCode(part)"></code></pre>
+                  <!-- 被 max_tokens 截断 / 分段输出未完：明确告知 + 一键续写（自动续写超限时出现） -->
+                  <div v-if="part.truncated || part.pendingMore" class="ai-trunc">
+                    <span class="ai-trunc__text">
+                      {{ part.truncated ? '输出达到长度上限，代码不完整' : '已达自动续写上限，还有后续段落' }}
+                    </span>
                     <button type="button" class="ai-trunc__btn" :disabled="streaming" @click="onContinueCode(part)">
                       {{ streaming ? '续写中…' : '续写剩余部分' }}
                     </button>
@@ -805,6 +865,15 @@ watch(activeView, (v) => {
                 </div>
               </template>
 
+              <!-- 工具调用行（agent 模式）：模型经 write/append/edit/validate 工具读写代码，宿主执行 -->
+              <div v-if="msg.role === 'assistant' && msg.toolCalls?.length" class="ai-tools">
+                <span v-for="(tc, ti) in msg.toolCalls" :key="tc.id || ti" class="ai-toolcall">
+                  <i class="ai-toolcall__dot" />
+                  <b>{{ toolLabel(tc.name) }}</b>
+                  <em v-if="tc.arguments.length">{{ tc.arguments.length.toLocaleString() }} 字符</em>
+                </span>
+              </div>
+
               <!-- 等待首 token -->
               <div v-if="msg.id === typingMsgId && !msg.thinking" class="ai-typing"><i /><i /><i /></div>
 
@@ -821,59 +890,61 @@ watch(activeView, (v) => {
           </div>
         </div>
 
-        <!-- 输入区 -->
+        <!-- 输入区：技能在左下，发送在右下 -->
         <div class="ai-input">
           <div class="ai-composer">
-            <div class="ai-composer__top">
-              <span class="ai-composer__label">技能</span>
-              <button
-                v-for="s in SKILL_OPTIONS"
-                :key="s.key"
-                type="button"
-                class="ai-skill"
-                :class="{ 'ai-skill--on': activeSkills.includes(s.key) }"
-                :disabled="streaming"
-                @click="toggleSkill(s.key)"
-              >
-                <IconCheck v-if="activeSkills.includes(s.key)" class="ai-skill__tick" />
-                {{ s.label }}
-              </button>
-            </div>
-            <div class="ai-composer__main">
-              <textarea
-                ref="textareaEl"
-                v-model="input"
-                class="ai-composer__textarea"
-                rows="1"
-                placeholder="输入问题…"
-                :disabled="assistantDisabled && !canConfig"
-                @input="autoGrow"
-                @keydown.enter.exact.prevent="onSend"
-              />
+            <textarea
+              ref="textareaEl"
+              v-model="input"
+              class="ai-composer__textarea"
+              rows="1"
+              placeholder="输入问题…"
+              :disabled="assistantDisabled && !canConfig"
+              @input="autoGrow"
+              @keydown.enter.exact.prevent="onSend"
+            />
+            <div class="ai-composer__bar">
+              <div class="ai-composer__skills">
+                <button
+                  v-for="s in SKILL_OPTIONS"
+                  :key="s.key"
+                  type="button"
+                  class="ai-skill"
+                  :class="{ 'ai-skill--on': activeSkills.includes(s.key) }"
+                  :disabled="streaming"
+                  :aria-pressed="activeSkills.includes(s.key)"
+                  :title="activeSkills.includes(s.key) ? `已激活「${s.label}」` : `激活「${s.label}」技能`"
+                  @click="toggleSkill(s.key)"
+                >
+                  <IconCode class="ai-skill__icon" />
+                  {{ s.label }}
+                </button>
+              </div>
+              <span class="ai-composer__hint">Enter 发送 · Shift + Enter 换行</span>
               <button v-if="streaming" type="button" class="ai-send ai-send--stop" title="停止生成" @click="stop">
-                <IconPause />
+                <i class="ai-send__stop" />
               </button>
               <button v-else type="button" class="ai-send" :disabled="!canSend" title="发送 (Enter)" @click="onSend">
-                <IconSend />
+                <IconArrowUp />
               </button>
-            </div>
-            <div class="ai-composer__foot">
-              <span>Enter 发送 · Shift + Enter 换行</span>
-              <span v-if="activeSkills.length">{{ activeSkills.length }} 个技能已激活</span>
             </div>
           </div>
         </div>
       </template>
 
-      <!-- 缩放手柄（桌面端） -->
-      <div
-        v-if="!isMobile"
-        class="ai-win__resize"
-        @pointerdown.prevent="onResizeStart"
-        @pointermove="onResizeMove"
-        @pointerup="onResizeEnd"
-        @pointercancel="onResizeEnd"
-      />
+      <!-- 缩放手柄：四边 + 四角（桌面端） -->
+      <template v-if="!isMobile">
+        <div
+          v-for="dir in RESIZE_DIRS"
+          :key="dir"
+          class="ai-win__rz"
+          :class="`ai-win__rz--${dir}`"
+          @pointerdown.prevent="onResizeStart($event, dir)"
+          @pointermove="onResizeMove"
+          @pointerup="onResizeEnd"
+          @pointercancel="onResizeEnd"
+        />
+      </template>
     </div>
   </teleport>
 </template>
@@ -902,6 +973,10 @@ watch(activeView, (v) => {
 .ai-win--dragging {
   user-select: none;
   cursor: grabbing;
+}
+/* 缩放的指针可能移出手柄：只锁文本选择，光标交给手柄/系统 */
+.ai-win--resizing {
+  user-select: none;
 }
 
 /* 头部（拖动区） */
@@ -995,20 +1070,78 @@ watch(activeView, (v) => {
   color: var(--ta-primary);
 }
 
-/* 缩放手柄 */
-.ai-win__resize {
+/* 缩放手柄：四边细条 + 四角热区（z-index 压过内容，滚动条留 4px 内缩避开） */
+.ai-win__rz {
   position: absolute;
+  z-index: 6;
+  touch-action: none;
+}
+.ai-win__rz--n,
+.ai-win__rz--s {
+  left: 14px;
+  right: 14px;
+  height: 4px;
+  cursor: ns-resize;
+}
+.ai-win__rz--n {
+  top: 0;
+}
+.ai-win__rz--s {
+  bottom: 0;
+}
+.ai-win__rz--e,
+.ai-win__rz--w {
+  top: 14px;
+  bottom: 14px;
+  width: 4px;
+  cursor: ew-resize;
+}
+.ai-win__rz--e {
+  right: 0;
+}
+.ai-win__rz--w {
+  left: 0;
+}
+.ai-win__rz--ne,
+.ai-win__rz--nw,
+.ai-win__rz--se,
+.ai-win__rz--sw {
+  width: 14px;
+  height: 14px;
+}
+.ai-win__rz--ne {
+  top: 0;
+  right: 0;
+  cursor: nesw-resize;
+}
+.ai-win__rz--nw {
+  top: 0;
+  left: 0;
+  cursor: nwse-resize;
+}
+.ai-win__rz--se {
   right: 0;
   bottom: 0;
-  width: 18px;
-  height: 18px;
   cursor: nwse-resize;
-  touch-action: none;
+}
+.ai-win__rz--sw {
+  left: 0;
+  bottom: 0;
+  cursor: nesw-resize;
+}
+/* 右下角保留经典抓角纹理（纯视觉，不拦事件） */
+.ai-win__rz--se::after {
+  content: '';
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 8px;
+  height: 8px;
   background:
-    linear-gradient(135deg, transparent 50%, var(--ta-border) 50%) no-repeat,
-    linear-gradient(135deg, transparent 65%, var(--ta-border) 65%) no-repeat;
-  background-size: 10px 10px, 10px 10px;
-  background-position: bottom right;
+    linear-gradient(135deg, transparent 46%, var(--ta-border) 46%, var(--ta-border) 60%, transparent 60%) no-repeat,
+    linear-gradient(135deg, transparent 72%, var(--ta-border) 72%, var(--ta-border) 86%, transparent 86%) no-repeat;
+  background-size: 8px 8px, 8px 8px;
+  pointer-events: none;
 }
 
 /* ── 设置视图 ─────────────────────────────────────────── */
@@ -1027,12 +1160,12 @@ watch(activeView, (v) => {
   scrollbar-color: color-mix(in srgb, var(--ta-text-tertiary) 40%, transparent) transparent;
 }
 .ai-config__spin::-webkit-scrollbar {
-  width: 8px;
+  width: 12px;
 }
 .ai-config__spin::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--ta-text-tertiary) 35%, transparent);
   background-clip: content-box;
-  border: 2px solid transparent;
+  border: 4px solid transparent;
   border-radius: 999px;
 }
 .cfg {
@@ -1204,12 +1337,12 @@ watch(activeView, (v) => {
   scrollbar-color: color-mix(in srgb, var(--ta-text-tertiary) 40%, transparent) transparent;
 }
 .ai-list::-webkit-scrollbar {
-  width: 8px;
+  width: 12px;
 }
 .ai-list::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--ta-text-tertiary) 35%, transparent);
   background-clip: content-box;
-  border: 2px solid transparent;
+  border: 4px solid transparent;
   border-radius: 999px;
 }
 .ai-list::-webkit-scrollbar-thumb:hover {
@@ -1561,6 +1694,40 @@ watch(activeView, (v) => {
 }
 
 
+/* 工具调用行（agent 模式） */
+.ai-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.ai-toolcall {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border: 1px solid color-mix(in srgb, var(--ta-primary) 22%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ta-primary) 4%, var(--ta-bg-card));
+  font-size: 11px;
+  color: var(--ta-text-secondary);
+}
+.ai-toolcall__dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ta-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ta-primary) 15%, transparent);
+}
+.ai-toolcall b {
+  font-weight: 500;
+  color: var(--ta-text-primary);
+}
+.ai-toolcall em {
+  font-style: normal;
+  color: var(--ta-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
 .ai-typing {
   display: inline-flex;
   align-items: center;
@@ -1782,77 +1949,32 @@ watch(activeView, (v) => {
   background: color-mix(in srgb, var(--ta-primary) 14%, transparent);
 }
 
-/* ── 输入区 ───────────────────────────────────────────── */
+/* ── 输入区：技能在左下，发送在右下 ─────────────────────── */
 .ai-input {
   flex-shrink: 0;
-  padding: 10px 14px 12px;
+  padding: 8px 12px 10px;
   background: var(--ta-bg-card);
   border-top: 1px solid var(--ta-border);
 }
 .ai-composer {
   display: flex;
   flex-direction: column;
-  padding: 8px 10px 6px;
-  border-radius: 14px;
+  gap: 2px;
+  padding: 6px 7px 6px 11px;
+  border-radius: 16px;
   border: 1px solid var(--ta-border);
   background: var(--ta-bg-card);
   transition: border-color var(--ta-duration-fast) var(--ta-ease), box-shadow var(--ta-duration-fast) var(--ta-ease);
 }
 .ai-composer:focus-within {
-  border-color: color-mix(in srgb, var(--ta-primary) 55%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ta-primary) 12%, transparent);
-}
-.ai-composer__top {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 0 2px 6px;
-}
-.ai-composer__label {
-  font-size: 11px;
-  color: var(--ta-text-tertiary);
-}
-.ai-skill {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 5px 9px;
-  border-radius: 6px;
-  border: 1px solid var(--ta-border);
-  background: var(--ta-bg-secondary);
-  color: var(--ta-text-secondary);
-  font-size: 11.5px;
-  line-height: 1.2;
-  cursor: pointer;
-  transition: all var(--ta-duration-fast) var(--ta-ease);
-}
-.ai-skill:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--ta-primary) 40%, transparent);
-  color: var(--ta-primary);
-}
-.ai-skill:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-.ai-skill--on {
-  border-color: color-mix(in srgb, var(--ta-primary) 45%, transparent);
-  background: color-mix(in srgb, var(--ta-primary) 10%, transparent);
-  color: var(--ta-primary);
-}
-.ai-skill__tick {
-  font-size: 11px;
-}
-.ai-composer__main {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
+  border-color: color-mix(in srgb, var(--ta-primary) 52%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ta-primary) 11%, transparent);
 }
 .ai-composer__textarea {
-  flex: 1;
-  min-height: 36px;
+  width: 100%;
+  min-height: 34px;
   max-height: 132px;
-  padding: 7px 2px;
+  padding: 5px 2px 1px;
   border: none;
   outline: none;
   resize: none;
@@ -1870,49 +1992,106 @@ watch(activeView, (v) => {
   color: var(--ta-text-tertiary);
   cursor: not-allowed;
 }
+/* 底栏：左技能 / 中提示 / 右发送 */
+.ai-composer__bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 1px 0 0;
+}
+.ai-composer__skills {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.ai-skill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: 999px;
+  border: 1px solid var(--ta-border);
+  background: transparent;
+  color: var(--ta-text-tertiary);
+  font-size: 11.5px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--ta-duration-fast) var(--ta-ease),
+    border-color var(--ta-duration-fast) var(--ta-ease), color var(--ta-duration-fast) var(--ta-ease);
+}
+.ai-skill__icon {
+  font-size: 12px;
+}
+.ai-skill:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--ta-primary) 40%, transparent);
+  background: color-mix(in srgb, var(--ta-primary) 6%, transparent);
+  color: var(--ta-primary);
+}
+.ai-skill:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.ai-skill--on {
+  border-color: color-mix(in srgb, var(--ta-primary) 45%, transparent);
+  background: color-mix(in srgb, var(--ta-primary) 10%, transparent);
+  color: var(--ta-primary);
+  font-weight: 500;
+}
+.ai-composer__hint {
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  color: var(--ta-text-tertiary);
+  opacity: 0.85;
+}
 .ai-send {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: 32px;
-  height: 32px;
-  margin-bottom: 4px;
+  width: 30px;
+  height: 30px;
   border: none;
-  border-radius: 10px;
+  border-radius: 50%;
   font-size: 16px;
   color: #fff;
   cursor: pointer;
   background: var(--ta-primary-gradient);
-  box-shadow: 0 4px 10px -2px color-mix(in srgb, var(--ta-primary) 45%, transparent);
+  box-shadow: 0 3px 8px -3px color-mix(in srgb, var(--ta-primary) 55%, transparent);
   transition: transform var(--ta-duration-fast) var(--ta-ease), box-shadow var(--ta-duration-fast) var(--ta-ease),
     background var(--ta-duration-fast) var(--ta-ease);
 }
 .ai-send:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 6px 14px -2px color-mix(in srgb, var(--ta-primary) 55%, transparent);
+  box-shadow: 0 6px 14px -4px color-mix(in srgb, var(--ta-primary) 58%, transparent);
 }
 .ai-send:active:not(:disabled) {
-  transform: translateY(0);
+  transform: translateY(0) scale(0.96);
 }
 .ai-send:disabled {
-  background: var(--ta-bg-secondary);
-  color: var(--ta-text-weakest, #cbd5e1);
+  background: color-mix(in srgb, var(--ta-text-tertiary) 14%, transparent);
+  color: color-mix(in srgb, var(--ta-text-tertiary) 62%, transparent);
   box-shadow: none;
   cursor: not-allowed;
 }
 .ai-send--stop {
   background: var(--ta-danger);
-  box-shadow: 0 4px 10px -2px color-mix(in srgb, var(--ta-danger) 40%, transparent);
+  box-shadow: 0 3px 8px -3px color-mix(in srgb, var(--ta-danger) 50%, transparent);
 }
-.ai-composer__foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 4px 2px 0;
-  font-size: 11px;
-  color: var(--ta-text-tertiary);
+.ai-send--stop:hover:not(:disabled) {
+  box-shadow: 0 6px 14px -4px color-mix(in srgb, var(--ta-danger) 55%, transparent);
+}
+.ai-send__stop {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: #fff;
 }
 
 @keyframes aiRowIn {
