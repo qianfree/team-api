@@ -26,6 +26,10 @@
 //    档位）移到 validateRequest（ctx.upstreamModel），decode 只按路由与体形分流。
 // ⑦ 预扣含输入视频：wan3.0 系官方计费时长 = 输入视频 + 输出视频，预估带参考视频时按
 //    上限报 input_video_seconds（合计 ≤15s 且「输入+输出≤30s」），终态以官方 usage 为准。
+// ⑧ 1.8.0：扩展模型——meta.modelsFromConfig=extra_models，上游新型号（新万相/千问图像）
+//    经配置登记即并入有效清单，无需更新插件；未收录型号走宽容路径：不校验分辨率档位
+//    （新型号可能有新档），首帧按 wan3.x media 形态落位、音频开关透传，参数合法性由
+//    上游校验；计费回落默认档（WAN_DEFAULT_PROFILE，与 wan3.0 同规格）。
 const WAN_MODELS = {
   "wan3.0-video": { resolutions: ["480P", "720P", "1080P"], defaultResolution: "1080P", maxDuration: 30 },
   "wan3.0-video-prime": { resolutions: ["480P", "720P", "1080P"], defaultResolution: "1080P", maxDuration: 30 },
@@ -44,6 +48,9 @@ const WAN_MODELS = {
   "wan2.2-kf2v-flash": { resolutions: ["480P", "720P", "1080P"], defaultResolution: "720P", maxDuration: 5 },
   "wan2.2-s2v": { resolutions: ["480P", "720P"], defaultResolution: "480P", maxDuration: 10 },
 };
+// 扩展型号（不在 WAN_MODELS 内，经 extra_models 配置登记）的默认档位：与 wan3.0 同规格，
+// 仅用于计费预估与首帧落位——分辨率档位不校验（新型号可能有新档），由上游判定
+const WAN_DEFAULT_PROFILE = { resolutions: ["480P", "720P", "1080P"], defaultResolution: "1080P", maxDuration: 30 };
 const WAN_AUDIO_VIDEO_MODELS = ["wan3.0-video", "wan3.0-video-prime"];
 // 官方计费时长 = 输入视频 + 输出视频的型号（查询 usage 双段回报）：预估与终态共用本清单，
 // 保证两个时点对「输入视频是否计费」的判定一致
@@ -68,6 +75,8 @@ function baseModel(model) {
 function isVideoModel(model) { return Boolean(WAN_MODELS[baseModel(model)]); }
 function isSyncImage(model) { return SYNC_IMAGE_MODELS.includes(trimmed(model)); }
 function isAsyncImage(model) { return ASYNC_IMAGE_MODELS.includes(trimmed(model)); }
+// 型号档位：内置型号查表，扩展型号回落默认档（分辨率档位校验跳过——见 validateRequest）
+function wanProfile(model) { return WAN_MODELS[baseModel(model)] || WAN_DEFAULT_PROFILE; }
 
 function videoService(model) {
   const base = baseModel(model);
@@ -83,7 +92,7 @@ export const meta = {
     en: "Alibaba Cloud Bailian image and video generation (Wan, Qwen-Image, Z-Image)",
     zh: "阿里云百炼图片与视频生成（万相、千问图像、Z-Image）",
   },
-  version: "1.7.0",
+  version: "2.0.0",
   author: "qianfree",
   channelTypes: [79],
   models: Object.keys(WAN_MODELS)
@@ -92,6 +101,15 @@ export const meta = {
     .concat(ASYNC_IMAGE_MODELS),
   fetchMode: "per_task",
   standardVideos: "decodeVideos",
+  // 扩展模型：上游新型号（新万相/千问图像）无需更新插件——配置登记即并入有效清单，
+  // 配合渠道模型映射使用；未收录型号按默认档透传（不校验分辨率档位），由上游校验
+  modelsFromConfig: "extra_models",
+  config: [
+    {
+      key: "extra_models", label: "扩展上游模型", type: "text", group: "模型",
+      description: "每行一个百炼上游模型名（如新发布的万相/千问图像型号），保存后并入本插件支持的上游模型清单（渠道模型映射配合使用）；未收录型号不校验分辨率档位，参数合法性由上游校验",
+    },
+  ],
   routes: [
     { method: "POST", path: "/api/v1/services/aigc/video-generation/video-synthesis", type: "submit", decode: "createTask", render: "renderSubmit" },
     { method: "POST", path: "/api/v1/services/aigc/image2video/video-synthesis", type: "submit", decode: "createTask", render: "renderSubmit" },
@@ -166,35 +184,38 @@ export function decodeVideos(ctx) {
 }
 
 // validateRequest 渠道选定后按上游型号校验并定稿：
-//   - 图像路由：上游须为对应形态（同步 multimodal / 异步 text2image）的百炼图像模型
-//   - 视频：上游须为万相视频模型，分辨率按型号档位校验；标准端点的首帧按型号
-//     落位（wan3.x input.media 首帧 / wan2.x input.img_url），音频开关仅 wan3.0 系透传
+//   - 图像路由：已知型号须为对应形态（同步 multimodal / 异步 text2image）的百炼图像
+//     模型；扩展型号（不在内置清单，经 extra_models 登记）不校验，由上游判定
+//   - 视频：已知图像型号拒绝；扩展型号放行。分辨率档位仅对已知型号校验（扩展型号
+//     可能有新档）；标准端点的首帧按型号落位（wan3.x input.media 首帧 / wan2.x
+//     input.img_url，扩展型号按 wan3.x 形态），音频开关 wan3.0 系与扩展型号透传
 export function validateRequest(ctx) {
   const req = plainObject(ctx.body);
   const upstream = trimmed(ctx.upstreamModel || ctx.model);
   if (req._image) {
-    if (req._sync && !isSyncImage(upstream)) throw new Error(upstream + " is not a Bailian synchronous image model (multimodal-generation)");
-    if (!req._sync && !isAsyncImage(upstream)) throw new Error(upstream + " is not a Bailian asynchronous image model (text2image)");
+    if (req._sync && (isAsyncImage(upstream) || isVideoModel(upstream))) throw new Error(upstream + " is not a Bailian synchronous image model (multimodal-generation)");
+    if (!req._sync && (isSyncImage(upstream) || isVideoModel(upstream))) throw new Error(upstream + " is not a Bailian asynchronous image model (text2image)");
     return {};
   }
-  if (!isVideoModel(upstream)) throw new Error(upstream + " is not a Wan video model");
+  if (isSyncImage(upstream) || isAsyncImage(upstream)) throw new Error(upstream + " is an image model; video endpoints are not supported");
   const base = baseModel(upstream);
   const profile = WAN_MODELS[base];
   const vendor = plainObject(req.vendorBody);
   const params = plainObject(vendor.parameters);
-  if (params.resolution !== undefined && !profile.resolutions.includes(trimmed(params.resolution).toUpperCase())) {
+  if (profile && params.resolution !== undefined && !profile.resolutions.includes(trimmed(params.resolution).toUpperCase())) {
     throw new Error(upstream + " resolution must be one of " + profile.resolutions.join(", "));
   }
   if (!req._std) return { requestBody: Object.assign({}, req, { _upstream: upstream }) };
   // 标准端点：按型号定稿首帧与音频开关。兼容字段 images[0]/metadata.image 只承载 first_frame
   // 角色的素材（宿主归一保证，其余角色本插件未声明承接），wan3.x 用官方 media 类型 first_frame
+  // （扩展型号按 wan3.x 形态落位——现役代际约定）
   const input = Object.assign({}, plainObject(vendor.input));
   if (req._image_ref) {
-    if (base.startsWith("wan3.")) input.media = [{ type: "first_frame", url: req._image_ref }];
+    if (!profile || base.startsWith("wan3.")) input.media = [{ type: "first_frame", url: req._image_ref }];
     else input.img_url = req._image_ref;
   }
   const parameters = Object.assign({}, params);
-  if (WAN_AUDIO_VIDEO_MODELS.includes(base) && req._audio != null) parameters.audio = req._audio;
+  if ((WAN_AUDIO_VIDEO_MODELS.includes(base) || !profile) && req._audio != null) parameters.audio = req._audio;
   const finalBody = { input: input };
   if (Object.keys(parameters).length) finalBody.parameters = parameters;
   return { requestBody: { vendorBody: finalBody, _upstream: upstream } };
@@ -211,7 +232,7 @@ export function estimateUsage(ctx) {
   }
   const model = trimmed(ctx.upstreamModel || ctx.model);
   const base = baseModel(model);
-  const profile = WAN_MODELS[base] || WAN_MODELS["wan3.0-video"];
+  const profile = wanProfile(model);
   const params = plainObject(plainObject(req.vendorBody).parameters);
   let seconds = Number(params.duration);
   if (!Number.isFinite(seconds) || seconds <= 0) seconds = profile.maxDuration; // -1（自选）保留最长

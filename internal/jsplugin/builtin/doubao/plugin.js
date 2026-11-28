@@ -24,6 +24,10 @@
 // ⑧ 标准端点参考素材（1.7.0）：通用任务体 references[]（role 词汇与 Ark content[].role
 //    一致）按原序映射为带 role 的 content 项；Seedance 模型层约束在此校验（见
 //    referenceContent）。无 references 时回落兼容字段 images[]/metadata.image。
+// ⑨ 1.9.0：扩展模型——meta.modelsFromConfig=extra_models，上游新型号（新 Seedance/
+//    Seedream）经配置登记即并入有效清单，无需更新插件；未收录型号走宽容路径：图像
+//    路由仅拒绝已知视频型号（扩展型号可能是新 Seedream），视频路由按 DEFAULT_VIDEO_PROFILE
+//    默认档（全档分辨率/30s/多模态参考），参数合法性由上游校验。
 const VIDEO_MODELS = {
   "doubao-seedance-1-0-pro-250528": { resolutions: ["480p", "720p", "1080p"], maxDuration: 12 },
   "doubao-seedance-1-0-lite-t2v": { resolutions: ["480p", "720p", "1080p"], maxDuration: 12 },
@@ -51,7 +55,7 @@ export const meta = {
     en: "Volcengine Doubao Seedance video generation and Seedream image generation",
     zh: "火山引擎豆包 Seedance 视频生成与 Seedream 图片生成",
   },
-  version: "1.8.0",
+  version: "2.0.0",
   author: "qianfree",
   channelTypes: [51],
   models: Object.keys(VIDEO_MODELS).concat(Object.keys(IMAGE_MODELS)),
@@ -59,6 +63,15 @@ export const meta = {
   standardVideos: "decodeVideos",
   // 标准端点 references[] 可承接的角色（模型层约束在 referenceContent 校验）
   referenceRoles: ["first_frame", "last_frame", "reference_image", "reference_video", "reference_audio"],
+  // 扩展模型：上游新型号（新 Seedance/Seedream）无需更新插件——配置登记即并入有效
+  // 清单，配合渠道模型映射使用；未收录型号按默认档透传，参数合法性由上游校验
+  modelsFromConfig: "extra_models",
+  config: [
+    {
+      key: "extra_models", label: "扩展上游模型", type: "text", group: "模型",
+      description: "每行一个火山方舟上游模型名（如新发布的 Seedance/Seedream 型号），保存后并入本插件支持的上游模型清单（渠道模型映射配合使用）；未收录型号按默认档位计费预估，参数合法性由上游校验",
+    },
+  ],
   routes: [
     { method: "POST", path: "/api/v3/contents/generations/tasks", type: "submit", decode: "createTask", render: "renderSubmit" },
     { method: "POST", path: "/api/v3/images/generations", type: "submit", decode: "createImage", render: "renderImage" },
@@ -205,13 +218,15 @@ export function decodeVideos(ctx) {
   return { kind: "submit", model: model, requestBody: { vendorBody: vendorBody } };
 }
 
-// validateRequest 渠道选定后按上游型号校验：图片路由须为 Seedream、视频请求不得指向
-// Seedream；视频分辨率按型号档位校验；多模态参考约束（referenceRules）按型号校验。
+// validateRequest 渠道选定后按上游型号校验：图片路由仅拒绝已知 Seedance 视频型号
+// （扩展型号可能是新 Seedream，放行由上游判定）、视频请求不得指向已知 Seedream；
+// 视频分辨率按型号档位校验（扩展型号走 DEFAULT_VIDEO_PROFILE 全档）；多模态参考
+// 约束（referenceRules）按型号校验。
 export function validateRequest(ctx) {
   const req = plainObject(ctx.body);
   const upstream = trimmed(ctx.upstreamModel || ctx.model);
   if (req._image) {
-    if (!IMAGE_MODELS[upstream]) throw new Error(upstream + " is not a Seedream image model");
+    if (VIDEO_MODELS[upstream]) throw new Error(upstream + " is a Seedance video model; image endpoints are not supported");
     return {};
   }
   if (IMAGE_MODELS[upstream]) throw new Error(upstream + " is an image model; video endpoints are not supported");

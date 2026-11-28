@@ -30,6 +30,10 @@
 //    MiniMax-H3 且强制改写型号）；分辨率/时长按型号档位校验；结算读官方 usage 字段
 //    input_image_count / input_seconds（此前读错字段名，素材用量恒回退预扣口径）；
 //    标准端点 references[]（role 词汇与 MiniMax content[].role 一致）按原序映射。
+// ⑫ 1.8.0：扩展模型——meta.modelsFromConfig=extra_models，上游新型号经配置登记即并入
+//    有效清单，无需更新插件；未收录型号默认按 H3/v2 形态处理（MiniMax 新型号均上 /v2），
+//    不校验分辨率/时长档位（无法归一的原样透传），原生路由按客户端所选协议放行，
+//    参数合法性由上游校验。
 
 const H3_MODEL = "MiniMax-H3";
 // H3 家族型号档位（官方 /v2/video_generation）：H3 为 768P/2K，其余 480P/768P；Max 时长 5–15
@@ -58,7 +62,7 @@ export const meta = {
     en: "MiniMax Hailuo video generation (text-to-video, image-to-video, and MiniMax-H3 multimodal reference)",
     zh: "MiniMax 海螺视频生成（文生视频、图生视频、MiniMax-H3 多模态参考生视频）",
   },
-  version: "1.7.0",
+  version: "2.0.0",
   author: "qianfree",
   channelTypes: [35],
   models: H3_MODELS.concat(V1_MODELS),
@@ -66,6 +70,15 @@ export const meta = {
   standardVideos: "decodeVideos",
   // 标准端点 references[] 可承接的角色（按型号的模型层约束在 decodeVideos 校验）
   referenceRoles: ["first_frame", "last_frame", "reference_image", "reference_video", "reference_audio"],
+  // 扩展模型：上游新型号无需更新插件——配置登记即并入有效清单，配合渠道模型映射
+  // 使用；未收录型号默认按 H3/v2 形态处理（不校验分辨率/时长档位），由上游校验
+  modelsFromConfig: "extra_models",
+  config: [
+    {
+      key: "extra_models", label: "扩展上游模型", type: "text", group: "模型",
+      description: "每行一个 MiniMax 上游模型名（如新发布的海螺型号），保存后并入本插件支持的上游模型清单（渠道模型映射配合使用）；未收录型号默认走 /v2 协议且不校验分辨率/时长档位，参数合法性由上游校验",
+    },
+  ],
   routes: [
     { method: "POST", path: "/v1/video_generation", type: "submit", decode: "createTask", render: "renderSubmit" },
     { method: "POST", path: "/v2/video_generation", type: "submit", decode: "createH3Task", render: "renderSubmit" },
@@ -76,8 +89,13 @@ export const meta = {
 function trimmed(v) { return String(v || "").trim(); }
 function plainObject(v) { return v && typeof v === "object" && !Array.isArray(v) ? v : {}; }
 function isH3(model) { return Object.prototype.hasOwnProperty.call(H3_PROFILES, model); }
+function isV1(model) { return V1_MODELS.includes(trimmed(model)); }
+// 扩展型号（不在内置两清单，经 extra_models 登记）默认按 H3/v2 形态处理——MiniMax
+// 新型号均上 /v2；原生路由上客户端选定的协议形态优先（仅已知型号跨族映射报错）
+function familyIsH3(model) { return isH3(model) || !isV1(model); }
 function h3Profile(model) { return H3_PROFILES[model] || H3_PROFILES[H3_MODEL]; }
-// h3ResolutionFor H3 家族分辨率归一（480P/768P/2K），不在型号档位内即报错；空 = 默认 768P
+// h3ResolutionFor H3 家族分辨率归一（480P/768P/2K）；内置型号不在档位内即报错，
+// 扩展型号不设档（无法归一时原样透传，由上游校验）；空 = 默认 768P
 function h3ResolutionFor(raw, model) {
   const v = trimmed(raw).toUpperCase();
   if (!v) return "768P";
@@ -85,11 +103,14 @@ function h3ResolutionFor(raw, model) {
   if (v.includes("2K") || v.includes("1440") || v.includes("2160")) resolution = "2K";
   else if (v.includes("768") || v.includes("720")) resolution = "768P";
   else if (v.includes("480")) resolution = "480P";
+  if (!H3_PROFILES[model]) return resolution || v;
   const allowed = h3Profile(model).resolutions;
   if (!allowed.includes(resolution)) throw new Error(model + " resolution must be one of " + allowed.join(", "));
   return resolution;
 }
+// 时长档位（型号下限–15s）仅对内置 H3 型号校验；扩展型号由上游校验
 function checkH3Duration(model, duration) {
+  if (!H3_PROFILES[model]) return;
   if (duration === undefined || duration === null) return;
   const n = Number(duration);
   const min = h3Profile(model).minDuration;
@@ -263,19 +284,20 @@ function stdToV1Vendor(model, std) {
   return vendorBody;
 }
 
-// validateRequest 渠道选定后按上游型号校验并定稿请求体：/v2 路由须为 H3 家族、/v1 路由
-// 须为 v1 系列；标准端点的 std 中间体在此映射为对应协议体。
+// validateRequest 渠道选定后按上游型号校验并定稿请求体：标准端点的 std 中间体在此
+// 映射为对应协议体（扩展型号默认 H3/v2）；/v2 路由仅已知 v1 型号报错、/v1 路由仅已知
+// H3 型号报错（扩展型号按客户端所选路由放行，由上游校验）。
 export function validateRequest(ctx) {
   const req = plainObject(ctx.body);
   const upstream = trimmed(ctx.upstreamModel || ctx.model);
-  const h3 = isH3(upstream);
+  const h3 = familyIsH3(upstream);
   if (req.family === "std") {
     const std = plainObject(req.std);
     const vendorBody = h3 ? stdToH3Vendor(upstream, std) : stdToV1Vendor(upstream, std);
     return { requestBody: { family: h3 ? "h3" : "v1", vendorBody: vendorBody } };
   }
-  if (req.family === "h3" && !h3) throw new Error("/v2/video_generation requires an H3 model (" + H3_MODELS.join(", ") + "), channel upstream model is " + upstream);
-  if (req.family === "v1" && h3) throw new Error("/v1/video_generation does not support " + upstream + "; use /v2/video_generation");
+  if (req.family === "h3" && isV1(upstream)) throw new Error("/v2/video_generation requires an H3 model (" + H3_MODELS.join(", ") + "), channel upstream model is " + upstream);
+  if (req.family === "v1" && isH3(upstream)) throw new Error("/v1/video_generation does not support " + upstream + "; use /v2/video_generation");
   if (h3) checkH3Duration(upstream, plainObject(req.vendorBody).duration);
   return {};
 }
@@ -283,10 +305,11 @@ export function validateRequest(ctx) {
 // ── 提交链 ────────────────────────────────────────────────
 
 // isH3Request 提交形态判定：validateRequest 定稿的 family 优先，回落上游型号
+//（扩展型号默认 H3/v2 形态）
 function isH3Request(req, model) {
   if (req.family === "h3") return true;
   if (req.family === "v1") return false;
-  return isH3(model);
+  return familyIsH3(model);
 }
 
 export function estimateUsage(ctx) {
