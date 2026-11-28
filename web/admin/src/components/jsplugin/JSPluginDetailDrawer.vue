@@ -84,10 +84,19 @@ const iconURL = usePluginIcon(toRef(props, 'plugin'))
 const canManage = computed(() => hasPermission('plugin:manage'))
 const canUpload = computed(() => hasPermission('plugin:upload'))
 
-// 纯上传插件（所有版本均非内置）才提供整删入口；含内置版本的 key 只能逐个删上传版本
+// 纯上传插件（所有版本均非内置）才提供整删入口；含内置版本的 key 只能逐个删除
+// 版本（上传版本 + 过期内置版本，当前二进制内置版本不可删）
 const canPurge = computed(() =>
   versions.value.length > 0 && versions.value.every((v) => v.origin !== 'builtin'),
 )
+
+// 版本删除确认文案：过期内置版本强调「不会随重启复活」，上传版本强调「源码不可恢复」
+function removeConfirmText(v: JSPluginVersion) {
+  if (v.origin === 'builtin') {
+    return `删除过期内置版本 ${v.version}？该版本已不在当前程序内，删除后不会随重启恢复。`
+  }
+  return `删除版本 ${v.version}？源码不可恢复。`
+}
 
 // ── 整删插件 ──────────────────────────────────────────────
 // 点击先取预检（版本数 + 在途任务数），确认弹窗展示后果后才发 DELETE
@@ -434,6 +443,7 @@ async function downloadSource(version: string) {
                   <span :class="v.origin === 'builtin' ? 'is-builtin' : ''">
                     {{ v.origin === 'builtin' ? '内置' : '上传' }}
                   </span>
+                  <span v-if="v.stale" class="is-stale">已过期</span>
                   · {{ fmtTime(v.created_at) }}<template v-if="v.remark"> · {{ v.remark }}</template>
                 </div>
               </div>
@@ -458,8 +468,8 @@ async function downloadSource(version: string) {
                     >激活</Button>
                   </Popconfirm>
                   <Popconfirm
-                    v-if="v.origin !== 'builtin'"
-                    :content="`删除版本 ${v.version}？源码不可恢复。`"
+                    v-if="v.origin !== 'builtin' || v.stale"
+                    :content="removeConfirmText(v)"
                     @ok="removeVersion(v.version)"
                   >
                     <Button
@@ -1056,6 +1066,14 @@ async function downloadSource(version: string) {
 
 .jd-ver__meta .is-builtin {
   color: #7c3aed;
+}
+
+.jd-ver__meta .is-stale {
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: 2px;
+  background: var(--color-fill-3);
+  color: var(--color-text-2);
 }
 
 .jd-ver__ops {

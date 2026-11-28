@@ -9,7 +9,8 @@ import {
 export interface JSPluginVersion {
   id: number
   version: string
-  origin: string // builtin=内置（不可删除）| upload
+  origin: string // builtin=内置（当前二进制版本不可删除）| upload
+  stale: boolean // 过期内置版本：不在当前程序二进制内，可手动删除且不会随重启复活
   active: boolean
   enabled: boolean
   remark: string

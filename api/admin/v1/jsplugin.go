@@ -18,7 +18,8 @@ type JSPluginListReq struct {
 type JSPluginVersionItem struct {
 	ID        int64           `json:"id"`
 	Version   string          `json:"version"`
-	Origin    string          `json:"origin"` // builtin=内置（不可删除）| upload
+	Origin    string          `json:"origin"` // builtin=内置（当前二进制版本不可删除）| upload
+	Stale     bool            `json:"stale"`  // 过期内置版本：不在当前程序二进制内，可手动删除且不会随重启复活
 	Active    bool            `json:"active"`
 	Enabled   bool            `json:"enabled"`
 	Remark    string          `json:"remark"`

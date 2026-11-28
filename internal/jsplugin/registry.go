@@ -56,6 +56,9 @@ type PluginVersionRow struct {
 	Remark     string          `json:"remark"`
 	CreatedAt  *time.Time      `json:"created_at"`
 	UpdatedAt  *time.Time      `json:"updated_at"`
+	// Stale 过期内置版本标记（List 时按当前二进制内置清单计算，非 DB 列）：
+	// origin=builtin 且 (key,version) 不在二进制内——这类行可手动删除且不会复活
+	Stale bool `json:"stale"`
 }
 
 // Registry JS 插件注册中心：版本存储 + 生命周期 + generation 重建。
@@ -68,6 +71,35 @@ type Registry struct {
 	// compileCache 源码哈希 → 编译产物。rebuild/Bootstrap 每次装载全部插件都会
 	// 走 Compile（esbuild 打包 + probe 执行），源码未变的重复编译纯耗 CPU
 	compileCache sync.Map
+
+	// builtinLive 当前二进制内置插件的 "key@version" 集合（过期内置版本的判定
+	// 基准）。Bootstrap seed 时缓存；未缓存（seed 失败或单测路径）时惰性补算
+	builtinMu   sync.Mutex
+	builtinLive map[string]struct{}
+}
+
+// cacheBuiltinLive 缓存当前二进制内置清单（seedBuiltins 编译后顺手留存，零额外开销）。
+func (r *Registry) cacheBuiltinLive(builtins []*CompiledPlugin) {
+	r.builtinMu.Lock()
+	defer r.builtinMu.Unlock()
+	r.builtinLive = buildBuiltinVersionSet(builtins)
+}
+
+// builtinVersionSet 返回当前二进制内置插件的 "key@version" 集合。「过期内置版本」
+// 判定的权威来源是二进制 embed 源而非 DB 行；未缓存时（seed 失败或单测路径）惰性
+// 编译补算，compileCache 保证补算走缓存、无重复打包开销。
+func (r *Registry) builtinVersionSet() (map[string]struct{}, error) {
+	r.builtinMu.Lock()
+	defer r.builtinMu.Unlock()
+	if r.builtinLive != nil {
+		return r.builtinLive, nil
+	}
+	builtins, err := compileBuiltins(r.engine)
+	if err != nil {
+		return nil, err
+	}
+	r.builtinLive = buildBuiltinVersionSet(builtins)
+	return r.builtinLive, nil
 }
 
 // registryAdvisoryLockKey 激活路径 pg_advisory_xact_lock 的锁键（任意常量，
@@ -142,11 +174,14 @@ ORDER BY id`, jsTaskChannelType).All()
 //   - 同 key+version 是 upload 行 → 不动（上传优先，内置同版本被遮蔽）
 //   - 无行 → 插入（origin=builtin，首版本自动 active，enabled 由管理员开启；
 //     升级带来的新版本号 inactive 入库，不改变运行行为）
+//   - 历次升级遗留的过期内置版本行不自动清理，由管理员在版本历史中选择性删除
+//     （见 DeleteVersion 的过期判定）
 func (r *Registry) seedBuiltins(ctx context.Context) error {
 	builtins, err := compileBuiltins(r.engine)
 	if err != nil {
 		return err
 	}
+	r.cacheBuiltinLive(builtins)
 	for _, compiled := range builtins {
 		hash := sourceHash(compiled.Source)
 		existing, err := r.loadRow(ctx, compiled.Key, compiled.Version)
@@ -208,6 +243,27 @@ func retiredBuiltinKeys(rows []PluginVersionRow, live map[string]struct{}) []str
 		out = append(out, key)
 	}
 	return out
+}
+
+// buildBuiltinVersionSet 当前二进制内置插件的 "key@version" 集合（纯逻辑，可单测）。
+func buildBuiltinVersionSet(builtins []*CompiledPlugin) map[string]struct{} {
+	live := make(map[string]struct{}, len(builtins))
+	for _, compiled := range builtins {
+		live[compiled.Key+"@"+compiled.Version] = struct{}{}
+	}
+	return live
+}
+
+// isStaleBuiltin 版本行是否为「过期内置版本」（纯逻辑，可单测）：origin=builtin 且
+// (key,version) 不在当前二进制内置清单（live 为 "key@version" 集合）内。过期行删除
+// 后不会被 seed 复活（seed 只补种二进制内存在的版本），是唯一可手动删除的内置形态；
+// 当前二进制版本删除属假删除（重启 seed 复活），始终拒绝。
+func isStaleBuiltin(row PluginVersionRow, live map[string]struct{}) bool {
+	if row.Origin != "builtin" {
+		return false
+	}
+	_, current := live[row.PluginKey+"@"+row.Version]
+	return !current
 }
 
 // removeRetiredBuiltins 内置插件下线清理：删除已下线 key 的 builtin 行（同 key 的
@@ -370,10 +426,16 @@ func (r *Registry) List(ctx context.Context) ([]PluginSummary, error) {
 		return nil, gerror.Wrap(err, "读取插件列表失败")
 	}
 	gen := CurrentGeneration()
+	// 过期内置版本标记（尽力而为）：清单读取失败时不标记、不阻断列表——删除入口
+	// 的守卫（DeleteVersion）才是权威校验
+	live, _ := r.builtinVersionSet()
 	byKey := map[string]*PluginSummary{}
 	var order []string
 	for i := range rows {
 		row := rows[i]
+		if live != nil && isStaleBuiltin(row, live) {
+			row.Stale = true
+		}
 		s, ok := byKey[row.PluginKey]
 		if !ok {
 			s = &PluginSummary{Key: row.PluginKey}
@@ -594,7 +656,16 @@ func (r *Registry) DeleteVersion(ctx context.Context, key, version string) error
 		return pluginOpError("插件 %s@%s 不存在", key, version)
 	}
 	if row.Origin == "builtin" {
-		return pluginOpError("内置版本不可删除（可禁用，或激活上传版本覆盖）")
+		// 内置版本仅放行「过期」行（不在当前二进制内——删除后 seed 不会复活，
+		// 供管理员清理历次升级遗留的版本记录）；当前二进制版本删除属假删除
+		//（重启 seed 复活），始终拒绝
+		live, err := r.builtinVersionSet()
+		if err != nil {
+			return gerror.Wrap(err, "读取内置插件清单失败")
+		}
+		if !isStaleBuiltin(*row, live) {
+			return pluginOpError("当前二进制内置版本不可删除（重启会随 seed 复活）；历次升级遗留的过期内置版本可删除")
+		}
 	}
 	if row.Active && row.Enabled {
 		return pluginOpError("该版本激活且启用中，请先禁用或切换激活版本")
@@ -661,7 +732,7 @@ func checkDeletePluginRows(rows []PluginVersionRow) PluginDeleteCheck {
 	for i := range rows {
 		if rows[i].Origin == "builtin" {
 			return PluginDeleteCheck{Allowed: false,
-				Reason: "该插件标识存在内置版本（平台基座），不可整删，请在版本历史中逐个删除上传版本"}
+				Reason: "该插件标识存在内置版本（平台基座），不可整删，请在版本历史中逐个删除版本（当前二进制内置版本除外，会随重启复活）"}
 		}
 		if rows[i].Active && rows[i].Enabled {
 			return PluginDeleteCheck{Allowed: false, Reason: "插件启用中，请先禁用再删除"}

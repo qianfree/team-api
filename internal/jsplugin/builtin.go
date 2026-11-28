@@ -12,9 +12,12 @@ import (
 //   - 同 key+version 的 upload 行不被触碰（上传优先）
 //   - builtin 行源码变化（版本升级）时刷新，enabled/active 状态保留在原行
 //   - 新版本号以 inactive 入库，由管理员显式激活（升级不改变运行行为）
+//   - 历次升级遗留的过期内置版本行（不在二进制内）由管理员在版本历史中选择性
+//     手动删除（List 标记 stale、DeleteVersion 放行），不做自动清理
 //   - 二进制内已下线的内置 key（如 golden 已改为纯模板），启动时清理其 builtin 行
 //
-// 内置行不可在管理端删除；删除激活中的上传版本后，同 key 回落激活最新内置版本。
+// 内置行中仅过期内置版本可在管理端删除（当前二进制版本删了会在下次 seed 复活）；
+// 删除激活中的上传版本后，同 key 回落激活最新内置版本。
 //
 //go:embed all:builtin
 var builtinFS embed.FS

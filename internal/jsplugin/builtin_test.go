@@ -50,6 +50,33 @@ func TestRetiredBuiltinKeys(t *testing.T) {
 	}
 }
 
+// TestIsStaleBuiltin 过期内置版本判定纯逻辑（DeleteVersion 放行 / List 标记共用）：
+// 仅 builtin 行且 (key,version) 不在当前二进制清单时为真；在线版本、upload 行
+// （不走本判定，另有守卫）均为假。active 与否不影响判定——过期且激活中的行同样
+// 过期（管理员可直接删，DeleteVersion 走 fallbackActivateBuiltin 回落最新内置版本）。
+func TestIsStaleBuiltin(t *testing.T) {
+	live := map[string]struct{}{"hailuo@1.8.0": {}, "teamapi@1.0.0": {}}
+	cases := []struct {
+		name string
+		row  PluginVersionRow
+		want bool
+	}{
+		{"在线内置版本", PluginVersionRow{PluginKey: "hailuo", Version: "1.8.0", Origin: "builtin"}, false},
+		{"过期内置版本", PluginVersionRow{PluginKey: "hailuo", Version: "1.7.0", Origin: "builtin"}, true},
+		{"过期且激活中的内置版本", PluginVersionRow{PluginKey: "hailuo", Version: "1.6.0", Origin: "builtin", Active: true}, true},
+		{"同版本号的 upload 行不走本判定", PluginVersionRow{PluginKey: "hailuo", Version: "1.8.0", Origin: "upload"}, false},
+		{"纯上传插件", PluginVersionRow{PluginKey: "reseller", Version: "1.0.0", Origin: "upload"}, false},
+		{"下线 key 的内置行", PluginVersionRow{PluginKey: "golden", Version: "0.9.0", Origin: "builtin"}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isStaleBuiltin(tc.row, live); got != tc.want {
+				t.Fatalf("isStaleBuiltin = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestBuiltinPluginsShareModelsAllowed 跨插件同名上游模型为合法形态：内置插件与声明
 // 同名模型的上传插件可同时发布进 generation。
 func TestBuiltinPluginsShareModelsAllowed(t *testing.T) {

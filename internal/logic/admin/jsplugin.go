@@ -48,6 +48,7 @@ func (s *sAdmin) JSPluginList(ctx context.Context, _ *v1.JSPluginListReq) (*v1.J
 				ID:        ver.Id,
 				Version:   ver.Version,
 				Origin:    ver.Origin,
+				Stale:     ver.Stale,
 				Active:    ver.Active,
 				Enabled:   ver.Enabled,
 				Remark:    ver.Remark,
